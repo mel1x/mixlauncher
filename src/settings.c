@@ -16,7 +16,7 @@ enum {
     SID_MAXAPPS, SID_HIDENOISE, SID_REINDEX, SID_MINCHARS, SID_FILTER, SID_CLEARHIST, SID_CONFIG,
     SID_DATADIR, SID_ADMIN, SID_EVERYTHING, SID_ABOUT,
     SID_ASPEED, SID_AOPEN, SID_ACLOSE, SID_ASCALE, SID_ACASCADE, SID_AROW, SID_ASTAGGER, SID_ASELECT, SID_ASCROLL, SID_AMENU,
-    SID_APAGE, SID_APREVIEW, SID_ARESET
+    SID_APAGE, SID_APREVIEW, SID_ARESET, SID_TASKBAR, SID_TBICON, SID_TBFILE
 };
 enum { PG_GENERAL, PG_APPEARANCE, PG_ANIM, PG_SEARCH, PG_ADVANCED, PG_ABOUT, PG__COUNT };
 
@@ -38,7 +38,7 @@ typedef struct SItem {
     Str title, desc;
     int lo, hi, step;
     Str unit;
-    Str opt[3];      // SK_CHOICE options; opt[0] is the SK_BUTTON label
+    Str opt[4];      // SK_CHOICE options; opt[0] is the SK_BUTTON label
     u32 glyph;       // SK_BUTTON icon
 } SItem;
 
@@ -53,6 +53,15 @@ static const SItem k_sitems[] = {
       .title = { L"Запускать при входе в Windows", L"Start with Windows" },
       .desc = { L"Через планировщик заданий: с правами администратора и без запроса UAC при входе",
                 L"Through Task Scheduler: as administrator, without a UAC prompt at sign-in" } },
+    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_TASKBAR, .group = { L"Панель задач", L"Taskbar" },
+      .title = { L"Кнопка Пуск открывает MixLauncher", L"Start button opens MixLauncher" },
+      .desc = { L"Наш значок на кнопке Пуск (Windows 11). Правый клик по-прежнему открывает меню Win+X",
+                L"Our icon on the Start button (Windows 11). Right click still opens the Win+X menu" } },
+    { .page = PG_GENERAL, .kind = SK_CHOICE, .id = SID_TBICON, .title = { L"Значок кнопки", L"Button icon" },
+      .opt = { { L"Ромб", L"Diamond" }, { L"Сетка", L"Grid" }, { L"Строки", L"Lines" }, { L"Свой", L"Custom" } } },
+    { .page = PG_GENERAL, .kind = SK_BUTTON, .id = SID_TBFILE, .title = { L"Свой значок", L"Custom icon" },
+      .desc = { L"PNG, ICO или JPG. Лучше квадратный, от 48×48, с прозрачным фоном", L"PNG, ICO or JPG. Square, 48×48 or larger, with a transparent background works best" },
+      .opt = { { L"Выбрать…", L"Choose…" } }, .glyph = 0xE8E5 },
     { .page = PG_GENERAL, .kind = SK_STEPPER, .id = SID_KEEPQUERY, .group = { L"Поведение", L"Behavior" },
       .title = { L"Помнить запрос", L"Keep the query" },
       .desc = { L"Сколько секунд после закрытия хранить набранный текст. 0 — всегда начинать с пустого поля",
@@ -280,6 +289,8 @@ static int sval(int id)
     case SID_THEME: return g_cfg.theme;
     case SID_BACKDROP: return g_cfg.backdrop == BACKDROP_BLUR ? 0 : g_cfg.backdrop == BACKDROP_ACRYLIC ? 1 : 2;
     case SID_ANIM: return g_cfg.animations;
+    case SID_TASKBAR: return g_cfg.taskbar_button;
+    case SID_TBICON: return g_cfg.taskbar_icon;
     case SID_WIDTH: return g_cfg.width;
     case SID_ROWS: return g_cfg.rows;
     case SID_MAXAPPS: return g_cfg.max_apps;
@@ -316,6 +327,43 @@ static void save_wstr(const char *key, const WCHAR *v)
 }
 
 static void settings_apply_theme(void);
+static void tb_set_enabled(bool on);  // taskbar.c
+static void tb_icon_changed(void);     // taskbar.c
+
+static int choice_count(const SItem *it)
+{
+    int n = 0;
+    while (n < (int)countof(it->opt) && it->opt[n].ru) n++;
+    return MAX(n, 1);
+}
+
+// File dialog for the custom Start button icon; true if a file was chosen (saved to the config).
+static bool pick_taskbar_icon(void)
+{
+    static const GUID clsid = { 0xdc1c5a9c, 0xe88a, 0x4dde, { 0xa5, 0xa1, 0x60, 0xf8, 0x2a, 0x20, 0xae, 0xf7 } };
+    static const GUID iid = { 0xd57c7288, 0xd4ad, 0x4768, { 0xbe, 0x02, 0x9d, 0x96, 0x95, 0x32, 0xd9, 0x60 } };
+    IFileOpenDialog *d = NULL;
+    if (FAILED(CoCreateInstance(&clsid, NULL, CLSCTX_INPROC_SERVER, &iid, (void **)&d)) || !d) return false;
+    COMDLG_FILTERSPEC types[] = { { g_lang_ru ? L"Изображения" : L"Images", L"*.png;*.ico;*.jpg;*.jpeg;*.bmp" } };
+    IFileOpenDialog_SetFileTypes(d, 1, types);
+    IFileOpenDialog_SetTitle(d, g_lang_ru ? L"Значок кнопки Пуск" : L"Start button icon");
+    bool ok = false;
+    if (SUCCEEDED(IFileOpenDialog_Show(d, SW.hwnd))) {
+        IShellItem *item = NULL;
+        if (SUCCEEDED(IFileOpenDialog_GetResult(d, &item)) && item) {
+            WCHAR *path = NULL;
+            if (SUCCEEDED(IShellItem_GetDisplayName(item, SIGDN_FILESYSPATH, &path)) && path) {
+                wcopy(g_cfg.taskbar_icon_path, countof(g_cfg.taskbar_icon_path), path);
+                save_wstr("taskbar_icon_path", path);
+                CoTaskMemFree(path);
+                ok = true;
+            }
+            IShellItem_Release(item);
+        }
+    }
+    IFileOpenDialog_Release(d);
+    return ok;
+}
 
 // Animation timings: the config field and ini key of an SID_A* item.
 static const struct { u8 id; const char *key; size_t off; } k_anim_fields[] = {
@@ -350,7 +398,7 @@ static void sset(const SItem *it, int v)
 {
     if (it->kind == SK_STEPPER) v = CLAMP(v, it->lo, it->hi);
     if (it->kind == SK_TOGGLE) v = v ? 1 : 0;
-    if (it->kind == SK_CHOICE) v = CLAMP(v, 0, 2);
+    if (it->kind == SK_CHOICE) v = CLAMP(v, 0, choice_count(it) - 1);
     if (v == sval(it->id)) return;
     switch (it->id) {
     case SID_AUTOSTART:
@@ -369,6 +417,18 @@ static void sset(const SItem *it, int v)
         config_set("backdrop", v == 0 ? "blur" : v == 1 ? "acrylic" : "solid");
         theme_update();
         U.backdrop_ok = backdrop_apply(g_hwnd);
+        break;
+    case SID_TBICON:
+        // "Custom" without a file yet: pick one first (cancelled: keep the current icon).
+        if (v == TBI_CUSTOM && !g_cfg.taskbar_icon_path[0] && !pick_taskbar_icon()) return;
+        g_cfg.taskbar_icon = v;
+        config_set("taskbar_icon", k_tbi_names[v]);
+        tb_icon_changed();
+        break;
+    case SID_TASKBAR:
+        g_cfg.taskbar_button = v;
+        config_set("taskbar_button", v ? "1" : "0");
+        tb_set_enabled(v != 0);
         break;
     case SID_ANIM:
         g_cfg.animations = v;
@@ -452,6 +512,13 @@ static void button_action(const SItem *it)
     }
     case SID_DATADIR:
         open_path(g_data_dir);
+        break;
+    case SID_TBFILE:
+        if (pick_taskbar_icon()) {
+            g_cfg.taskbar_icon = TBI_CUSTOM;
+            config_set("taskbar_icon", k_tbi_names[TBI_CUSTOM]);
+            tb_icon_changed();
+        }
         break;
     case SID_APREVIEW:
         ui_show();  // takes the foreground; closing it hands the focus back to this window
@@ -1148,7 +1215,7 @@ static void draw_popover(const Theme *t, const SColors *c)
     r_rect_ex(x, y, w, h, c->pop_border, SSR(10), 1.f, 0);
     int sel = sval(it->id);
     f32 fs = SSC(13.5f);
-    for (int k = 0; k < 3; k++) {
+    for (int k = 0; k < choice_count(it); k++) {
         f32 iy = y + SSR(5) + SSR(32) * (f32)k, cy = iy + SSR(16);
         if (SW.pop_hover == k) r_rect(x + SSR(5), iy, w - SSR(10), SSR(32), c->pop_hover, SSR(6));
         if (k == sel) text_draw_icon(0xE73E, SSC(12), x + SSR(5) + SSR(16), cy, t->text);
@@ -1398,7 +1465,7 @@ static SHit settings_hit(int mx, int my)
         h.type = HT_POPOUT;
         if (x >= SW.pop_x && x < SW.pop_x + SW.pop_w && y >= SW.pop_y && y < SW.pop_y + SW.pop_h) {
             int k = (int)floorf((y - SW.pop_y - SSR(5)) / SSR(32));
-            if (k >= 0 && k < 3) {
+            if (k >= 0 && k < choice_count(&k_sitems[SW.rows[SW.pop_row].item])) {
                 h.type = HT_POPITEM;
                 h.idx = k;
             }
@@ -1458,9 +1525,10 @@ static void pop_open(int row)
     const SItem *it = &k_sitems[SW.rows[row].item];
     SRow *r = &SW.rows[row];
     f32 fs = SSC(13.5f), w = 0;
-    for (int k = 0; k < 3; k++) w = MAX(w, text_width(FONT_TEXT, fs, ss(it->opt[k]), -1));
+    int nopt = choice_count(it);
+    for (int k = 0; k < nopt; k++) w = MAX(w, text_width(FONT_TEXT, fs, ss(it->opt[k]), -1));
     SW.pop_w = floorf(w + SSR(5) + SSR(32) + SSR(24));
-    SW.pop_h = SSR(32) * 3 + SSR(10);
+    SW.pop_h = SSR(32) * (f32)nopt + SSR(10);
     f32 off = top_h() - floorf(SW.scroll + 0.5f);
     SW.pop_x = floorf(r->cx + r->cw - SW.pop_w);
     SW.pop_y = r->cy + off + r->ch + SSR(4);
@@ -1534,8 +1602,8 @@ static void settings_key(UINT vk)
     if (SW.pop_open) {
         const SItem *it = &k_sitems[SW.rows[SW.pop_row].item];
         switch (vk) {
-        case VK_UP: SW.pop_hover = (SW.pop_hover + 2) % 3; break;
-        case VK_DOWN: SW.pop_hover = (SW.pop_hover + 1) % 3; break;
+        case VK_UP: SW.pop_hover = (SW.pop_hover + choice_count(it) - 1) % choice_count(it); break;
+        case VK_DOWN: SW.pop_hover = (SW.pop_hover + 1) % choice_count(it); break;
         case VK_RETURN:
         case VK_SPACE:
             sset(it, SW.pop_hover);

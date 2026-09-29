@@ -215,6 +215,8 @@ pass:
     return CallNextHookEx(K.hook, code, wp, lp);
 }
 
+static bool tb_hit(POINT pt);  // taskbar.c: our Start button (toggles the launcher itself)
+
 static LRESULT CALLBACK ll_mouse(int code, WPARAM wp, LPARAM lp)
 {
     if (code == HC_ACTION && wp != WM_MOUSEMOVE) {
@@ -223,7 +225,7 @@ static LRESULT CALLBACK ll_mouse(int code, WPARAM wp, LPARAM lp)
         if (press && K.ui_visible) {
             const MSLLHOOKSTRUCT *m = (const MSLLHOOKSTRUCT *)lp;
             RECT r;
-            if (GetWindowRect(g_hwnd, &r) && !PtInRect(&r, m->pt)) PostMessageW(g_hwnd, WM_APP_CLICK_OUTSIDE, 0, 0);
+            if (GetWindowRect(g_hwnd, &r) && !PtInRect(&r, m->pt) && !tb_hit(m->pt)) PostMessageW(g_hwnd, WM_APP_CLICK_OUTSIDE, 0, 0);
         }
     }
     return CallNextHookEx(K.mouse_hook, code, wp, lp);

@@ -28,6 +28,7 @@
 #include "tray.c"
 #include "ui.c"
 #include "settings.c"
+#include "taskbar.c"
 
 #define WINDOW_CLASS L"MixLauncherWindow"
 
@@ -176,6 +177,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         if (lp && !wcscmp((const WCHAR *)lp, L"ImmersiveColorSet")) {
             theme_update();
             ui_invalidate();
+            tb_theme_changed();
         }
         return 0;
     case WM_POWERBROADCAST:
@@ -209,6 +211,9 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_APP_SETTINGS:
         settings_open();
         return 0;
+    case WM_APP_TASKBAR:
+        tb_sync();
+        return 0;
     case WM_APP_CLICK_OUTSIDE:
         // Clicks go on to their target; focus is left to whatever the user clicked.
         if (U.visible && !U.closing && !U.menu_open && !g_pinned) {
@@ -240,6 +245,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     default:
         if (msg == g_wm_taskbar_created && msg) {
             tray_add();
+            tb_explorer_restarted();
             return 0;
         }
         break;
@@ -487,6 +493,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     uipi_allow(g_hwnd, WM_APP_SHOW);
     uipi_allow(g_hwnd, WM_APP_SETTINGS);
     if (!g_pinned) tray_add();
+    if (g_cfg.taskbar_button) tb_set_enabled(true);
     elevation_housekeeping_start();
 
     if (opt_settings) settings_open();
