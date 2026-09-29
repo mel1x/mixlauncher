@@ -1,8 +1,4 @@
 // match.c — query normalization and fuzzy scoring. Pure functions, safe on any thread.
-//
-// Tiers (higher wins): exact > prefix > word prefix > acronym > substring > fuzzy subsequence.
-// Inside a tier shorter / earlier matches win. A query typed in the wrong keyboard layout
-// (ЙЦУКЕН vs QWERTY) is also tried and scored slightly lower.
 
 enum {
     SCORE_EXACT = 10000,
@@ -40,8 +36,6 @@ static bool is_upper(WCHAR c) { return (c >= 'A' && c <= 'Z') || (c >= 0x410 && 
 static bool is_lower(WCHAR c) { return (c >= 'a' && c <= 'z') || (c >= 0x430 && c <= 0x44F) || c == 0x451; }
 static bool is_digit(WCHAR c) { return c >= '0' && c <= '9'; }
 
-// Word starts computed from the original (not lowercased) name: after separators, camelCase
-// humps and letter/digit transitions.
 static void word_starts(const WCHAR *s, int len, u8 *ws)
 {
     for (int i = 0; i < len; i++) {
@@ -66,7 +60,6 @@ static int find_sub(const WCHAR *s, int n, const WCHAR *q, int m, int from)
 
 static int score_fuzzy(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int m)
 {
-    // The first query char must land on a word start: kills most noise matches.
     int start = -1;
     for (int i = 0; i < n; i++)
         if (ws[i] && s[i] == q[0]) {
@@ -77,7 +70,6 @@ static int score_fuzzy(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int 
     int j = 0, prev = -2, gaps = 0, bonus = 0;
     for (int i = start; i < n && j < m; i++) {
         if (s[i] != q[j]) continue;
-        // Prefer jumping to a later word start over a mid-word match if one exists soon.
         if (!ws[i] && prev != i - 1) {
             int k = i + 1;
             while (k < n && k < i + 12 && !(ws[k] && s[k] == q[j])) k++;
@@ -116,7 +108,6 @@ static int score_token(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int 
     return score_fuzzy(s, n, ws, q, m);
 }
 
-// Full query (may contain spaces). Every token must match; the literal whole query also counts.
 static int score_query(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int m)
 {
     while (m > 0 && q[m - 1] == ' ') m--;
@@ -155,7 +146,6 @@ static const WCHAR k_layout_ru[] = L"\x0451\x0439\x0446\x0443\x043a\x0435\x043d\
                                    L"\x0444\x044b\x0432\x0430\x043f\x0440\x043e\x043b\x0434\x0436\x044d"
                                    L"\x044f\x0447\x0441\x043c\x0438\x0442\x044c\x0431\x044e.";
 
-// Returns true if the converted query differs (i.e. contained letters of either layout).
 static bool layout_convert(const WCHAR *q, int m, WCHAR *out)
 {
     bool has_ru = false, has_en = false;

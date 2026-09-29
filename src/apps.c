@@ -1,9 +1,4 @@
 // apps.c — application index.
-//
-// Source of truth is the shell's AppsFolder (shell:AppsFolder): exactly what the Start menu
-// lists — Win32 shortcuts and packaged (Store/UWP) apps alike. Enumeration runs on a background
-// thread and is cached on disk, so the list is available instantly at startup and refreshed when
-// Start menu folders change.
 
 enum { APP_SHELL, APP_CMD };
 enum { CMD_NONE, CMD_LOCK, CMD_SLEEP, CMD_RESTART, CMD_SHUTDOWN, CMD_SIGNOUT, CMD_RECYCLE };
@@ -15,8 +10,8 @@ typedef struct App {
     WCHAR *norm;
     u8 *ws;
     int len;
-    WCHAR *id;          // AppsFolder parsing name (AUMID or known-folder path) / command id
-    WCHAR *path;        // resolved target file if known (reveal / run as admin)
+    WCHAR *id;
+    WCHAR *path;
     u64 id_hash;
     u8 kind;
     u8 cmd;
@@ -71,7 +66,6 @@ static bool looks_like_noise(const WCHAR *norm, const WCHAR *path)
     for (int i = 0; i < countof(bad_names); i++)
         if (wcsstr(norm, bad_names[i])) return true;
     if (path) {
-        // Web links ("Online documentation", "Support center") — but keep steam:// and other app URIs.
         if (wstarts_with_i(path, L"http://") || wstarts_with_i(path, L"https://")) return true;
         const WCHAR *file = PathFindFileNameW(path);
         if (wstarts_with_i(file, L"unins") || wstarts_with_i(file, L"uninst")) return true;
@@ -139,8 +133,6 @@ static void app_add_kw(Arena *a, App *app, const WCHAR *s, int len)
     word_starts(orig, len, app->kw_ws[j]);
 }
 
-// Hidden search keys, so "notepad", "cmd", "regedit" or "calc" work on localized Windows where
-// the visible names are "Блокнот", "Командная строка", ...
 static void app_add_hidden_keywords(Arena *a, App *app)
 {
     if (app->path) {
@@ -148,7 +140,6 @@ static void app_add_hidden_keywords(Arena *a, App *app)
         const WCHAR *ext = PathFindExtensionW(file);
         if (!_wcsicmp(ext, L".exe") || !_wcsicmp(ext, L".msc") || !_wcsicmp(ext, L".cpl")) app_add_kw(a, app, file, (int)(ext - file));
     }
-    // Packaged apps: "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App" -> "WindowsNotepad" (camelCase words)
     const WCHAR *bang = wcschr(app->id, '!');
     const WCHAR *us = wcschr(app->id, '_');
     const WCHAR *end = us && bang && us < bang ? us : bang;

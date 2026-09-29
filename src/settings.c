@@ -1,14 +1,4 @@
 // settings.c — the settings window, in the style of Raycast's preferences.
-//
-// A resizable top-level window without a system caption (Mica backdrop, own minimize/close
-// buttons), drawn by the same renderer as the launcher: a sidebar with pages on the left; on the
-// right, groups of rows with a title, a description and a control each. Every change is applied
-// immediately and written to config.ini. Keyboard: Up/Down/Tab move between controls,
-// Ctrl+Tab switches pages, Left/Right change a value, Space/Enter activate, Esc closes.
-//
-// The hotkey is recorded in a small modal panel: while it is open, the keyboard hook sends every
-// key press here and nowhere else (hook_capture), so Win, Win+D or Alt+Tab can be recorded too.
-// Nothing changes until "Save".
 
 enum { SK_TOGGLE, SK_CHOICE, SK_STEPPER, SK_TEXT, SK_HOTKEY, SK_BUTTON, SK_INFO, SK_ABOUT };
 enum {
@@ -169,7 +159,7 @@ static const SItem k_sitems[] = {
 typedef struct SRow {
     int item;
     bool first;              // first row of its card (no separator above)
-    f32 x, y, w, h;          // content coordinates: y = 0 is the top of the scrolled area
+    f32 x, y, w, h;
     f32 ty;                  // vertical center of the title line
     f32 cx, cy, cw, ch;      // control
     int ndesc, desc_at[4];   // wrapped description lines
@@ -208,7 +198,7 @@ static struct {
     Str head_text[12];
     int nheads;
     int focus;               // row with keyboard focus, -1 = none
-    bool focus_visible;      // show the focus ring (keyboard navigation in progress)
+    bool focus_visible;
     SHit hover, press;
     int editing;             // text row being edited, -1
     WCHAR edit[512];
@@ -240,7 +230,7 @@ static struct {
     f32 nav_hov[PG__COUNT];  // hover fades of the sidebar items
     f32 win_hov[2];          // hover fades of the window buttons
     f32 tog[SITEMS];         // toggle positions 0..1
-    f32 page_t, pop_t, rec_t;  // entrance progress of the page, dropdown and recorder, 0..1
+    f32 page_t, pop_t, rec_t;
 } SW = { .focus = -1, .editing = -1, .pop_row = -1, .flash_id = -1, .page_t = 1, .pop_t = 1, .rec_t = 1 };
 
 static f32 SSC(f32 v) { return v * SW.s; }
@@ -251,7 +241,6 @@ static bool settings_needs_render(void) { return SW.hwnd && (SW.dirty || SW.anim
 
 static bool in_box(const f32 *b, f32 x, f32 y) { return x >= b[0] && x < b[2] && y >= b[1] && y < b[3]; }
 
-// ---------------------------------------------------------------------------------------------
 // Geometry
 
 static f32 sb_x(void) { return SSR(10); }
@@ -279,7 +268,6 @@ static void nav_rect(int i, f32 *r)
     r[3] = r[1] + SSR(36);
 }
 
-// ---------------------------------------------------------------------------------------------
 // Values
 
 static int sval(int id)
@@ -337,7 +325,6 @@ static int choice_count(const SItem *it)
     return MAX(n, 1);
 }
 
-// File dialog for the custom Start button icon; true if a file was chosen (saved to the config).
 static bool pick_taskbar_icon(void)
 {
     static const GUID clsid = { 0xdc1c5a9c, 0xe88a, 0x4dde, { 0xa5, 0xa1, 0x60, 0xf8, 0x2a, 0x20, 0xae, 0xf7 } };
@@ -419,7 +406,6 @@ static void sset(const SItem *it, int v)
         U.backdrop_ok = backdrop_apply(g_hwnd);
         break;
     case SID_TBICON:
-        // "Custom" without a file yet: pick one first (cancelled: keep the current icon).
         if (v == TBI_CUSTOM && !g_cfg.taskbar_icon_path[0] && !pick_taskbar_icon()) return;
         g_cfg.taskbar_icon = v;
         config_set("taskbar_icon", k_tbi_names[v]);
@@ -521,7 +507,7 @@ static void button_action(const SItem *it)
         }
         break;
     case SID_APREVIEW:
-        ui_show();  // takes the foreground; closing it hands the focus back to this window
+        ui_show();
         break;
     case SID_ARESET: {
         Config d;
@@ -562,7 +548,6 @@ static const WCHAR *info_text(int id, bool *good)
     return SW.everything_ok ? ss((Str){ L"Запущен", L"Running" }) : ss((Str){ L"Не запущен", L"Not running" });
 }
 
-// ---------------------------------------------------------------------------------------------
 // Hotkey display and recording
 
 static int hk_tokens(Hotkey h, KeyTok *out)
@@ -680,8 +665,6 @@ static void rec_key(UINT vk, bool down)
     } else if (bit) {
         if (!(SW.rec.held & bit)) return;
         if (!SW.rec.used) {
-            // A modifier released with nothing else pressed: a tap of that key. Win keys become
-            // "either Win key"; Ctrl/Alt/Shift keep their side (a tap of any Ctrl would misfire).
             SW.rec.hk.mods = (u8)(rec_generic(SW.rec.held & ~bit) & ~vk_mod_bit(vk));
             SW.rec.hk.vk = (vk == VK_LWIN || vk == VK_RWIN) ? VK_ANYWIN : (u8)vk;
             SW.rec.has = SW.rec.used = true;
@@ -693,7 +676,6 @@ static void rec_key(UINT vk, bool down)
     settings_invalidate();
 }
 
-// Without the hook (it failed to install) keys still arrive as window messages.
 static UINT sided_vk(WPARAM vk, LPARAM lp)
 {
     UINT sc = (UINT)(lp >> 16) & 0xFF;
@@ -704,7 +686,6 @@ static UINT sided_vk(WPARAM vk, LPARAM lp)
     return (UINT)vk;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Text editing (Everything filter)
 
 static void begin_edit(int row)
@@ -779,11 +760,8 @@ static void edit_key(UINT vk, bool ctrl)
     settings_invalidate();
 }
 
-// ---------------------------------------------------------------------------------------------
 // Layout
 
-// Greedy word wrap: at[k] = index where line k starts; returns the number of lines. If the text
-// needs more than max_lines, the last line runs to the end (and is elided when drawn).
 static int wrap_lines(int font, f32 size, const WCHAR *s, f32 max_w, int *at, int max_lines)
 {
     int n = wlen(s), count = 0, pos = 0;
@@ -901,7 +879,6 @@ static void settings_layout(void)
         if (desc) r->ndesc = wrap_lines(FONT_TEXT, SSC(12.5f), desc, tmax, r->desc_at, 4);
         r->y = y;
         r->h = r->ndesc ? SSR(14) + SSR(20) + SSR(3) + SSR(18) * (f32)r->ndesc + SSR(14) : SSR(54);
-        // Like Raycast, controls line up with the title, not with the middle of the row.
         r->ty = r->ndesc ? y + SSR(24) : y + floorf(r->h * 0.5f);
         r->cy = floorf(r->ty - r->ch * 0.5f);
         y += r->h;
@@ -919,7 +896,6 @@ static bool row_focusable(int r)
     return k != SK_INFO && k != SK_ABOUT;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Drawing
 
 typedef struct SColors {
@@ -982,8 +958,6 @@ static SColors scolors(bool dark)
 
 static f32 baseline_for(int font, f32 fs, f32 cy) { return floorf(cy + font_cap_height(font, fs) * 0.5f + 0.5f); }
 
-// The app icon (near-black squircle, hairline edge, search field with a caret), drawn with the
-// renderer's primitives; see app_icon_render in tray.c.
 static void draw_app_tile(f32 x, f32 y, f32 sz)
 {
     x = floorf(x);
@@ -1030,7 +1004,6 @@ static void draw_sidebar(const Theme *t, const SColors *c)
     text_draw_fit(FONT_TEXT_SEMIBOLD, SSC(15), nx, floorf(ty + SSR(16)), x + w - nx - SSR(10), L"MixLauncher", -1, t->text, false);
     text_draw_fit(FONT_TEXT, SSC(12.5f), nx, floorf(ty + SSR(33)), x + w - nx - SSR(10), ss((Str){ L"Настройки", L"Settings" }), -1, t->dim, false);
 
-    // One selection pill that slides between the items (a spring, see settings_animate).
     {
         f32 r[4];
         nav_rect(SW.page, r);
@@ -1053,7 +1026,6 @@ static void draw_sidebar(const Theme *t, const SColors *c)
     }
 }
 
-// on: animated position 0..1 (SW.tog), the knob slides and the track color crossfades.
 static void draw_toggle(f32 x, f32 cy, f32 on, bool hov, const Theme *t, const SColors *c)
 {
     f32 w = toggle_w(), h = SSR(24), y = floorf(cy - h * 0.5f);
@@ -1061,7 +1033,6 @@ static void draw_toggle(f32 x, f32 cy, f32 on, bool hov, const Theme *t, const S
     u32 track = color_mix(off, t->accent, on);
     r_rect(x, y, w, h, track, h * 0.5f);
     f32 k = h - SSR(4), kx = floorf(x + SSR(2) + (w - SSR(4) - k) * on + 0.5f);
-    // A white knob disappears on a light accent (a grey or pastel system color): go dark there.
     u32 knob = c->knob;
     f32 lum = (0.299f * (f32)(t->accent & 255) + 0.587f * (f32)((t->accent >> 8) & 255) + 0.114f * (f32)((t->accent >> 16) & 255)) / 255.f;
     if (lum > 0.62f) knob = color_mix(knob, RGBA(24, 24, 26, 255), on);
@@ -1238,7 +1209,6 @@ static void draw_recorder(const Theme *t, const SColors *c)
 
     text_draw(FONT_TEXT, SSC(16), px + SSR(26), py + SSR(42), ss((Str){ L"Задайте сочетание…", L"Set Hotkey…" }), -1, t->faint);
 
-    // The keys: the ones held right now while a chord is being pressed, otherwise the result.
     KeyTok tk[5];
     int n = 0;
     bool live = (SW.rec.held || SW.rec.key) && !SW.rec.used;
@@ -1274,7 +1244,6 @@ static void draw_recorder(const Theme *t, const SColors *c)
         text_draw_fit(FONT_TEXT, fs, floorf(px + (pw - w) * 0.5f), baseline_for(FONT_TEXT, fs, py + SSR(180)), pw - SSR(40), msg, -1, msg_col, false);
     }
 
-    // Bottom bar: what is being assigned on the left (like Raycast), actions on the right.
     f32 by = py + ph - SSR(56), bcy = by + SSR(28);
     r_rect(px, by, pw, 1, c->sep, 0);
     draw_app_tile(px + SSR(22), bcy - SSR(11), SSR(22));
@@ -1315,7 +1284,6 @@ static void settings_draw(void)
     const Theme *t = &U.th;
     SColors c = scolors(t->dark);
     if (!SW.mica) r_rect(0, 0, (f32)SW.W, (f32)SW.H, c.bg, 0);
-    settings_layout();
     SW.scroll = CLAMP(SW.scroll, 0.f, max_scroll_s());
 
     draw_sidebar(t, &c);
@@ -1396,7 +1364,6 @@ static void settings_snap_motion(void)
     SW.page_t = SW.pop_t = SW.rec_t = 1.f;
 }
 
-// Advances every animated value by dt; returns true while anything still moves.
 static bool settings_animate(f32 dt)
 {
     if (!anims_enabled()) {
@@ -1434,7 +1401,7 @@ static void settings_render(void)
     f32 dt = (f32)(now - SW.last_frame);
     if (dt > 0.1f || dt <= 0) dt = 1.f / 60.f;
     SW.last_frame = now;
-    settings_layout();  // the animation targets depend on the layout (DPI, window size)
+    settings_layout();
     SW.animating = settings_animate(dt);
     R.scale = 1.f;
     r_begin();
@@ -1450,7 +1417,6 @@ static void settings_render(void)
     SW.dirty = false;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Input
 
 static SHit settings_hit(int mx, int my)
@@ -1747,9 +1713,6 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg) {
     case WM_NCCALCSIZE:
         if (wp) {
-            // No system frame: the client area is the whole window (DWM still draws the border,
-            // rounded corners and shadow). Maximized windows hang over the screen edge by the
-            // frame size, keep the content on screen.
             if (IsZoomed(h)) {
                 NCCALCSIZE_PARAMS *p = (NCCALCSIZE_PARAMS *)lp;
                 int f = GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
@@ -1785,7 +1748,7 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         r_target_resize(&SW.target, SW.W, SW.H);
         SW.pop_open = false;
         settings_invalidate();
-        settings_render();  // keep up with live resizing (the modal size loop starves our main loop)
+        settings_render();
         return 0;
     }
     case WM_DPICHANGED: {
@@ -1842,7 +1805,7 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_KEYUP:
     case WM_SYSKEYUP: {
         bool down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
-        if (SW.rec.open) {  // only without the hook: normally keys arrive as WM_APP_KEYCAP
+        if (SW.rec.open) {
             rec_key(sided_vk(wp, lp), down);
             return 0;
         }
@@ -1874,7 +1837,6 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_ACTIVATE:
         SW.active = LOWORD(wp) != WA_INACTIVE;
-        // Our process in front: the raw-input watchdog would keep the hook from seeing the hotkey.
         if (SW.active) hook_watchdog_off();
         if (!SW.active) {
             end_edit(true);
@@ -1905,8 +1867,6 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     }
     return DefWindowProcW(h, msg, wp, lp);
 }
-
-// ---------------------------------------------------------------------------------------------
 
 static void settings_open(void)
 {
@@ -1955,7 +1915,6 @@ static void settings_open(void)
     GetMonitorInfoW(mon, &mi);
     SW.dpi = monitor_dpi(mon);
     SW.s = (f32)SW.dpi / 96.f;
-    // No caption: the window draws its own title strip and buttons (see WM_NCCALCSIZE).
     DWORD style = WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX;
     DWORD ex = WS_EX_NOREDIRECTIONBITMAP | WS_EX_APPWINDOW;
     RECT wa = mi.rcWork;
@@ -1990,7 +1949,6 @@ static void settings_open(void)
     SetForegroundWindow(SW.hwnd);
 }
 
-// Device loss: the renderer is rebuilt from scratch, our swap chain with it.
 static void settings_device_lost(void) { r_target_release(&SW.target); }
 
 static void settings_device_restored(void)

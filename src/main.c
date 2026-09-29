@@ -1,16 +1,4 @@
 // MixLauncher — a native Start-menu / Spotlight-style launcher for Windows.
-//
-// Unity build: this file includes every module, so the whole program is one translation unit
-// compiled with a single compiler invocation (see build.bat). No runtime dependencies beyond
-// what ships with Windows 10/11.
-//
-// Threads:
-//   main      window, input, rendering (D3D11 + DirectComposition)
-//   hook      low-level keyboard hook for the launcher hotkey (never blocks)
-//   indexer   shell:AppsFolder enumeration + Start menu folder watching
-//   icons x2  shell icon extraction
-//   everything  Everything IPC queries and ranking
-//   launch    ShellExecuteEx and friends
 
 #include "base.h"
 #include "com_min.h"
@@ -116,8 +104,6 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
-        // A Win-tap hotkey belongs to the hook: DefWindowProc turns a lone Win in the active window
-        // into "open Start" (SC_TASKLIST), which must not happen while we are in front.
         if ((wp == VK_LWIN || wp == VK_RWIN) && hotkey_is_win_tap()) return 0;
         if (ui_keydown(wp)) return 0;
         break;
@@ -215,7 +201,6 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         tb_sync();
         return 0;
     case WM_APP_CLICK_OUTSIDE:
-        // Clicks go on to their target; focus is left to whatever the user clicked.
         if (U.visible && !U.closing && !U.menu_open && !g_pinned) {
             U.no_focus_restore = true;
             ui_hide();
@@ -253,7 +238,6 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     return DefWindowProcW(h, msg, wp, lp);
 }
 
-// ---------------------------------------------------------------------------------------------
 // Diagnostics modes (used during development; harmless in release)
 
 static void write_utf8_file(const WCHAR *path, Buf *b) { write_file_atomic(path, b->data ? b->data : "", (DWORD)b->len); }
@@ -284,7 +268,6 @@ static FileResults *g_test_result;
 static FileResults *g_test_pages[4];
 static int g_test_page_count;
 
-// The first result, then up to 4 further pages (as the list asks for them when scrolled).
 static LRESULT CALLBACK test_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (msg == WM_APP_FILES_READY) {
@@ -340,8 +323,6 @@ static int cmd_test_everything(const WCHAR *query, const WCHAR *out)
     return 0;
 }
 
-// ---------------------------------------------------------------------------------------------
-
 static void init_paths(void)
 {
     GetModuleFileNameW(NULL, g_exe_path, MAX_PATH);
@@ -359,7 +340,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     (void)cmdline_a;
     (void)show;
     time_init();
-    opt_out_of_throttling(NULL);  // keep the keyboard hook responsive when idle in the background
+    opt_out_of_throttling(NULL);
     g_lang_ru = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_RUSSIAN;
     init_paths();
     elevation_init();
@@ -379,8 +360,6 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
             if (other) PostMessageW(other, WM_APP_EXIT, 0, 0);
             return 0;
         } else if (!wcscmp(argv[i], L"--test-unelevated") && i + 1 < argc) {
-            // Diagnostics: start a hidden cmd through Explorer that writes its own groups (incl.
-            // the integrity level) into the given file.
             CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
             WCHAR args[MAX_PATH + 64];
             _snwprintf(args, countof(args), L"/c whoami /groups > \"%s\"", argv[i + 1]);
@@ -401,10 +380,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
             i++;
             opt_theme = !wcscmp(argv[i], L"dark") ? 1 : !wcscmp(argv[i], L"light") ? 2 : 0;
         } else if (!wcscmp(argv[i], L"--other-monitor")) {
-            g_other_monitor = true;  // debugging: normal behaviour on a monitor without the mouse
+            g_other_monitor = true;
             g_ktrace_on = true;      // + trace of Win key decisions in log.txt on exit
         } else if (!wcscmp(argv[i], L"--pin")) {
-            g_pinned = true;  // debugging: other monitor, no focus, no hooks/hotkeys/tray
+            g_pinned = true;
         } else if (!wcscmp(argv[i], L"--settings")) {
             opt_settings = true;
         } else if (!wcscmp(argv[i], L"--show")) {
@@ -415,7 +394,6 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
         }
     }
 
-    // --pin (debugging, no hook/tray/focus) may run next to the instance in daily use.
     HANDLE mutex = g_pinned ? INVALID_HANDLE_VALUE : CreateMutexW(NULL, TRUE, L"MixLauncher.SingleInstance.7f3c1e2a");
     if (!g_pinned && (GetLastError() == ERROR_ALREADY_EXISTS || !mutex)) {  // no mutex: owned by an elevated instance
         HWND other = FindWindowW(WINDOW_CLASS, NULL);
@@ -425,7 +403,6 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
         }
         return 0;
     }
-    (void)mutex;
 
     config_load();
     if (opt_backdrop >= 0) g_cfg.backdrop = opt_backdrop;
@@ -458,7 +435,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     theme_update();
     U.backdrop_ok = backdrop_apply(g_hwnd);
     SetLayeredWindowAttributes(g_hwnd, 0, 255, LWA_ALPHA);  // layered: open/close fades animate its alpha
-    BOOL no_dwm_anim = TRUE;  // our own fade only, also when shown as an app window (fullscreen case)
+    BOOL no_dwm_anim = TRUE;
     DwmSetWindowAttribute(g_hwnd, 3 /*DWMWA_TRANSITIONS_FORCEDISABLED*/, &no_dwm_anim, sizeof no_dwm_anim);
 
     if (!font_init()) {
@@ -486,8 +463,6 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
 
     g_wm_taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
     ChangeWindowMessageFilterEx(g_hwnd, g_wm_taskbar_created, MSGFLT_ALLOW, NULL);
-    // We run elevated: let the messages of Explorer (tray icon) and of our own tools (build.bat
-    // asks a running instance to exit) through UIPI.
     uipi_allow(g_hwnd, WM_APP_TRAY);
     uipi_allow(g_hwnd, WM_APP_EXIT);
     uipi_allow(g_hwnd, WM_APP_SHOW);
@@ -521,10 +496,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
             rendered = true;
             anim |= U.animating;
         }
-        // Composition swap chains give no back-pressure (DWM just takes the newest frame): while
-        // animating, wait for the compositor so we produce exactly one frame per refresh. Single
-        // updates (a keystroke) are presented immediately.
-        if (anim) DwmFlush();
+        if (anim) DwmFlush();  // composition swap chains give no back-pressure
         if (rendered) continue;
         MsgWaitForMultipleObjectsEx(0, NULL, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
     }

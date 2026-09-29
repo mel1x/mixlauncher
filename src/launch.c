@@ -1,5 +1,4 @@
-// launch.c — executes actions on a dedicated STA thread so a slow ShellExecuteEx (network
-// paths, "Open with" dialogs, cold shell extensions) can never stall the UI or the next Win press.
+// launch.c — runs actions on a dedicated STA thread so a slow launch never blocks the UI.
 
 enum { ACT_OPEN, ACT_REVEAL, ACT_RUNAS, ACT_PROPERTIES };
 
@@ -60,8 +59,6 @@ static bool shell_exec_ex(const WCHAR *verb, const WCHAR *file, const WCHAR *dir
 
 static bool shell_exec(const WCHAR *verb, const WCHAR *file, const WCHAR *dir, DWORD *err) { return shell_exec_ex(verb, file, dir, err, false); }
 
-// Start-menu items: go through shell:AppsFolder (keeps AUMID, arguments, taskbar grouping).
-// Some entries (steam:// links, odd shortcuts) do not parse there; fall back to the target.
 static void app_exec(const WCHAR *verb, const WCHAR *app_uri, const WCHAR *path)
 {
     DWORD err = 0;
@@ -127,8 +124,6 @@ static void launch_exec(LaunchJob *j)
     }
     switch (j->act) {
     case ACT_OPEN:
-        // We run as administrator; a normal open goes through Explorer so the app gets the user's
-        // normal rights. Only if Explorer is unavailable do we start it ourselves.
         if (j->is_app) {
             const WCHAR *what = wcsstr(j->target, L"://") ? j->target : app_uri;  // steam:// etc. directly
             if (!g_elevated || !shell_exec_unelevated(what, NULL, NULL, NULL)) app_exec(NULL, app_uri, j->path);

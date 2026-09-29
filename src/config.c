@@ -1,5 +1,4 @@
-// config.c — tiny ini reader. The file lives in %LOCALAPPDATA%\MixLauncher\config.ini and is
-// created with commented defaults on first run.
+// config.c — tiny ini reader for %LOCALAPPDATA%\MixLauncher\config.ini.
 
 enum { BACKDROP_SOLID, BACKDROP_ACRYLIC, BACKDROP_BLUR };
 
@@ -7,9 +6,6 @@ enum { BACKDROP_SOLID, BACKDROP_ACRYLIC, BACKDROP_BLUR };
 enum { TBI_DIAMOND, TBI_GRID, TBI_LINES, TBI_CUSTOM, TBI__COUNT };
 static const char *const k_tbi_names[TBI__COUNT] = { "diamond", "grid", "lines", "custom" };
 
-// The launcher hotkey: modifiers that must be held + a key. The key may itself be a modifier:
-// then the hotkey is a tap of that key alone ("win", "rctrl"), otherwise a combination
-// ("alt+space", "win+d") or a single key ("f13").
 enum { HK_CTRL = 1, HK_ALT = 2, HK_SHIFT = 4, HK_WIN = 8 };
 #define VK_ANYWIN 0x07  // unassigned VK code, used for "either Win key"
 
@@ -28,11 +24,10 @@ typedef struct Config {
     bool  hide_uninstallers;
     int   keep_query_seconds;
     bool  animations;
-    bool  taskbar_button;   // our button over the Windows 11 Start button (taskbar.c)
+    bool  taskbar_button;
     int   taskbar_icon;     // TBI_*
     WCHAR taskbar_icon_path[MAX_PATH];  // TBI_CUSTOM: PNG/ICO/JPG
-    // Animation timings (milliseconds unless noted); see the "Animation" settings page.
-    int   anim_speed;       // global speed, percent: 200 = everything twice as fast
+    int   anim_speed;
     int   anim_open_ms, anim_close_ms;
     int   anim_open_scale;  // content scale the window opens from, percent
     int   anim_cascade;     // rows cascade in after opening (1/0)
@@ -159,7 +154,6 @@ static const char k_default_config_en[] =
     "anim_menu_ms = 140\r\n"
     "anim_page_ms = 220\r\n";
 
-// ---------------------------------------------------------------------------------------------
 // Hotkey names
 
 typedef struct KeyName { u8 vk; const char *name; const WCHAR *label; } KeyName;
@@ -181,7 +175,6 @@ static const KeyName k_key_names[] = {
     { VK_DECIMAL, "num.", L"Num ." }, { VK_DIVIDE, "num/", L"Num /" },
 };
 
-// Which modifier a key belongs to (generic, left, right or "either Win"); 0 for other keys.
 static u8 vk_mod_bit(u32 vk)
 {
     switch (vk) {
@@ -242,7 +235,6 @@ static void key_name(u32 vk, char *out, size_t cap)
     else snprintf(out, cap, "vk%02x", vk & 0xFF);
 }
 
-// Label for a keycap. *side gets "L"/"R" for left/right specific modifiers.
 static void key_label(u32 vk, WCHAR *out, int cap, const WCHAR **side)
 {
     *side = NULL;
@@ -265,7 +257,6 @@ static void key_label(u32 vk, WCHAR *out, int cap, const WCHAR **side)
     out[cap - 1] = 0;
 }
 
-// "ctrl+alt+k" -> Hotkey. The last token is the key; the ones before it must be modifiers.
 static bool hotkey_parse(const WCHAR *s, Hotkey *out)
 {
     char buf[128];
@@ -309,8 +300,6 @@ static void hotkey_format(Hotkey h, WCHAR *out, int cap)
     strcat(buf, key);
     utf8_to_w(buf, -1, out, cap);
 }
-
-// ---------------------------------------------------------------------------------------------
 
 static void config_anim_defaults(Config *c)
 {
@@ -358,7 +347,6 @@ static bool parse_bool(const char *v) { return v[0] == '1' || v[0] == 'y' || v[0
 
 static void config_path(WCHAR *out) { data_path(out, L"config.ini"); }
 
-// Current value of a setting as written to the file; false for unknown keys.
 static bool config_value(const char *k, char *out, size_t cap)
 {
     if (!strcmp(k, "hotkey")) w_to_utf8(g_cfg.hotkey, -1, out, (int)cap);
@@ -390,8 +378,6 @@ static bool config_value(const char *k, char *out, size_t cap)
     return true;
 }
 
-// Rewrite the whole file from the current template with the current values (used to migrate
-// files written by older versions, so their comments describe the settings that exist now).
 static void config_write_all(void)
 {
     const char *def = g_lang_ru ? k_default_config_ru : k_default_config_en;
@@ -441,7 +427,7 @@ static void config_load(void)
         free(b.data);
         return;
     }
-    int old_win_key = -1;  // older versions: "win_key" toggle + an additional "hotkey"
+    int old_win_key = -1;
     char *cur = text;
     if ((u8)cur[0] == 0xEF && (u8)cur[1] == 0xBB && (u8)cur[2] == 0xBF) cur += 3;
     char *line;
@@ -482,7 +468,6 @@ static void config_load(void)
         else if (!_stricmp(k, "anim_page_ms")) g_cfg.anim_page_ms = CLAMP(atoi(v), 0, 800);
     }
     free(text);
-    // One hotkey now: the Win key if it was on, otherwise the former additional shortcut.
     if (old_win_key == 1) wcopy(g_cfg.hotkey, countof(g_cfg.hotkey), L"win");
     if (!hotkey_parse(g_cfg.hotkey, &g_cfg.hk) || !g_cfg.hk.vk) {
         wcopy(g_cfg.hotkey, countof(g_cfg.hotkey), L"win");
@@ -492,7 +477,6 @@ static void config_load(void)
     if (old_win_key >= 0) config_write_all();
 }
 
-// Rewrite a single "key = value" line in place, keeping comments and layout intact.
 static void config_set(const char *key, const char *value)
 {
     WCHAR path[MAX_PATH];

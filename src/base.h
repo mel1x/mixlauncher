@@ -1,5 +1,4 @@
 // base.h — types, arenas, strings, hashing, time, logging.
-// Everything in this project is compiled as a single translation unit (see main.c).
 #pragma once
 
 #ifndef UNICODE
@@ -80,13 +79,8 @@ typedef double   f64;
 #define CLAMP(v, lo, hi) ((v) < (lo) ? (lo) : (v) > (hi) ? (hi) : (v))
 #define SAFE_RELEASE(p) do { if (p) { (p)->lpVtbl->Release(p); (p) = NULL; } } while (0)
 
-// Strings are UTF-16 everywhere: that is what Win32, the shell and Everything speak.
-// TR() picks the UI language once at startup.
 static bool g_lang_ru;
 #define TR(ru, en) (g_lang_ru ? L##ru : L##en)
-
-// ---------------------------------------------------------------------------------------------
-// Arena: reserve a big virtual range once, commit on demand, free everything at once.
 
 typedef struct Arena {
     u8    *base;
@@ -110,7 +104,6 @@ static void *arena_push(Arena *a, size_t size)
     if (end > a->committed) {
         size_t nc = (end + 0xFFFF) & ~(size_t)0xFFFF;
         if (nc > a->cap || !VirtualAlloc(a->base + a->committed, nc - a->committed, MEM_COMMIT, PAGE_READWRITE)) {
-            // Out of reserved space: this is a programming error (reserves are huge), fail loudly.
             FatalAppExitW(0, L"MixLauncher: arena out of memory");
         }
         a->committed = nc;
@@ -136,7 +129,6 @@ static void arena_release(Arena *a)
     memset(a, 0, sizeof(*a));
 }
 
-// ---------------------------------------------------------------------------------------------
 // Wide string helpers
 
 static int wlen(const WCHAR *s) { return s ? (int)wcslen(s) : 0; }
@@ -199,7 +191,6 @@ static bool wends_with_i(const WCHAR *s, int n, const WCHAR *suffix)
     return _wcsnicmp(s + n - m, suffix, m) == 0;
 }
 
-// FNV-1a over UTF-16 code units. Case-insensitive variant folds with CharLower semantics.
 static u64 hash_wstr(const WCHAR *s, int len)
 {
     u64 h = 1469598103934665603ull;
@@ -252,7 +243,6 @@ static int w_to_utf8(const WCHAR *s, int n, char *out, int cap)
     return r;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Time
 
 static f64 g_qpc_inv;
@@ -287,7 +277,6 @@ static i64 filetime_now(void)
     return ((i64)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Paths & logging
 
 static WCHAR g_data_dir[MAX_PATH];   // %LOCALAPPDATA%\MixLauncher
@@ -416,7 +405,6 @@ static void buf_put_w(Buf *b, const WCHAR *s)
     buf_put(b, tmp, (size_t)n);
 }
 
-// Split a buffer into lines in place. Returns next line start or NULL at end.
 static char *next_line(char **cursor)
 {
     char *s = *cursor;
@@ -434,7 +422,6 @@ static char *next_line(char **cursor)
     return line;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Messages posted to the main window by worker threads.
 
 enum {
@@ -447,9 +434,9 @@ enum {
     WM_APP_EXIT,
     WM_APP_LAUNCH_FAILED,        // lParam: heap WCHAR* key of item that failed
     WM_APP_CLICK_OUTSIDE,        // mouse button pressed outside the open launcher
-    WM_APP_SETTINGS,             // open the settings window (second instance started with --settings)
-    WM_APP_KEYCAP,               // hook -> settings window while recording a hotkey: wParam vk, lParam 1 down / 0 up
-    WM_APP_TASKBAR,              // taskbar.c worker: the Start button moved (or appeared/vanished)
+    WM_APP_SETTINGS,
+    WM_APP_KEYCAP,
+    WM_APP_TASKBAR,
 };
 
 static HWND g_hwnd;   // main window, target of all worker notifications

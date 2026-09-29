@@ -1,21 +1,4 @@
 // taskbar.c — our button over the Windows 11 Start button.
-//
-// Nothing is injected into Explorer. A worker thread finds the Start button of every taskbar
-// through UI Automation (AutomationId "StartButton") and follows its position; the main thread
-// keeps one small window per taskbar exactly on top of it. That window is a child of the taskbar
-// window itself (like FluentFlyout's taskbar widget), so it moves, hides and auto-hides with the
-// taskbar and never fights for z-order over fullscreen apps. It is a layered window drawn in
-// software (a few thousand pixels): hover and press fade like the system buttons. Left click
-// toggles the launcher; right click asks the real Start button for its context menu (Win+X).
-//
-// The icon (setting "taskbar_icon"): a diamond of four rounded squares, a 2x2 grid, a search field
-// with result lines, or the user's own picture. Under it a plate in the taskbar's own color
-// (sampled from the screen right next to the button) hides the Windows logo, so the icon can have
-// any shape and the system icon size.
-//
-// Following the button: a cheap poll of the cached element's bounds (about 0.3 ms per call), every
-// 500 ms when idle and every frame for a moment after windows appear or disappear (with centered
-// taskbar icons the Start button slides when an app opens or closes).
 
 #define TB_MAX 4
 #define TB_CLASS L"MixLauncherStartButton"
@@ -27,14 +10,19 @@ static const GUID ML_IID_IUIAutomationElement3 = { 0x8471df34, 0xaee0, 0x4a01, {
 
 typedef struct TbButton {
     HWND taskbar, wnd;
-    RECT screen;          // where the Start button is (screen, physical pixels)
+    RECT screen;
     int w, h;
     bool hover, press;
     f32 hover_t, press_t;
     f64 last_anim;
-    COLORREF plate;       // taskbar color next to the button (hides the Windows logo under our icon)
+    COLORREF plate;
     bool plate_ok;
-    u32 *img;             // TBI_CUSTOM: the picture, premultiplied BGRA, img_n x img_n
+    HDC dc;               // reusable w x h bitmap for UpdateLayeredWindow
+    HBITMAP bmp;
+    u32 *bits;
+    int bmp_w, bmp_h;
+    f64 sampled;          // last plate color sample
+    u32 *img;
     int img_n;
     u32 img_gen;
 } TbButton;
@@ -47,17 +35,16 @@ static struct {
     struct { HWND taskbar; RECT r; } found[TB_MAX];
     int nfound;
     // requests to the worker
-    volatile LONG menu_for;   // 1 + index of the taskbar whose Start button should show its menu
+    volatile LONG menu_for;
     volatile LONG reset;      // Explorer restarted: drop cached elements
     volatile f64 fast_until;  // poll every frame until this time
     // main thread
     TbButton b[TB_MAX];
     int n;
     bool light;
-    u32 icon_gen;         // bumped when the icon setting changes (custom pictures reload)
+    u32 icon_gen;
 } TB = { .menu_for = 0, .icon_gen = 1 };
 
-// Screen rects of our buttons for the mouse hook (a click there is not "outside the launcher").
 static RECT g_tb_hit[TB_MAX];
 static volatile LONG g_tb_hit_count;
 
@@ -69,7 +56,6 @@ static bool tb_hit(POINT pt)
     return false;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Worker: UI Automation
 
 static int tb_taskbars(HWND *out)
@@ -81,10 +67,19 @@ static int tb_taskbars(HWND *out)
     return n;
 }
 
+static volatile LONG g_tb_centered = 1;  // taskbar icons centered: the Start button moves with them
+
+static bool tb_read_centered(void)
+{
+    DWORD v = 1, sz = sizeof v;
+    RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", L"TaskbarAl", RRF_RT_REG_DWORD, NULL, &v, &sz);
+    return v != 0;
+}
+
 static void CALLBACK tb_winevent(HWINEVENTHOOK hook, DWORD ev, HWND h, LONG obj, LONG child, DWORD tid, DWORD time)
 {
     (void)hook, (void)ev, (void)tid, (void)time;
-    // A top-level window appeared or went away: its taskbar button may shift the Start button.
+    if (!g_tb_centered || GetWindow(h, GW_OWNER) || (GetWindowLongW(h, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)) return;
     if (obj == OBJID_WINDOW && child == CHILDID_SELF && h && GetAncestor(h, GA_ROOT) == h) {
         TB.fast_until = time_now() + 0.8;
         SetEvent(TB.wake);
@@ -120,10 +115,11 @@ static DWORD WINAPI tb_thread(void *param)
     for (;;) {
         f64 now = time_now();
         bool fast = now < TB.fast_until;
-        MsgWaitForMultipleObjects(1, &TB.wake, FALSE, !TB.enabled ? INFINITE : fast ? 15 : 500, QS_ALLINPUT);
+        MsgWaitForMultipleObjects(1, &TB.wake, FALSE, !TB.enabled ? INFINITE : fast ? 15 : g_tb_centered ? 500 : 1000, QS_ALLINPUT);
         MSG msg;
         while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) DispatchMessageW(&msg);
         if (!TB.enabled) continue;
+        if (!fast) g_tb_centered = tb_read_centered();
         if (InterlockedExchange(&TB.reset, 0)) {
             for (int i = 0; i < TB_MAX; i++) SAFE_RELEASE(els[i]);
             memset(bars, 0, sizeof bars);
@@ -141,8 +137,6 @@ static DWORD WINAPI tb_thread(void *param)
                 SAFE_RELEASE(els[i]);
                 bars[i] = cur[i];
             }
-            // Finding the button walks the taskbar's tree (~100 ms): only when needed, and not
-            // more than once a second while it is missing (taskbar still starting).
             if (!els[i] && cond && time_now() >= retry_at) {
                 IUIAutomationElement *root = NULL;
                 if (SUCCEEDED(IUIAutomation_ElementFromHandle(uia, cur[i], &root)) && root) {
@@ -183,8 +177,6 @@ static DWORD WINAPI tb_thread(void *param)
         bool changed = nf != last_n;
         for (int i = 0; i < nf && !changed; i++)
             if (memcmp(&rs[i], &last[i], sizeof(RECT))) changed = true;
-        // Now and then also without a change: the main thread re-checks that our window is still
-        // above the taskbar's own content.
         if (changed || time_now() - last_post > 2.0) {
             last_post = time_now();
             AcquireSRWLockExclusive(&TB.lock);
@@ -204,7 +196,6 @@ static DWORD WINAPI tb_thread(void *param)
     return 0;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Main thread: the button windows
 
 static bool taskbar_light(void)
@@ -230,10 +221,19 @@ static void tb_over(f32 *c, f32 *a, const f32 *col, f32 alpha)
     *a = alpha + *a * (1.f - alpha);
 }
 
-// The taskbar's color right of the button (above/below the neighbour's highlight). Read from the
-// screen, so it follows Mica tint, transparency and theme.
+static void tb_free_bitmap(TbButton *b)
+{
+    if (b->dc) DeleteDC(b->dc);
+    if (b->bmp) DeleteObject(b->bmp);
+    b->dc = NULL;
+    b->bmp = NULL;
+    b->bits = NULL;
+    b->bmp_w = b->bmp_h = 0;
+}
+
 static bool tb_sample(TbButton *b)
 {
+    b->sampled = time_now();
     HDC sdc = GetDC(NULL);
     if (!sdc) return false;
     int x = b->screen.right + 3, h = b->screen.bottom - b->screen.top;
@@ -248,7 +248,6 @@ static bool tb_sample(TbButton *b)
     return !same;
 }
 
-// Loads a picture (PNG, ICO, JPG, BMP) fitted into n x n, premultiplied BGRA; NULL on failure.
 static u32 *tb_load_image(const WCHAR *path, int n)
 {
     static const GUID clsid = { 0xcacaf262, 0x9370, 0x4615, { 0xa1, 0x3b, 0x9f, 0x55, 0x39, 0xda, 0x4c, 0x0a } };
@@ -306,7 +305,6 @@ done:
     return out;
 }
 
-// Bilinear sample of a premultiplied n x n picture at (x, y) in its pixels; returns alpha, color in c.
 static f32 tb_sample_img(const u32 *img, int n, f32 x, f32 y, f32 *c)
 {
     x -= 0.5f;
@@ -327,7 +325,6 @@ static f32 tb_sample_img(const u32 *img, int n, f32 x, f32 y, f32 *c)
     return acc[3] / 255.f;
 }
 
-// Built-in icons on the 24 px grid (u = one grid pixel): adds the marks at (fx, fy) over c/a.
 static void tb_shape(int style, f32 fx, f32 fy, f32 u, f32 dim, const f32 *fg, f32 *c, f32 *a)
 {
     if (style == TBI_GRID) {
@@ -338,7 +335,6 @@ static void tb_shape(int style, f32 fx, f32 fy, f32 u, f32 dim, const f32 *fg, f
             if (m > 0.f) tb_over(c, a, fg, m * (d == 0 ? 1.f : dim));
         }
     } else if (style == TBI_LINES) {
-        // A search field with two result lines under it: the launcher in miniature.
         f32 m = CLAMP(0.5f - (fabsf(tb_sdbox(fx, fy + 5.2f * u, 9.5f * u, 3.1f * u, 3.1f * u)) - 0.8f * u), 0.f, 1.f);
         if (m > 0.f) tb_over(c, a, fg, m);
         m = CLAMP(0.5f - tb_sdbox(fx + 1.5f * u, fy - 1.8f * u, 8.f * u, 1.f * u, 1.f * u), 0.f, 1.f);
@@ -361,24 +357,27 @@ static void tb_render(TbButton *b)
 {
     int w = b->w, h = b->h;
     if (w <= 0 || h <= 0 || !b->wnd) return;
-    BITMAPINFO bi;
-    memset(&bi, 0, sizeof bi);
-    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bi.bmiHeader.biWidth = w;
-    bi.bmiHeader.biHeight = -h;
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    void *bits = NULL;
-    HDC dc = CreateCompatibleDC(NULL);
-    HBITMAP bmp = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, NULL, 0);
-    if (!bmp) {
-        DeleteDC(dc);
-        return;
+    if (!b->bmp || b->bmp_w != w || b->bmp_h != h) {
+        tb_free_bitmap(b);
+        BITMAPINFO bi;
+        memset(&bi, 0, sizeof bi);
+        bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bi.bmiHeader.biWidth = w;
+        bi.bmiHeader.biHeight = -h;
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        b->dc = CreateCompatibleDC(NULL);
+        b->bmp = CreateDIBSection(b->dc, &bi, DIB_RGB_COLORS, (void **)&b->bits, NULL, 0);
+        if (!b->bmp) {
+            tb_free_bitmap(b);
+            return;
+        }
+        SelectObject(b->dc, b->bmp);
+        b->bmp_w = w;
+        b->bmp_h = h;
     }
-    HGDIOBJ old = SelectObject(dc, bmp);
 
     f32 s = (f32)monitor_dpi(MonitorFromWindow(b->taskbar, MONITOR_DEFAULTTONEAREST)) / 96.f;
-    // The Windows logo is 24 px (logical) and sits in the square end of the button.
     f32 logo = floorf(24.f * s + 0.5f), plate = logo + 2.f * floorf(1.f * s + 0.5f);
     f32 cx = (f32)w > (f32)h * 1.05f ? (f32)w - (f32)h * 0.475f : (f32)w * 0.5f, cy = (f32)h * 0.5f;
     cx = floorf(cx) + ((int)logo & 1 ? 0.5f : 0.f);
@@ -395,7 +394,6 @@ static void tb_render(TbButton *b)
     plate_c[1] = (f32)GetGValue(pc) / 255.f;
     plate_c[2] = (f32)GetBValue(pc) / 255.f;
     f32 hov_a = light ? 0.055f * b->hover_t + 0.03f * b->press_t : 0.075f * b->hover_t - 0.02f * b->press_t;
-    // Pressed, the icon shrinks a little like the system icons; hovered, its dim parts light up.
     f32 zoom = 1.f - 0.08f * b->press_t, u = logo / 24.f * zoom;
     f32 dim = (light ? 0.5f : 0.42f) + 0.18f * b->hover_t;
     int style = CLAMP(g_cfg.taskbar_icon, 0, TBI__COUNT - 1);
@@ -410,7 +408,7 @@ static void tb_render(TbButton *b)
         if (!b->img) style = TBI_DIAMOND;  // file missing or unreadable
     }
 
-    u32 *px = (u32 *)bits;
+    u32 *px = b->bits;
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
             f32 fx = (f32)x + 0.5f - cx, fy = (f32)y + 0.5f - cy;
@@ -428,9 +426,7 @@ static void tb_render(TbButton *b)
             } else {
                 tb_shape(style, fx, fy, u, dim, fg, c, &a);
             }
-            // Never fully transparent: layered windows let clicks through where alpha is 0, and
-            // those would reach the real Start button.
-            if (a < 1.f / 255.f) a = 1.f / 255.f;
+            if (a < 1.f / 255.f) a = 1.f / 255.f;  // alpha 0 would pass clicks to the real button
             u32 A = (u32)(a * 255.f + 0.5f);
             u32 R = (u32)(CLAMP(c[0], 0.f, a) * 255.f + 0.5f), G = (u32)(CLAMP(c[1], 0.f, a) * 255.f + 0.5f), B = (u32)(CLAMP(c[2], 0.f, a) * 255.f + 0.5f);
             px[y * w + x] = (A << 24) | (R << 16) | (G << 8) | B;
@@ -439,10 +435,7 @@ static void tb_render(TbButton *b)
     SIZE size = { w, h };
     POINT src = { 0, 0 };
     BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
-    UpdateLayeredWindow(b->wnd, NULL, NULL, &size, dc, &src, 0, &bf, ULW_ALPHA);
-    SelectObject(dc, old);
-    DeleteObject(bmp);
-    DeleteDC(dc);
+    UpdateLayeredWindow(b->wnd, NULL, NULL, &size, b->dc, &src, 0, &bf, ULW_ALPHA);
 }
 
 static TbButton *tb_from_hwnd(HWND h)
@@ -477,7 +470,7 @@ static LRESULT CALLBACK tb_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     TbButton *b = tb_from_hwnd(h);
     switch (msg) {
     case WM_MOUSEACTIVATE:
-        return MA_NOACTIVATE;  // the taskbar must not take the focus (that would close the launcher)
+        return MA_NOACTIVATE;
     case WM_NCHITTEST:
         return HTCLIENT;
     case WM_SETCURSOR:
@@ -544,6 +537,7 @@ static void tb_destroy(TbButton *b)
     b->wnd = NULL;
     free(b->img);
     b->img = NULL;
+    tb_free_bitmap(b);
 }
 
 static void tb_publish_hits(void)
@@ -573,6 +567,8 @@ static void tb_sync(void)
                 *b = TB.b[k];
                 TB.b[k].wnd = NULL;  // taken over (with its picture)
                 TB.b[k].img = NULL;
+                TB.b[k].dc = NULL;
+                TB.b[k].bmp = NULL;
             }
         b->taskbar = f[i].taskbar;
         b->screen = f[i].r;
@@ -603,11 +599,11 @@ static void tb_sync(void)
         bool resized = w != b->w || h != b->h;
         b->w = w;
         b->h = h;
-        // The taskbar color changes with the wallpaper tint and theme: re-sampled on every sync.
-        if (tb_sample(b) || resized) tb_render(b);
         RECT cur;
         GetWindowRect(b->wnd, &cur);
         bool moved = memcmp(&cur, &b->screen, sizeof cur) != 0;
+        bool resample = moved || time_now() - b->sampled > 5.0;  // reading the screen goes through DWM
+        if ((resample && tb_sample(b)) || resized) tb_render(b);
         bool covered = GetWindow(b->wnd, GW_HWNDPREV) != NULL;  // a sibling above us
         if (moved || covered || !IsWindowVisible(b->wnd)) SetWindowPos(b->wnd, HWND_TOP, p.x, p.y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
@@ -632,7 +628,6 @@ static void tb_theme_changed(void)
     }
 }
 
-// Explorer restarted (TaskbarCreated): our windows died with the old taskbar.
 static void tb_explorer_restarted(void)
 {
     for (int i = 0; i < TB.n; i++) tb_destroy(&TB.b[i]);

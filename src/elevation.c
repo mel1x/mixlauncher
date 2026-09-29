@@ -1,14 +1,4 @@
 // elevation.c — living as an administrator process (see the manifest).
-//
-// MixLauncher requires admin rights: only then Windows lets its keyboard hook see keys aimed at
-// elevated windows (games with anti-cheat, admin consoles) and the Win key works everywhere.
-// Consequences handled here:
-//  - Apps are started through Explorer's own ShellExecute (IShellDispatch2), so they run with the
-//    user's normal rights, not as administrator. "Run as administrator" stays an explicit action.
-//  - Messages from normal-integrity processes (tray icon callbacks from Explorer, Everything's
-//    replies) are filtered by UIPI unless allowed per window.
-//  - The Run registry key does not start apps that require elevation, so "start with Windows" is a
-//    Task Scheduler task with the highest privileges.
 
 static bool g_elevated;
 
@@ -37,9 +27,6 @@ ML_GUID(ML_IID_IDispatch,              0x00020400, 0x0000, 0x0000, 0xc0, 0x00, 0
 ML_GUID(ML_IID_IShellFolderViewDual,   0xe7a1af80, 0x4d96, 0x11cf, 0x96, 0x0c, 0x00, 0x80, 0xc7, 0xf4, 0xee, 0x85);
 ML_GUID(ML_IID_IShellDispatch2,        0xa4c6892c, 0x3ba9, 0x11d2, 0x9d, 0xea, 0x00, 0xc0, 0x4f, 0xb1, 0x61, 0x62);
 
-// ShellExecute performed by Explorer (the desktop's shell view), i.e. with the rights of the
-// logged-on user instead of ours. Must be called on an STA thread. Returns false if Explorer is
-// not available; the caller then falls back to a direct ShellExecuteEx.
 static bool shell_exec_unelevated_ex(const WCHAR *file, const WCHAR *args, const WCHAR *dir, const WCHAR *verb, int show)
 {
     bool ok = false;
@@ -128,7 +115,6 @@ static bool run_tool(const WCHAR *exe, const WCHAR *args, DWORD wait_ms, DWORD *
     return done;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Start with Windows
 
 #define AUTOSTART_TASK L"MixLauncher"
@@ -165,8 +151,6 @@ static void xml_put_escaped(Buf *b, const WCHAR *s)
     }
 }
 
-// Logon task with the highest privileges; unlike schtasks' defaults: no 72-hour time limit and
-// no "only on AC power".
 static bool task_create_autostart(void)
 {
     WCHAR user[256], dom[128], name[128];
@@ -245,7 +229,7 @@ static bool autostart_get(void) { return g_elevated ? task_exists(AUTOSTART_TASK
 
 static bool autostart_set(bool on)
 {
-    if (!g_elevated) {  // development build (asInvoker): the plain Run key works
+    if (!g_elevated) {
         run_key_set(on);
         return true;
     }
@@ -254,8 +238,6 @@ static bool autostart_set(bool on)
     return !task_exists(AUTOSTART_TASK);
 }
 
-// Background housekeeping at startup: the elevated-helper task of an earlier version is not
-// needed any more, and a Run key entry cannot start an elevated app (move it to a task).
 static DWORD WINAPI elevation_housekeeping(void *param)
 {
     (void)param;

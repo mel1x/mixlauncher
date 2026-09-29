@@ -1,9 +1,4 @@
 // icons.c — asynchronous shell icon loading into a GPU atlas.
-//
-// The UI asks for an icon by key every frame it is visible. Unknown keys are queued (LIFO, so
-// what is on screen right now loads first) to two worker threads that call
-// IShellItemImageFactory, convert to premultiplied BGRA and hand the pixels back. The UI thread
-// uploads them into fixed-size atlas slots with LRU eviction.
 
 enum { ICON_KIND_APP, ICON_KIND_FILE };
 enum { ICON_EMPTY, ICON_PENDING, ICON_READY, ICON_FAILED };
@@ -41,7 +36,7 @@ static struct {
     u64 slot_owner[ICON_MAX_SLOTS];
     u32 slot_used[ICON_MAX_SLOTS];
     u32 frame;
-    int used;             // hash slots ever occupied (entries are recycled, never removed)
+    int used;
     volatile LONG gen;
 
     SRWLOCK lock;
@@ -78,7 +73,6 @@ static IconEntry *icon_entry(u64 h, bool create)
     return NULL;
 }
 
-// Drop every icon (DPI change / device re-creation). In-flight results are discarded by gen.
 static void icons_reset(int px)
 {
     InterlockedIncrement(&I.gen);
@@ -99,11 +93,9 @@ static void icons_reset(int px)
 static void icons_begin_frame(void)
 {
     I.frame++;
-    // Thousands of distinct file icons over a long session: start over rather than degrade.
     if (I.used > ICON_HASH * 3 / 4) icons_reset(I.px);
 }
 
-// Returns true and the uv rect if the icon is ready; otherwise schedules a load.
 static bool icon_get(u64 h, u8 kind, const WCHAR *path, f32 uv[4])
 {
     if (!h || !path) return false;
@@ -170,7 +162,6 @@ static int icon_alloc_slot(void)
     return best;
 }
 
-// UI thread: move finished icons into the atlas. Returns true if anything changed.
 static bool icons_process_results(void)
 {
     IconRes local[64];
@@ -213,7 +204,6 @@ static bool icons_process_results(void)
     return any;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Worker side
 
 static u32 *hbitmap_to_pixels(HBITMAP bmp, int px)
@@ -238,7 +228,6 @@ static u32 *hbitmap_to_pixels(HBITMAP bmp, int px)
         free(src);
         return NULL;
     }
-    // Alpha sanity: legacy icons may come without alpha; bitmaps may be straight alpha.
     bool any_alpha = false, straight = false;
     for (int i = 0; i < w * h; i++) {
         u32 p = src[i];
@@ -369,7 +358,6 @@ static void icons_start(int px)
     }
 }
 
-// Files with per-file icons get their own key; everything else shares one icon per extension.
 static u64 icon_key_for_file(const WCHAR *full, bool folder)
 {
     if (folder) return hash_wstr_i(full, -1) ^ 0x1111;
