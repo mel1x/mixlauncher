@@ -1,7 +1,5 @@
 // tray.c — procedural app icon, notification-area icon, autostart and dark native menus.
 
-// The icon is drawn with signed distance fields at any size: a near-black squircle with a
-// hairline edge and a white search field (pill outline + caret), i.e. the launcher itself.
 static f32 sd_round_box(f32 px, f32 py, f32 hx, f32 hy, f32 r)
 {
     f32 qx = fabsf(px) - hx + r, qy = fabsf(py) - hy + r;
@@ -59,7 +57,6 @@ static HICON app_icon_create(int S)
     return icon;
 }
 
-// Write a multi-resolution .ico (used once to produce res/mixlauncher.ico).
 static bool app_icon_write_ico(const WCHAR *path)
 {
     static const int sizes[] = { 16, 20, 24, 32, 40, 48, 64, 96, 128 };
@@ -108,8 +105,6 @@ static bool app_icon_write_ico(const WCHAR *path)
     return ok;
 }
 
-// ---------------------------------------------------------------------------------------------
-
 static NOTIFYICONDATAW g_nid;
 static UINT g_wm_taskbar_created;
 static HICON g_icon_small, g_icon_big;
@@ -129,8 +124,7 @@ static void tray_add(void)
 
 static void tray_remove(void) { Shell_NotifyIconW(NIM_DELETE, &g_nid); }
 
-// Native popup menus follow the app theme only through uxtheme's (stable, undocumented)
-// SetPreferredAppMode ordinal — the same thing Explorer's own menus use.
+// uxtheme ordinals 135/136 (SetPreferredAppMode, FlushMenuThemes), as Explorer uses them.
 static void menus_set_dark(bool dark)
 {
     static HMODULE ux;

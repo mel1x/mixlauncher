@@ -1,9 +1,4 @@
 // font.c — DirectWrite glyph rasterization into a coverage atlas, plus simple text layout.
-//
-// Glyphs are rasterized one at a time with IDWriteGlyphRunAnalysis (grayscale, natural
-// symmetric — what the Windows 11 shell uses) at 4 horizontal subpixel phases, packed into an
-// R8 atlas with a shelf packer and cached. Layout is plain cmap + advances with per-codepoint
-// font fallback, which is all a launcher needs for app and file names.
 
 enum { FONT_TEXT, FONT_TEXT_SEMIBOLD, FONT_DISPLAY, FONT_ICON, FONT__COUNT };
 
@@ -23,7 +18,7 @@ static const WCHAR *k_fallback_families[] = {
 
 static struct {
     DWFactory *dw;
-    bool v2;                  // IDWriteFactory2 available -> true grayscale rasterization
+    bool v2;
     DWFontCollection *coll;
     Face faces[FONT__COUNT + FALLBACK_COUNT];
     bool fallback_tried[FALLBACK_COUNT];
@@ -33,7 +28,7 @@ static struct {
 
 // Codepoint -> (face, glyph, advance) map, per primary font.
 typedef struct GlyphMap {
-    u32 key;          // (font << 24) | codepoint... codepoints fit in 21 bits
+    u32 key;
     u16 glyph;
     u8 face;
     u8 used;
@@ -301,9 +296,6 @@ static GlyphRaster *glyph_raster(int face_id, u16 glyph, f32 size_px, int phase)
     return NULL;
 }
 
-// ---------------------------------------------------------------------------------------------
-// Text API. Sizes are in physical pixels. Coordinates are physical pixels, y = baseline.
-
 static u32 utf16_next(const WCHAR *s, int len, int *i)
 {
     u32 c = s[*i];
@@ -334,7 +326,6 @@ static f32 text_width(int font, f32 size, const WCHAR *s, int len)
     return w;
 }
 
-// Pen x after each UTF-16 unit boundary: out[k] = x offset of unit k (out[len] = total width).
 static void text_offsets(int font, f32 size, const WCHAR *s, int len, f32 *out)
 {
     f32 w = 0;
@@ -375,7 +366,6 @@ static f32 text_draw(int font, f32 size, f32 x, f32 baseline, const WCHAR *s, in
     return pen;
 }
 
-// Draw text fitting into max_w, eliding with "…" at the end (or at the start for paths).
 static f32 text_draw_fit(int font, f32 size, f32 x, f32 baseline, f32 max_w, const WCHAR *s, int len, u32 color, bool elide_start)
 {
     if (len < 0) len = wlen(s);
@@ -393,13 +383,11 @@ static f32 text_draw_fit(int font, f32 size, f32 x, f32 baseline, f32 max_w, con
         f32 w = 0;
         int cut = 0;
         for (int i = 0; i < len;) {
-            int start = i;
             u32 cp = utf16_next(s, len, &i);
             f32 a = glyph_map(font, cp == '\t' ? ' ' : cp)->adv * size;
             if (w + a > avail) break;
             w += a;
             cut = i;
-            (void)start;
         }
         while (cut > 0 && s[cut - 1] == ' ') {
             cut--;
@@ -432,8 +420,6 @@ static void text_draw_icon(u32 codepoint, f32 size, f32 cx, f32 cy, u32 color)
 {
     WCHAR s[2] = { (WCHAR)codepoint, 0 };
     f32 w = text_width(FONT_ICON, size, s, 1);
-    // Fluent icon glyphs are designed on an em square centered on (em/2, baseline - em/2)... approximately:
-    // their visual box spans the full em from ascent. Center on the em box.
     f32 asc = font_ascent(FONT_ICON, size), desc = font_descent(FONT_ICON, size);
     f32 baseline = cy + (asc - desc) * 0.5f;
     text_draw(FONT_ICON, size, floorf(cx - w * 0.5f + 0.5f), baseline, s, 1, color);

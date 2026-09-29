@@ -1,6 +1,4 @@
-// com_min.h — minimal C declarations for COM interfaces whose SDK headers are C++-only
-// (DirectWrite, DirectComposition), plus every GUID we use, so the build does not depend
-// on which uuid library the toolchain ships.
+// com_min.h — minimal C declarations for COM interfaces whose SDK headers are C++-only.
 #pragma once
 
 #define ML_GUID(name, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8) \
@@ -27,10 +25,6 @@ ML_GUID(ML_FOLDERID_Profile,         0x5e6c858f, 0x0e22, 0x4760, 0x9a, 0xfe, 0xe
 static const PROPERTYKEY ML_PKEY_Link_TargetParsingPath = {
     { 0xb9b4b3fc, 0x2b51, 0x4a42, { 0xb5, 0xd8, 0x32, 0x41, 0x46, 0xaf, 0xcf, 0x25 } }, 2
 };
-
-// ---------------------------------------------------------------------------------------------
-// DirectWrite. Only the vtable slots we call are typed; the rest are padding. Slot numbers are
-// fixed by the ABI (verified against dwrite.h / dwrite_2.h).
 
 typedef struct DW_FONT_METRICS {
     UINT16 designUnitsPerEm;
@@ -100,7 +94,6 @@ typedef struct DWFactoryVtbl {
                                                         const void *transform, UINT32 renderingMode, UINT32 measuringMode,
                                                         FLOAT originX, FLOAT originY, DWGlyphRunAnalysis **);  // 23
     void *pad24_29[6];                                                                                // 24..29
-    // IDWriteFactory2 only — valid after QueryInterface(IID_IDWriteFactory2) succeeded.
     HRESULT (STDMETHODCALLTYPE *CreateGlyphRunAnalysis2)(DWFactory *, const DW_GLYPH_RUN *, const void *transform,
                                                          UINT32 renderingMode, UINT32 measuringMode, UINT32 gridFitMode,
                                                          UINT32 antialiasMode, FLOAT originX, FLOAT originY,
@@ -159,9 +152,6 @@ struct DWGlyphRunAnalysis { const DWGlyphRunAnalysisVtbl *lpVtbl; };
 
 typedef HRESULT (WINAPI *PFN_DWriteCreateFactory)(UINT32 factoryType, REFIID iid, IUnknown **factory);
 
-// ---------------------------------------------------------------------------------------------
-// DirectComposition: device -> target(hwnd) -> visual(content = swap chain).
-
 typedef struct DCDevice DCDevice;
 typedef struct DCTarget DCTarget;
 typedef struct DCVisual DCVisual;
@@ -202,8 +192,6 @@ typedef HRESULT (WINAPI *PFN_D3DCompile)(LPCVOID src, SIZE_T len, LPCSTR name, c
                                          ID3DInclude *include, LPCSTR entry, LPCSTR target, UINT flags1, UINT flags2,
                                          ID3DBlob **code, ID3DBlob **errors);
 
-// Undocumented but stable user32 API used as a fallback blur on systems without
-// DWMWA_SYSTEMBACKDROP_TYPE (Windows 10 / early Windows 11).
 typedef struct ML_ACCENT_POLICY {
     int accent_state;
     int accent_flags;

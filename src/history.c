@@ -1,5 +1,4 @@
 // history.c — frecency (decayed launch counts) and query memory ("for 'ch' I pick Chrome").
-// Owned by the UI thread. Persisted to history.tsv as UTF-8.
 
 #define FREC_HALF_LIFE_DAYS 14.0
 #define QMEM_HALF_LIFE_DAYS 30.0
@@ -81,7 +80,6 @@ static f64 hist_frecency(u8 type, const WCHAR *key, i64 now)
     return e ? decay(e->score, e->last, now, FREC_HALF_LIFE_DAYS) : 0;
 }
 
-// Bonus added to the match score: saturates so habits matter but cannot beat a much better match.
 static f32 frec_bonus(f64 f) { return (f32)(1800.0 * (1.0 - exp(-f / 6.0))); }
 
 static f32 qmem_bonus(u8 type, const WCHAR *key, const WCHAR *qnorm, int qlen, i64 now)
@@ -150,7 +148,6 @@ static void history_forget(u8 type, const WCHAR *key)
     }
 }
 
-// Settings → "Clear launch history": forget every launch and remembered query.
 static void history_clear(void)
 {
     if (H.entries) memset(H.entries, 0, sizeof(HistEntry) * HIST_CAP);
@@ -182,7 +179,6 @@ static void history_save(void)
         buf_put_w(&b, e->key);
         buf_put(&b, "\n", 1);
     }
-    // Keep the most recent query memories; they are cheap but scanned per keystroke.
     if (H.qcount > 1500) {
         qsort(H.qmem, H.qcount, sizeof(QueryMem), cmp_qmem_desc);
         H.qcount = 1500;

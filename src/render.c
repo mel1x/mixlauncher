@@ -1,12 +1,4 @@
 // render.c — Direct3D 11 batch renderer presented through DirectComposition.
-//
-// One pipeline, one draw call per frame: every primitive is an instance of a unit quad.
-//   mode 0: SDF rounded rectangle (fill, border, soft shadow)
-//   mode 1: glyph from the R8 coverage atlas (DirectWrite-style gamma/contrast in the shader)
-//   mode 2: icon from the premultiplied BGRA atlas
-// Each window is an RTarget: a composition swap chain with premultiplied alpha (transparent
-// pixels show the DWM backdrop behind the window) bound to the window through DirectComposition.
-// Device, shaders and the glyph/icon atlases are shared by all windows.
 
 typedef struct RInst {
     f32 x0, y0, x1, y1;
@@ -38,13 +30,9 @@ static u32 color_mix(u32 a, u32 b, f32 t)
     return r;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Motion helpers, shared by the launcher and the settings window.
 
-// Critically damped spring toward `target` (analytic step, stable for any dt). omega sets the
-// speed: the value is ~95% there after 4.7/omega seconds, velocity stays continuous when the
-// target moves again mid-flight (key repeat), which is what makes it feel native. Returns true
-// while still moving; snaps when settled.
+// Critically damped spring; ~95% there after 4.7/omega s, velocity kept when the target moves.
 static bool spring_step(f32 *x, f32 *v, f32 target, f32 omega, f32 dt)
 {
     if (omega <= 0.f) {  // zero duration: jump
@@ -65,7 +53,6 @@ static bool spring_step(f32 *x, f32 *v, f32 target, f32 omega, f32 dt)
     return true;
 }
 
-// Exponential approach for fades (hover, toggles): ~95% after 3/rate seconds.
 static bool approach(f32 *x, f32 target, f32 rate, f32 dt)
 {
     f32 d = target - *x;
@@ -126,8 +113,8 @@ typedef struct Renderer {
     RInst *inst;
     u32 count, cap;
     f32 clip[4];
-    f32 scale;          // content scale around the window center, 1 = pixel exact
-    f32 opacity;        // multiplies the alpha of everything pushed (fades of groups of primitives)
+    f32 scale;
+    f32 opacity;
 
     // CPU mirror of the glyph atlas + dirty rect (uploaded once per frame)
     u8 *glyph_cpu;
@@ -188,7 +175,6 @@ static const char k_shader_src[] =
     "  return float4(c.rgb * a, a);\n"
     "}\n";
 
-// ---------------------------------------------------------------------------------------------
 // Targets (one per window)
 
 static bool r_target_views(RTarget *t)
@@ -287,7 +273,6 @@ static void r_resize(int w, int h) { r_target_resize(&R.main, w, h); }
 // Frames built after this go to `t`.
 static void r_use(RTarget *t) { R.t = t; }
 
-// ---------------------------------------------------------------------------------------------
 // Device
 
 static void r_shutdown(void)
@@ -336,8 +321,6 @@ static bool r_init(HWND hwnd, int w, int h)
     R.opacity = 1.0f;
 
     D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0 };
-    // PREVENT_INTERNAL_THREADING_OPTIMIZATIONS: a launcher draws a few hundred quads; driver worker
-    // threads would only cost memory and wakeups.
     UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_SINGLETHREADED | D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS;
     HRESULT hr = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, flags, levels, countof(levels), D3D11_SDK_VERSION, &R.dev, NULL, &R.ctx);
     if (FAILED(hr)) hr = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, flags, levels + 1, countof(levels) - 1, D3D11_SDK_VERSION, &R.dev, NULL, &R.ctx);
@@ -456,8 +439,6 @@ static bool r_init(HWND hwnd, int w, int h)
     R.t = &R.main;
 
     if (!R.glyph_cpu) R.glyph_cpu = (u8 *)calloc(GLYPH_ATLAS, GLYPH_ATLAS);
-    // The GPU copy starts empty: mark the whole CPU mirror dirty so a device re-creation
-    // restores glyphs that are still referenced by the cache.
     R.dirty_x0 = 0;
     R.dirty_y0 = 0;
     R.dirty_x1 = GLYPH_ATLAS;
@@ -470,10 +451,8 @@ static bool r_init(HWND hwnd, int w, int h)
     return true;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Frame building
 
-// Block (bounded) until the swap chain can accept another frame. Keeps latency at one frame.
 static void r_wait_frame(void)
 {
     if (R.ok && R.t && R.t->frame_wait) WaitForSingleObjectEx(R.t->frame_wait, 100, TRUE);
@@ -603,11 +582,10 @@ static bool r_end_and_present(void)
 
     D3D11_MAPPED_SUBRESOURCE m;
     if (SUCCEEDED(ID3D11DeviceContext_Map(R.ctx, (ID3D11Resource *)R.cbuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
-        // Gamma ratios for gamma 1.8 and grayscale enhanced contrast of 1.0, matching DirectWrite defaults.
         f32 *c = (f32 *)m.pData;
         c[0] = 1.0f / (f32)t->w;
         c[1] = 1.0f / (f32)t->h;
-        c[2] = R.scale > 0 ? R.scale : 1.0f;  // content scale around the window center (open/close)
+        c[2] = R.scale > 0 ? R.scale : 1.0f;
         c[3] = 0;
         c[4] = 0.1469f / 4.f;
         c[5] = -0.8911f / 4.f;
@@ -636,7 +614,6 @@ static bool r_end_and_present(void)
     ID3D11DeviceContext_PSSetConstantBuffers(R.ctx, 0, 1, &R.cbuf);
     ID3D11ShaderResourceView *srvs[2] = { R.glyph_srv, R.icon_srv };
     ID3D11DeviceContext_PSSetShaderResources(R.ctx, 0, 2, srvs);
-    // Glyphs are pixel-aligned (point sampling) except while the content is being scaled.
     ID3D11SamplerState *samps[2] = { R.scale != 1.0f ? R.samp_linear : R.samp_point, R.samp_linear };
     ID3D11DeviceContext_PSSetSamplers(R.ctx, 0, 2, samps);
 

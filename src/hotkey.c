@@ -1,32 +1,4 @@
 // hotkey.c — the launcher hotkey, via a low-level keyboard hook on its own high-priority thread.
-//
-// Any key or combination can be the hotkey (see Hotkey in config.c), and it loses whatever it
-// did before:
-//  - a combination or a single key (Alt+Space, Win+D, F13): the key press is swallowed, so Win+D
-//    no longer shows the desktop. If Win or Alt is held, an unassigned vkE8 is injected so their
-//    release does not open the Start menu or a window menu either;
-//  - a tap of a modifier alone (Win, Right Ctrl): the launcher toggles when the key is released
-//    with nothing else pressed in between. That release is swallowed and replayed as
-//    [vkE8 down/up], key-up: the shell sees a combination, so the Start menu stays closed, while
-//    Win+E, Win+R, Win+Shift+S etc. pass through untouched.
-// The hook thread never does any real work, so it cannot hit the system's hook timeout even if
-// the UI thread is busy.
-//
-// Reliability next to other hook-based tools (AltSnap, PowerToys, AutoHotkey...):
-//  - Our own synthetic input is tagged in dwExtraInfo; input injected by other tools (which often
-//    swallow the physical Win key and replay it) is treated like real input.
-//  - Windows silently unhooks a hook that once timed out. A raw-input watchdog sees every
-//    physical press of the hotkey's key independently of the hook chain and re-installs the hook
-//    the moment a press arrives that the hook did not see. The hook is also re-armed every minute,
-//    which keeps it near the front of the chain.
-//  - While a tap key is held, a mouse hook marks clicks/wheel as a combination (Win+drag,
-//    Win+click). The same hook, while the launcher is open, closes it on a click anywhere outside
-//    of it. Otherwise it is not installed, so the mouse path is untouched the rest of the time.
-//  - Windows hides input aimed at elevated windows (games with anti-cheat, admin consoles) from
-//    hooks of unelevated processes; that is why MixLauncher runs as administrator (see manifest).
-//
-// Recording: while the settings window records a new hotkey and is in the foreground, every key
-// goes to it (WM_APP_KEYCAP) and nowhere else, so even Win, Alt+Tab or Win+D can be recorded.
 
 #define WM_HOOK_MASK (WM_APP + 100)
 #define WM_HOOK_REINSTALL (WM_APP + 101)
@@ -46,22 +18,21 @@ static struct {
     bool tap_down;              // the hotkey's tap key is held
     bool tap_armed;             // ... and nothing else happened since it went down
     DWORD tap_vk;
-    DWORD swallow_vk;           // combination key we swallowed: its repeats and release go too
+    DWORD swallow_vk;
     DWORD swallow_time;
-    bool toggle_pending;        // tap swallowed, waiting for our replayed release to go through
+    bool toggle_pending;
     DWORD pending_vk;
     UINT_PTR fallback_timer;
-    u32 hook_presses;           // physical presses of the hotkey's key seen by the hook
+    u32 hook_presses;
     u32 raw_presses;            // ... and by raw input
     u32 reinstalls;
 } K;
 
-// Debug trace of hook decisions (enabled by --other-monitor), dumped to the log on exit.
 typedef struct KeyTrace {
     DWORD time, vk, flags;
     ULONG_PTR extra;
     WPARAM wp;
-    char what;   // p = pass, s = swallow, t = toggle posted, r = raw input
+    char what;
 } KeyTrace;
 static KeyTrace g_ktrace[128];
 static volatile LONG g_ktrace_n;
@@ -99,15 +70,12 @@ static Hotkey hook_bind(void)
     return h;
 }
 
-// Keys that count as "the same key" for the watchdog: modifiers by kind, the rest by VK code
-// (raw input reports Ctrl/Alt/Shift without the side).
 static u32 key_class(u32 vk)
 {
     u8 m = vk_mod_bit(vk);
     return m ? 0x100u | m : vk;
 }
 
-// Modifiers held right now. Inside the hook the state does not include the current event yet.
 static u8 held_mods(void)
 {
     u8 m = 0;
@@ -130,7 +98,7 @@ static void watchdog_set(bool on);
 
 static void post_toggle(void)
 {
-    watchdog_set(false);  // must be off before our window takes the foreground (see watchdog_set)
+    watchdog_set(false);
     PostMessageW(g_hwnd, WM_APP_TOGGLE, 0, 0);
 }
 
@@ -142,7 +110,6 @@ static LRESULT CALLBACK ll_keyboard(int code, WPARAM wp, LPARAM lp)
     DWORD vk = k->vkCode;
 
     if (k->dwExtraInfo == ML_INJECT_MAGIC) {
-        // Our replayed tap release went through: now the launcher may take the foreground.
         if (!down && K.toggle_pending && vk == K.pending_vk) {
             K.toggle_pending = false;
             post_toggle();
@@ -151,7 +118,6 @@ static LRESULT CALLBACK ll_keyboard(int code, WPARAM wp, LPARAM lp)
         return CallNextHookEx(K.hook, code, wp, lp);
     }
 
-    // Recording a hotkey in the settings window: every key goes there, and only there.
     HWND cap = K.capture;
     if (cap && GetForegroundWindow() == cap) {
         if (!(k->scanCode & 0x200)) PostMessageW(cap, WM_APP_KEYCAP, vk, down ? 1 : 0);  // 0x200: AltGr's fake Ctrl
@@ -161,7 +127,6 @@ static LRESULT CALLBACK ll_keyboard(int code, WPARAM wp, LPARAM lp)
     Hotkey b = hook_bind();
     u8 bit = vk_mod_bit(vk);
     if (down) {
-        // Auto-repeat of a combination key we swallowed (the system never saw it go down).
         if (vk == K.swallow_vk && k->time - K.swallow_time < 1500) {
             K.swallow_time = k->time;
             return 1;
@@ -170,8 +135,6 @@ static LRESULT CALLBACK ll_keyboard(int code, WPARAM wp, LPARAM lp)
         if (K.tap_armed && vk != K.tap_vk) K.tap_armed = false;  // something else pressed: a combination
         if (!b.vk) goto pass;
         if (bit && hk_vk_match(b.vk, vk)) {
-            // The async state is not updated yet for this event: "already down" means auto-repeat.
-            // Anything else is a new press, even if we missed the last release.
             bool repeat = K.tap_down && vk == K.tap_vk && (GetAsyncKeyState((int)vk) & 0x8000);
             if (!repeat) {
                 K.tap_down = true;
@@ -199,9 +162,6 @@ static LRESULT CALLBACK ll_keyboard(int code, WPARAM wp, LPARAM lp)
             bool armed = K.tap_armed;
             K.tap_armed = false;
             if (armed && b.vk && hk_vk_match(b.vk, vk)) {
-                // The launcher is toggled only once our replayed release has come through (above):
-                // changing the foreground window while the shell still sees Win held would let it
-                // open the Start menu.
                 K.toggle_pending = true;
                 K.pending_vk = vk;
                 PostThreadMessageW(K.tid, WM_HOOK_MASK, vk, 0);
@@ -215,7 +175,7 @@ pass:
     return CallNextHookEx(K.hook, code, wp, lp);
 }
 
-static bool tb_hit(POINT pt);  // taskbar.c: our Start button (toggles the launcher itself)
+static bool tb_hit(POINT pt);
 
 static LRESULT CALLBACK ll_mouse(int code, WPARAM wp, LPARAM lp)
 {
@@ -253,8 +213,6 @@ static void hook_install(bool log)
     if (log) log_msg("keyboard hook re-installed (%u)", ++K.reinstalls);
 }
 
-// Raw input arrives for every physical key regardless of the hook chain. If a press of the
-// hotkey's key got here but not to our hook, the hook is gone (timed out and removed).
 static LRESULT CALLBACK watchdog_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (msg == WM_INPUT) {
@@ -275,7 +233,6 @@ static LRESULT CALLBACK watchdog_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         if (ri.header.dwType == RIM_TYPEKEYBOARD && ri.header.hDevice && b.vk && !(ri.data.keyboard.Flags & RI_KEY_BREAK) &&
             key_class(ri.data.keyboard.VKey) == key_class(b.vk)) {
             K.raw_presses++;
-            // The hook always runs before raw input is generated, so any lead means a miss.
             if ((i32)(K.raw_presses - K.hook_presses) > 0) {
                 hook_install(true);
                 K.hook_presses = K.raw_presses;
@@ -286,9 +243,7 @@ static LRESULT CALLBACK watchdog_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     return DefWindowProcW(h, msg, wp, lp);
 }
 
-// Raw input sink on/off. Important: while our process is in the foreground, Windows does not
-// call the low-level hook of a process that has a raw keyboard registration. So the watchdog
-// runs only while none of our windows (launcher, settings, menus) is in the foreground.
+// While our process is in front, Windows skips its LL hook for raw-input sinks: only on in the background.
 static void watchdog_set(bool on)
 {
     if (!K.watchdog || on == K.watchdog_on) return;
@@ -307,7 +262,6 @@ static void watchdog_sync(HWND fg)
     watchdog_set(pid != GetCurrentProcessId());
 }
 
-// The event can arrive before GetForegroundWindow() reports the new window: use the event's.
 static void CALLBACK foreground_changed(HWINEVENTHOOK h, DWORD ev, HWND hwnd, LONG obj, LONG child, DWORD tid, DWORD time)
 {
     if (g_ktrace_on) log_msg("foreground event %p t=%lu", (void *)hwnd, GetTickCount());
@@ -316,7 +270,6 @@ static void CALLBACK foreground_changed(HWINEVENTHOOK h, DWORD ev, HWND hwnd, LO
 
 static void opt_out_of_throttling(HANDLE thread)
 {
-    // EcoQoS / efficiency mode would stretch the hook's response time past the system timeout.
     typedef struct { ULONG Version, ControlMask, StateMask; } PowerThrottlingState;
     PowerThrottlingState st = { 1, 0x1 /*EXECUTION_SPEED*/, 0 };
     typedef BOOL (WINAPI *PFN_SetThreadInformation)(HANDLE, int, LPVOID, DWORD);
@@ -343,7 +296,6 @@ static DWORD WINAPI hook_thread(void *param)
     wc.hInstance = GetModuleHandleW(NULL);
     wc.lpszClassName = L"MixLauncherKeyWatchdog";
     RegisterClassW(&wc);
-    // A hidden top-level window (not message-only): input sinks need a real target window.
     K.watchdog = CreateWindowExW(WS_EX_TOOLWINDOW, wc.lpszClassName, L"", WS_POPUP, 0, 0, 0, 0, NULL, NULL, wc.hInstance, NULL);
     watchdog_sync(GetForegroundWindow());
     if (!SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, NULL, foreground_changed, 0, 0, WINEVENT_OUTOFCONTEXT))
@@ -364,8 +316,6 @@ static DWORD WINAPI hook_thread(void *param)
             in[2].ki.wVk = (WORD)vk;
             in[2].ki.dwFlags = KEYEVENTF_KEYUP | (vk_extended(vk) ? KEYEVENTF_EXTENDEDKEY : 0);
             inject_keys(in, vk ? 3 : 2);
-            // Normally the hook sees our release within a millisecond. If a tool earlier in the
-            // hook chain eats injected input, toggle anyway after a short while.
             if (vk) K.fallback_timer = SetTimer(NULL, K.fallback_timer, 80, NULL);
             break;
         }
@@ -387,8 +337,8 @@ static DWORD WINAPI hook_thread(void *param)
                 break;
             }
             if (!K.tap_down) {
-                hook_install(false);  // never while a tap key is held: keep its state intact
-                mouse_hook_update();  // a lost release must not leave the mouse hook behind
+                hook_install(false);
+                mouse_hook_update();
             }
             break;
         case WM_HOOK_REINSTALL:
@@ -423,8 +373,6 @@ static void hook_start(Hotkey h)
     CloseHandle(ready);
 }
 
-// The settings window records a new hotkey (NULL: stop). Keys go to it only while it is in the
-// foreground, so clicking another window always gives the keyboard back.
 static void hook_capture(HWND h) { InterlockedExchangePointer((void *volatile *)&K.capture, h); }
 
 static bool hook_running(void) { return K.tid && K.hook; }
@@ -434,13 +382,11 @@ static void hook_reinstall(void)
     if (K.tid) PostThreadMessageW(K.tid, WM_HOOK_REINSTALL, 0, 0);
 }
 
-// Move our hook back to the front of the chain without touching the key state.
 static void hook_rearm(void)
 {
     if (K.tid) PostThreadMessageW(K.tid, WM_HOOK_REINSTALL, 1, 0);
 }
 
-// The launcher is about to take the foreground (off), or has just gone (re-check).
 static void hook_watchdog_off(void)
 {
     if (K.tid) PostThreadMessageW(K.tid, WM_HOOK_WATCHDOG, 0, 0);
@@ -457,5 +403,4 @@ static void hook_set_visible(bool visible)
     if (K.tid) PostThreadMessageW(K.tid, WM_HOOK_VISIBLE, visible ? 1 : 0, 0);
 }
 
-// The hotkey is a tap of a Win key: then the Win key belongs to us inside our windows as well.
 static bool hotkey_is_win_tap(void) { return vk_mod_bit(g_cfg.hk.vk) == HK_WIN && !K.capture; }

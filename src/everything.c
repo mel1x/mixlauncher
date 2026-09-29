@@ -1,13 +1,4 @@
 // everything.c — file search through Everything's WM_COPYDATA IPC (no SDK DLL needed).
-//
-// A worker thread owns a message-only window that receives Everything's replies. Requests are
-// "latest wins": while a query is in flight a newer keystroke cancels it. Results are re-ranked
-// here (name match quality, recency, noisy locations) before being posted to the UI.
-//
-// Paging: the first reply already says how many files match in total, so the UI can size its
-// scroll range for all of them. Further pages (EV_PAGE results of the same query, by offset) are
-// fetched only when the list is scrolled near what is loaded (ev_request_more); each page is
-// ranked on its own and appended, duplicates of earlier pages dropped.
 
 #define EV_COPYDATA_QUERY2W 18
 #define EV_REQ_NAME 0x00000001
@@ -29,7 +20,7 @@
 #define EV_SORT_DATE_MODIFIED_DESC 14
 #define EV_ITEM_FOLDER 0x1
 #define EV_ITEM_DRIVE 0x2
-#define EV_FIRST_PAGE 256   // most recent matches of the first query (+ up to 128 "startwith:")
+#define EV_FIRST_PAGE 256
 #define EV_PAGE 256         // each further page
 
 enum { EV_OK, EV_NOT_RUNNING, EV_ERROR };
@@ -50,8 +41,8 @@ typedef struct FileResults {
     u32 id;
     int status;
     u32 total;         // files matching in Everything
-    u32 fetched;       // results of the main query received so far (the next page starts here)
-    bool page;         // a further page of an earlier result (append, do not replace)
+    u32 fetched;
+    bool page;
     int count;
     FileItem *items;
 } FileResults;
@@ -88,14 +79,13 @@ static struct {
     WCHAR profile_norm[MAX_PATH];
     int profile_len;
 
-    // The query whose pages are being fetched (worker thread only, except more_* under the lock).
     u32 more_id;
     bool has_more;
     u32 cur_id, cur_total, cur_fetched;
     WCHAR cur_search[2048], cur_qn[1024];
     int cur_qlen;
     bool cur_plain;
-    u64 *seen;         // hashes of every path handed out for cur_id (open addressing)
+    u64 *seen;
     u32 seen_cap, seen_count;
 } E;
 
@@ -110,7 +100,6 @@ static void ev_request(u32 id, const WCHAR *query)
     SetEvent(E.event);
 }
 
-// Ask for the next page of result `id` (ignored if a newer query came meanwhile).
 static void ev_request_more(u32 id)
 {
     AcquireSRWLockExclusive(&E.lock);
@@ -278,7 +267,6 @@ static const Penalty k_path_penalties[] = {
     { L"\\tmp\\", -1000 }, { L"\\obj\\", -800 }, { L"\\build\\", -300 },
 };
 
-// Files users practically never open by name: binaries, caches, build artifacts.
 static const WCHAR *k_internal_ext[] = {
     L".dll", L".sys", L".mui", L".xbf", L".pri", L".pak", L".dat", L".bin", L".pdb", L".obj", L".o", L".lib",
     L".a", L".class", L".pyc", L".pyd", L".pom", L".cat", L".manifest", L".etl", L".tmp", L".cache", L".idx",
@@ -306,7 +294,7 @@ static f32 ev_rank(const RawFile *r, const WCHAR *full, int full_len, const WCHA
         if (dot && (int)(dot - nn) == qlen && wmem_eq(nn, qn, qlen)) tier = SCORE_EXACT;
         s = tier ? (f32)tier : 1500.f;  // matched by path only
     } else {
-        s = 3000.f;  // Everything syntax: trust its filtering, rank by the rest
+        s = 3000.f;
     }
     f64 age_days = (f64)(now_ft - r->mtime) / 864000000000.0;
     if (r->mtime > 0 && age_days >= 0) s += (f32)(1200.0 / (1.0 + age_days / 3.0));
@@ -318,7 +306,6 @@ static f32 ev_rank(const RawFile *r, const WCHAR *full, int full_len, const WCHA
         if (wcsstr(fn, k_path_penalties[i].needle)) s += (f32)k_path_penalties[i].score;
     if (fl >= 11 && !wcsncmp(fn + 1, L":\\windows\\", 10)) s -= 3000;
     bool folder = (r->flags & EV_ITEM_FOLDER) != 0;
-    // Hidden tool directories (.git, .gradle, .codex, .vscode ...) anywhere above the item.
     int dir_len = fl - nl;
     for (int i = 0; i + 1 < dir_len; i++)
         if (fn[i] == '\\' && fn[i + 1] == '.') {
@@ -440,7 +427,6 @@ static void ev_run(u32 id, const WCHAR *query, const WCHAR *filter)
     u32 main_count = (u32)E.raw_count;
     bool plain = query_is_simple(query);
     if (ok > 0 && plain && E.raw_total > (u32)E.raw_count && !ev_superseded()) {
-        // Truncated by recency: also ask for names that start with the query, regardless of age.
         if (filter[0]) _snwprintf(search, countof(search), L"startwith:<%s> %s", query, filter);
         else _snwprintf(search, countof(search), L"startwith:%s", query);
         search[countof(search) - 1] = 0;
@@ -476,7 +462,6 @@ static void ev_run(u32 id, const WCHAR *query, const WCHAR *filter)
     if (!PostMessageW(g_hwnd, WM_APP_FILES_READY, 0, (LPARAM)res)) fileresults_free(res);
 }
 
-// The next page of the current query, by offset in Everything's (date sorted) result list.
 static void ev_run_more(u32 id)
 {
     if (id != E.cur_id || E.cur_fetched >= E.cur_total) return;
@@ -495,8 +480,6 @@ static void ev_run_more(u32 id)
         res->status = EV_ERROR;
         E.cur_fetched = E.cur_total;  // stop asking
     } else {
-        // Files may have come or gone meanwhile: follow Everything's current count, and stop
-        // when a page comes back empty.
         if (E.raw_total) E.cur_total = E.raw_total;
         E.cur_fetched = E.raw_count ? E.cur_fetched + (u32)E.raw_count : E.cur_total;
         ev_build(res, 8ull << 20);

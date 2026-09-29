@@ -1,8 +1,4 @@
 // ui.c — immediate-mode UI: state, layout, drawing, input, show/hide.
-//
-// The whole window is redrawn from state on every change (a few hundred quads, one draw call).
-// Nothing is rendered while hidden or idle; animations (smooth scroll, moving selection) keep
-// frames coming only while they are settling.
 
 typedef struct Theme {
     bool dark;
@@ -37,9 +33,9 @@ static struct {
     bool closing;                 // fade-out running; input is ignored
     f32 vis, vis_target;          // open/close progress 0..1
     int alpha;                    // current layered window alpha
-    HWND prev_fg;                 // foreground window before we opened, gets focus back on close
-    bool app_mode;                // shown as a regular app window (fullscreen app under us, see taskbar_covered)
-    bool no_focus_restore;        // closing because the user clicked elsewhere: leave focus alone
+    HWND prev_fg;
+    bool app_mode;
+    bool no_focus_restore;
     int settings_btn[4];          // footer "Settings" button rect (x0, y0, x1, y1)
     bool settings_hover, press_settings;
     f64 hide_time;
@@ -53,21 +49,18 @@ static struct {
     AppList *apps;
     AppHit *hits;
     int hit_count, hit_cap;
-    bool files_alt;               // query was typed in the wrong layout: search files converted too
+    bool files_alt;
     FileResults *files;           // first result of the current query
     u32 files_req_id;
     bool files_pending;
-    // Virtual scroll over every matching file: the list holds the loaded ones in display order
-    // (the first result, then appended pages); the rest is one ROW_VIRTUAL spacer of the size
-    // they will take, drawn as skeleton rows, loaded when scrolled near (files_load_more).
-    FileResults **fpages;         // further pages (own the items listed after the first result)
+    FileResults **fpages;
     int fpage_count, fpage_cap;
     FileItem **flist;
     int flist_count, flist_cap;
     int files_shown;              // how many of flist have rows
     u32 files_total, files_fetched;
     bool files_more_pending;      // a page request is in flight
-    f32 files_end_y;              // content y where loaded file rows end (the spacer starts)
+    f32 files_end_y;
     WCHAR files_header[64];
 
     App *frequent[8];
@@ -82,10 +75,9 @@ static struct {
     int press_row;
     f32 content_h;
     f32 scroll, scroll_target, scroll_v;
-    f32 hl_y, hl_h, hl_vy, hl_vh;   // selection highlight (springs toward the selected row)
+    f32 hl_y, hl_h, hl_vy, hl_vh;
     f64 open_time;                 // rows cascade in after this moment (open animation)
     f32 settings_hover_t;          // footer button hover fade 0..1
-    // The selected row's note ("Application", "Command") rides with the highlight.
     const WCHAR *sub_text;
     u32 sub_col;
     f32 sub_t;                     // its fade 0..1 (out when a file row is selected)
@@ -115,9 +107,7 @@ static struct {
     f64 last_reindex;
 } U;
 
-// Debug mode (--pin): show on a monitor without the mouse, never take focus, never auto-hide.
 static bool g_pinned;
-// Debug (--other-monitor): normal behaviour, but open on a monitor without the mouse.
 static bool g_other_monitor;
 
 static void ui_invalidate(void) { U.dirty = true; }
@@ -130,7 +120,6 @@ static void cm_close(bool animate);
 static f32 S(f32 v) { return v * U.s; }
 static f32 SR(f32 v) { return floorf(v * U.s + 0.5f); }
 
-// ---------------------------------------------------------------------------------------------
 // Theme
 
 static bool reg_dword(HKEY root, const WCHAR *key, const WCHAR *name, DWORD *out)
@@ -152,7 +141,6 @@ static void theme_update(void)
     Theme *t = &U.th;
     t->dark = dark;
 
-    // Accent: Windows keeps a palette of shades; dark themes use a lighter one (like WinUI).
     u32 acc = RGBA(0, 120, 212, 255);
     BYTE pal[32];
     DWORD sz = sizeof pal;
@@ -199,12 +187,9 @@ static void theme_update(void)
     }
 }
 
-// Window material. blur: DWM blur-behind through the accent policy (translucent, macOS-like);
-// acrylic: the documented Windows 11 system backdrop (as in system flyouts, nearly opaque in
-// dark mode); solid: we paint everything. Returns false if the window must be opaque.
 static bool backdrop_apply(HWND h)
 {
-    int corner = 2;  // DWMWCP_ROUND: native Windows 11 corners, border and shadow
+    int corner = 2;
     DwmSetWindowAttribute(h, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/, &corner, sizeof corner);
     PFN_SetWindowCompositionAttribute swca = (PFN_SetWindowCompositionAttribute)(void *)GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetWindowCompositionAttribute");
     int mode = g_cfg.backdrop;
@@ -230,7 +215,6 @@ static bool backdrop_apply(HWND h)
     return mode == BACKDROP_BLUR && ok;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Layout
 
 #define ROW_H 42.f
@@ -297,6 +281,18 @@ static void row_file(FileItem *f)
     if (r) r->file = f;
 }
 
+// First row whose bottom is below content y (rows are sorted by y).
+static int row_first_below(f32 y)
+{
+    int lo = 0, hi = U.row_count;
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        if (U.rows[mid].y + U.rows[mid].h <= y) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
+}
+
 static bool row_selectable(int i) { return i >= 0 && i < U.row_count && (U.rows[i].kind == ROW_APP || U.rows[i].kind == ROW_FILE); }
 
 static int first_selectable(int from, int dir)
@@ -306,10 +302,9 @@ static int first_selectable(int from, int dir)
     return -1;
 }
 
-#define FILES_STEP 40            // file rows shown at first, and added per step when scrolling
+#define FILES_STEP 40
 #define FILES_VIRTUAL_MAX 100000  // the scroll range covers at most this many files
 
-// All files the list pretends to have: everything Everything matched while more pages remain.
 static int files_virtual_total(void)
 {
     int n = U.flist_count;
@@ -400,7 +395,6 @@ static void ensure_visible(int idx, bool animate)
     U.animating = true;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Search
 
 static int cmp_hits(const void *a, const void *b)
@@ -464,8 +458,6 @@ static void refresh_empty_view(void)
             f->name = f->full;
             f->dir = wdup(&U.recent_arena, L"", 0);
         }
-        // No filesystem access here: a sleeping disk would stall the show. Files that vanished are
-        // dropped from history when opening them fails (WM_APP_LAUNCH_FAILED).
         f->flags = rf[i].folder ? FI_FOLDER : 0;
         f->icon_key = icon_key_for_file(f->full, rf[i].folder);
     }
@@ -498,9 +490,6 @@ static void search_apps(void)
                 is_alt = true;
             }
         }
-        // Keywords: command synonyms, and for apps the hidden exe/package names. They rank a bit
-        // below the visible name and never count as fuzzy matches (too noisy). Several shortcuts
-        // often share one exe (cmd.exe): the shortest name is usually the canonical one.
         int kw_pen = 300 + MIN(a->len, 60) * 2;
         for (int k = 0; k < a->kw_count; k++) {
             int sk = score_query(a->kw[k], a->kw_len[k], a->kw_ws[k], qn, ql);
@@ -517,7 +506,6 @@ static void search_apps(void)
             }
         }
         if (a->kind == APP_CMD) {
-            // Commands only on solid matches; power actions need at least 3 characters.
             if (sc < SCORE_SUBSTRING - 600 || (a->danger && ql < 3)) sc = 0;
             else sc -= 500;
         }
@@ -529,7 +517,6 @@ static void search_apps(void)
         h->score = (f32)sc + a->frec + qmem_bonus(type, a->id, qn, ql, now);
     }
     qsort(U.hits, U.hit_count, sizeof(AppHit), cmp_hits);
-    // Wrong layout for everything that matched: use the converted query for files as well.
     if (U.hit_count && U.hits[0].alt) {
         bool any_direct = false;
         for (int i = 0; i < U.hit_count; i++)
@@ -591,8 +578,6 @@ static int cmp_file_score2(const void *a, const void *b)
     return x->score < y->score ? 1 : x->score > y->score ? -1 : 0;
 }
 
-// Grows the loaded rows when the view (plus a screen of lookahead) reaches their end: first from
-// what is already in memory, then by asking Everything for the next page.
 static void files_load_more(void)
 {
     if (U.files_end_y < 0 || !U.files || U.files->status != EV_OK) return;
@@ -687,7 +672,6 @@ static void on_apps_ready(AppList *l)
     ui_invalidate();
 }
 
-// ---------------------------------------------------------------------------------------------
 // Text editing
 
 static bool is_word_char(WCHAR c) { return c != ' ' && !is_sep(c); }
@@ -793,7 +777,6 @@ static void clipboard_paste(void)
     CloseClipboard();
 }
 
-// ---------------------------------------------------------------------------------------------
 // Show / hide / activate
 
 static void ui_render(void);
@@ -884,14 +867,6 @@ static void ui_place_window(void)
     r_resize(U.W, U.H);
 }
 
-// ---------------------------------------------------------------------------------------------
-// Open / close animation: the whole window (glass, border, shadow) fades through the
-// layered-window alpha while the content settles from a slightly smaller scale; the rows then
-// cascade in (each fades and rises a few pixels). Opening eases out (quartic: visible on the
-// first frame, soft landing), closing eases in and is shorter, so Esc never feels delayed. A
-// toggle during either reverses it from where it is. All timings are in the config
-// (anim_* keys, the Animation settings page).
-
 #define ROW_STAGGER_MAX 8
 
 static bool anims_enabled(void)
@@ -901,7 +876,6 @@ static bool anims_enabled(void)
     return g_cfg.animations && sys;
 }
 
-// A configured duration in seconds, scaled by the global speed (see the Animation settings page).
 static f32 anim_sec(int ms) { return (f32)ms / 1000.f * 100.f / (f32)MAX(g_cfg.anim_speed, 1); }
 
 // Spring stiffness that arrives (~95%) in the configured time; 0 = jump.
@@ -920,8 +894,6 @@ static f32 vis_curve(f32 v, bool opening)
 
 static f32 vis_eased(void) { return vis_curve(U.vis, U.vis_target > 0.5f); }
 
-// Switch direction mid-animation without a jump: pick the progress on the new curve that gives
-// the same visible amount.
 static void vis_set_direction(bool opening)
 {
     f32 a = vis_eased();
@@ -959,8 +931,7 @@ static void set_click_through(bool on)
     if (nx != ex) SetWindowLongPtrW(g_hwnd, GWL_EXSTYLE, nx);
 }
 
-// Desktop, taskbars and shell flyouts: never hand focus to these (activating the taskbar while
-// the Win key is still logically down opens the Start menu).
+// Never hand focus to these: activating the taskbar while Win is down opens Start.
 static bool is_shell_window(HWND h)
 {
     WCHAR cls[64];
@@ -982,11 +953,7 @@ static HWND taskbar_on_monitor(HMONITOR mon)
     return NULL;
 }
 
-// Over a fullscreen app the shell drops the taskbar behind it (and vetoes outside attempts to
-// raise it). It brings it back whenever a regular, non-topmost app window becomes active - that
-// is what happens when you Alt+Tab out of a game. So when the taskbar of our monitor is covered,
-// the launcher opens as such a window for this one time (and removes its own taskbar button);
-// closing hands focus back to the fullscreen app, and the shell hides the taskbar again.
+// Fullscreen app over the taskbar: open as a regular window so the shell brings the taskbar back.
 static bool taskbar_covered(HMONITOR mon)
 {
     HWND tray = taskbar_on_monitor(mon);
@@ -996,8 +963,6 @@ static bool taskbar_covered(HMONITOR mon)
     POINT c = { (r.left + r.right) / 2, (r.top + r.bottom) / 2 };
     HWND at = WindowFromPoint(c);
     HWND root = at ? GetAncestor(at, GA_ROOT) : NULL;
-    // Not covered, or auto-hidden (nothing of ours to fix), or covered by a topmost window that
-    // would stay above the taskbar anyway.
     if (!root || root == tray || root == g_hwnd) return false;
     return !(GetWindowLongW(root, GWL_EXSTYLE) & WS_EX_TOPMOST);
 }
@@ -1049,7 +1014,6 @@ static void ui_show(void)
         return;
     }
     if (U.visible && U.closing) {
-        // Reopened while fading out: reverse the animation, keep everything as it was.
         U.closing = false;
         vis_set_direction(true);
         U.open_time = 0;
@@ -1062,19 +1026,17 @@ static void ui_show(void)
         return;
     }
     f64 now = time_now();
-    hook_watchdog_off();  // shows not caused by the hotkey (tray, second instance); see watchdog_set
+    hook_watchdog_off();
     hook_set_visible(true);
     HWND fg = GetForegroundWindow();
     U.prev_fg = fg != g_hwnd ? fg : NULL;
 
-    // Take the keyboard first, while still fully transparent: keys typed right after the Win tap
-    // must land here, not in the previous window. Content is rendered afterwards.
     bool was_dark = U.th.dark;
     theme_update();
     if (was_dark != U.th.dark) U.backdrop_ok = backdrop_apply(g_hwnd);
     ui_place_window();
-    // Fullscreen app hiding the taskbar: open as a regular app window so the shell shows it.
     set_app_window_mode(taskbar_covered(MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST)));
+    // Take the keyboard while still transparent, so keys typed right after Win land here.
     SetLayeredWindowAttributes(g_hwnd, 0, 0, LWA_ALPHA);
     U.alpha = 0;
     set_click_through(false);
@@ -1083,7 +1045,6 @@ static void ui_show(void)
     } else {
         ShowWindow(g_hwnd, SW_SHOW);
         force_foreground(g_hwnd);
-        // Over an elevated window the elevated helper (if running) can hand the foreground over.
         if (GetForegroundWindow() != g_hwnd) log_msg("show: could not take foreground");
     }
     if (U.app_mode) taskbar_button_remove();
@@ -1125,12 +1086,9 @@ static void ui_show(void)
     ScreenToClient(g_hwnd, &cur);
     U.mouse_x = cur.x;
     U.mouse_y = cur.y;
-    // First frame; its alpha is applied together with the content (animated or straight to 255).
     U.dirty = true;
     ui_render();
     SetTimer(g_hwnd, TIMER_CARET, GetCaretBlinkTime(), NULL);
-    // Other hook-based tools may re-install their hooks when the foreground window changes, which
-    // puts them in front of ours. Re-arm shortly after we took the foreground to be first again.
     SetTimer(g_hwnd, TIMER_REHOOK, 60, NULL);
     if (now - U.last_reindex > 180.0) {
         U.last_reindex = now;
@@ -1145,7 +1103,6 @@ static void ui_hide(void)
     U.armed = NULL;
     U.text_drag = false;
     KillTimer(g_hwnd, TIMER_CARET);
-    // Hand the keyboard back right away so typing continues in the previous window while we fade.
     bool restore = !U.no_focus_restore;
     U.no_focus_restore = false;
     hook_set_visible(false);
@@ -1213,7 +1170,6 @@ static void ui_activate(int act)
         j.dir = wdup_heap(f->dir);
         j.hist_type = (f->flags & FI_FOLDER) ? 'd' : 'f';
         j.hist_key = wdup_heap(f->full);
-        // Network paths are never remembered: checking them later could block the UI.
         if (act != ACT_PROPERTIES && !(f->full[0] == '\\' && f->full[1] == '\\')) history_record(j.hist_type, f->full, qn, ql);
     }
     AllowSetForegroundWindow(ASFW_ANY);
@@ -1282,7 +1238,6 @@ static void jump_section(int dir)
     ui_invalidate();
 }
 
-// ---------------------------------------------------------------------------------------------
 // Drawing
 
 static void draw_placeholder_icon(f32 x, f32 y, f32 sz, const WCHAR *name)
@@ -1296,7 +1251,6 @@ static void draw_placeholder_icon(f32 x, f32 y, f32 sz, const WCHAR *name)
     }
 }
 
-// The note shown at the right of an app row ("Application", "Command", the confirmation).
 static const WCHAR *row_note(Row *r, u32 *col)
 {
     *col = U.th.faint;
@@ -1322,7 +1276,6 @@ static void draw_row(Row *r, f32 y, bool selected)
     f32 fs = S(14);
     f32 base = floorf(cy + font_cap_height(FONT_TEXT, fs) * 0.5f + 0.5f);
     if (r->kind == ROW_VIRTUAL) {
-        // Files not loaded yet: skeleton rows (only the visible ones), softly pulsing.
         f32 rh = SR(ROW_H), isz = (f32)ui_icon_px();
         f32 pulse = 0.75f + 0.25f * sinf((f32)fmod(time_now(), 100.0) * 5.f);
         int k0 = (int)MAX(0.f, floorf((U.list_y0 - y) / rh)), k1 = (int)ceilf((U.list_y1 - y) / rh);
@@ -1356,8 +1309,6 @@ static void draw_row(Row *r, f32 y, bool selected)
         u32 sub_col = t->faint;
         const WCHAR *sub = row_note(r, &sub_col);
         if (a->kind == APP_CMD) {
-            // Commands get a neutral tile (like app icons, they are not decoration); only a
-            // dangerous one waiting for the second Enter turns red.
             bool armed = U.armed == a;
             r_rect(ix, iy, isz, isz, armed ? color_alpha(t->danger, 0.16f) : t->tile, SR(7));
             r_rect_ex(ix, iy, isz, isz, t->key_border, SR(7), 1.f, 0);
@@ -1370,8 +1321,6 @@ static void draw_row(Row *r, f32 y, bool selected)
         f32 avail = right - tx;
         bool show_sub = selected || a->kind == APP_CMD;
         text_draw_fit(FONT_TEXT, fs, tx, base, show_sub ? avail - sw - SR(16) : avail, a->name, a->len, t->text, false);
-        // The selected row's note is drawn by the highlight (it travels with it, see ui_draw).
-        // Commands keep theirs in place, fading out while the highlight covers them.
         if (a->kind == APP_CMD) {
             f32 away = CLAMP(fabsf(U.list_y0 - floorf(U.scroll + 0.5f) + U.hl_y - y) / r->h, 0.f, 1.f);
             if (!row_selectable(U.sel)) away = 1.f;
@@ -1394,7 +1343,6 @@ static void draw_row(Row *r, f32 y, bool selected)
     }
 }
 
-// A keycap hint: "label [Ctrl] [Enter]", laid out right-to-left. Returns the new right edge.
 static f32 draw_hint(f32 xr, f32 cy, const WCHAR *label, const WCHAR *const *keys, int nkeys, u32 label_col)
 {
     Theme *t = &U.th;
@@ -1469,9 +1417,7 @@ static void draw_search(void)
     f32 fx0 = SR(50), fx1 = (f32)U.W - SR(20);
     f32 fs = S(20);
     f32 base = floorf(cy + font_cap_height(FONT_DISPLAY, fs) * 0.5f + 0.5f);
-    f32 asc = font_ascent(FONT_DISPLAY, fs);
     f32 sel_top = floorf(cy - fs * 0.62f), sel_h = floorf(fs * 1.24f);
-    (void)asc;
     if (!U.qlen) {
         text_draw_fit(FONT_DISPLAY, fs, fx0, base, fx1 - fx0, TR("Поиск приложений и файлов", "Search apps and files"), -1, t->faint, false);
         if (U.caret_on) r_rect(fx0, sel_top, MAX(1.f, floorf(S(1.25f))), sel_h, t->text, 0);
@@ -1521,9 +1467,8 @@ static void ui_draw(void)
         R.opacity = 1.f;
     }
     f32 top = U.scroll, bottom = U.scroll + list_height();
-    for (int i = 0, k = 0; i < U.row_count; i++) {
+    for (int i = row_first_below(top), k = 0; i < U.row_count; i++) {
         Row *r = &U.rows[i];
-        if (r->y + r->h < top) continue;
         if (r->y > bottom) break;
         f32 dy = 0;
         if (cascade) {
@@ -1594,7 +1539,6 @@ static void animate(f32 dt)
     anim |= approach(&U.sub_t, row_selectable(U.sel) && U.rows[U.sel].kind == ROW_APP ? 1.f : 0.f, 24.f, dt);
     anim |= cm_animate(dt);
     if (U.vis != U.vis_target) {
-        // Linear progress in time; easing is applied where it is consumed (alpha, scale).
         f32 open = anim_sec(g_cfg.anim_open_ms), close = anim_sec(g_cfg.anim_close_ms);
         if (U.vis_target > U.vis) U.vis = open > 0.f ? MIN(U.vis + dt / open, U.vis_target) : U.vis_target;
         else U.vis = close > 0.f ? MAX(U.vis - dt / close, U.vis_target) : U.vis_target;
@@ -1621,7 +1565,6 @@ static void ui_render(void)
     U.last_frame = now;
     animate(dt);
     files_load_more();
-    // Opening grows from anim_open_scale, closing shrinks only a little (it is short and mostly a fade).
     f32 v = vis_eased();
     f32 s0 = (f32)g_cfg.anim_open_scale / 100.f;
     R.scale = (U.vis >= 1.f && U.vis_target >= 1.f) ? 1.f : U.closing ? 0.985f + 0.015f * v : s0 + (1.f - s0) * v;
@@ -1637,16 +1580,14 @@ static void ui_render(void)
     if (U.closing && U.vis <= 0.f) ui_hide_finish();
 }
 
-// ---------------------------------------------------------------------------------------------
 // Input
 
 static int row_at(int y)
 {
     if (y < U.list_y0 || y >= U.list_y1) return -1;
     f32 cy = (f32)y - U.list_y0 + U.scroll;
-    for (int i = 0; i < U.row_count; i++)
-        if (cy >= U.rows[i].y && cy < U.rows[i].y + U.rows[i].h) return i;
-    return -1;
+    int i = row_first_below(cy);
+    return i < U.row_count && cy >= U.rows[i].y ? i : -1;
 }
 
 static int text_index_at(int x)
@@ -1661,11 +1602,6 @@ static int text_index_at(int x)
         if (fabsf(offs[i] - lx) < fabsf(offs[best] - lx)) best = i;
     return best;
 }
-
-// ---------------------------------------------------------------------------------------------
-// Context menu: drawn inside the launcher like Raycast's action panel (a native menu can not be
-// styled or animated). It fades in and drops a few pixels, the hover pill slides between items.
-// While it is open it owns the keyboard (Up/Down/Enter/Esc) and the mouse.
 
 enum { CM_OPEN = 1, CM_REVEAL, CM_RUNAS, CM_COPY, CM_PROPS };
 #define CM_ITEM_H 32.f
@@ -1696,7 +1632,6 @@ static void cm_add(int cmd, u32 glyph, const WCHAR *label, const WCHAR *keys, bo
     U.cm.n++;
 }
 
-// x, y: where it was asked for (the mouse, or under the selected row); keyboard: first item hot.
 static void ui_context_menu(int x, int y, bool keyboard)
 {
     Row *r = sel_row();
@@ -1764,7 +1699,7 @@ static void cm_run(int i)
 {
     if (i < 0 || i >= U.cm.n) return;
     int cmd = U.cm.it[i].cmd;
-    U.cm.open = U.cm.closing = false;  // the action closes the launcher or should show at once
+    U.cm.open = U.cm.closing = false;
     ui_invalidate();
     switch (cmd) {
     case CM_OPEN: ui_activate(ACT_OPEN); break;
@@ -1954,7 +1889,6 @@ static void ui_char(WCHAR c)
 {
     if (c < 0x20 || c == 0x7F) return;
     if (U.cm.open && !U.cm.closing) return;  // keys went to the menu (Space, Enter)
-    // Ctrl+key produces control characters; AltGr (Ctrl+Alt) produces real text and passes.
     edit_replace(U.anchor, U.caret, &c, 1);
 }
 
@@ -1963,7 +1897,6 @@ static bool in_settings_button(int x, int y)
     return x >= U.settings_btn[0] && x < U.settings_btn[2] && y >= U.settings_btn[1] && y < U.settings_btn[3];
 }
 
-// Footer "Settings" button (bottom left, like Raycast): close the launcher, open the settings window.
 static void open_settings_from_launcher(void)
 {
     U.no_focus_restore = true;  // the settings window takes the focus right away
