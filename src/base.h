@@ -36,6 +36,8 @@
 #include <dwmapi.h>
 #include <exdisp.h>
 #include <shldisp.h>
+#include <uiautomation.h>
+#include <wincodec.h>
 #include <d3d11.h>
 #include <dxgi1_3.h>
 #include <stdint.h>
@@ -447,6 +449,7 @@ enum {
     WM_APP_CLICK_OUTSIDE,        // mouse button pressed outside the open launcher
     WM_APP_SETTINGS,             // open the settings window (second instance started with --settings)
     WM_APP_KEYCAP,               // hook -> settings window while recording a hotkey: wParam vk, lParam 1 down / 0 up
+    WM_APP_TASKBAR,              // taskbar.c worker: the Start button moved (or appeared/vanished)
 };
 
 static HWND g_hwnd;   // main window, target of all worker notifications

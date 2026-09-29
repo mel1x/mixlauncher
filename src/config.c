@@ -3,6 +3,10 @@
 
 enum { BACKDROP_SOLID, BACKDROP_ACRYLIC, BACKDROP_BLUR };
 
+// Icon of our Start button (taskbar.c).
+enum { TBI_DIAMOND, TBI_GRID, TBI_LINES, TBI_CUSTOM, TBI__COUNT };
+static const char *const k_tbi_names[TBI__COUNT] = { "diamond", "grid", "lines", "custom" };
+
 // The launcher hotkey: modifiers that must be held + a key. The key may itself be a modifier:
 // then the hotkey is a tap of that key alone ("win", "rctrl"), otherwise a combination
 // ("alt+space", "win+d") or a single key ("f13").
@@ -24,6 +28,9 @@ typedef struct Config {
     bool  hide_uninstallers;
     int   keep_query_seconds;
     bool  animations;
+    bool  taskbar_button;   // our button over the Windows 11 Start button (taskbar.c)
+    int   taskbar_icon;     // TBI_*
+    WCHAR taskbar_icon_path[MAX_PATH];  // TBI_CUSTOM: PNG/ICO/JPG
     // Animation timings (milliseconds unless noted); see the "Animation" settings page.
     int   anim_speed;       // global speed, percent: 200 = everything twice as fast
     int   anim_open_ms, anim_close_ms;
@@ -70,6 +77,12 @@ static const char k_default_config_ru[] =
     "\r\n"
     "; Через сколько секунд после закрытия окна сбрасывать введённый запрос\r\n"
     "keep_query_seconds = 60\r\n"
+    "\r\n"
+    "; Кнопка Пуск на панели задач Windows 11 с нашим значком открывает лаунчер (1/0)\r\n"
+    "taskbar_button = 1\r\n"
+    "; Её значок: diamond (ромб) | grid (сетка) | lines (строки) | custom (свой файл PNG/ICO/JPG из taskbar_icon_path)\r\n"
+    "taskbar_icon = diamond\r\n"
+    "taskbar_icon_path =\r\n"
     "\r\n"
     "; Анимации открытия и закрытия (1/0). Выключаются и системной настройкой «Эффекты анимации».\r\n"
     "animations = 1\r\n"
@@ -121,6 +134,12 @@ static const char k_default_config_en[] =
     "\r\n"
     "; Seconds after closing before the typed query is cleared\r\n"
     "keep_query_seconds = 60\r\n"
+    "\r\n"
+    "; Our icon on the Windows 11 taskbar Start button, which then opens the launcher (1/0)\r\n"
+    "taskbar_button = 1\r\n"
+    "; Its icon: diamond | grid | lines | custom (a PNG/ICO/JPG file from taskbar_icon_path)\r\n"
+    "taskbar_icon = diamond\r\n"
+    "taskbar_icon_path =\r\n"
     "\r\n"
     "; Open/close animations (1/0). Also off when Windows \"Animation effects\" are disabled.\r\n"
     "animations = 1\r\n"
@@ -322,6 +341,8 @@ static void config_defaults(Config *c)
     c->hide_uninstallers = true;
     c->keep_query_seconds = 60;
     c->animations = true;
+    c->taskbar_button = true;
+    c->taskbar_icon = 0;
     config_anim_defaults(c);
 }
 
@@ -351,6 +372,9 @@ static bool config_value(const char *k, char *out, size_t cap)
     else if (!strcmp(k, "hide_uninstallers")) snprintf(out, cap, "%d", g_cfg.hide_uninstallers ? 1 : 0);
     else if (!strcmp(k, "keep_query_seconds")) snprintf(out, cap, "%d", g_cfg.keep_query_seconds);
     else if (!strcmp(k, "animations")) snprintf(out, cap, "%d", g_cfg.animations ? 1 : 0);
+    else if (!strcmp(k, "taskbar_button")) snprintf(out, cap, "%d", g_cfg.taskbar_button ? 1 : 0);
+    else if (!strcmp(k, "taskbar_icon")) snprintf(out, cap, "%s", k_tbi_names[CLAMP(g_cfg.taskbar_icon, 0, TBI__COUNT - 1)]);
+    else if (!strcmp(k, "taskbar_icon_path")) w_to_utf8(g_cfg.taskbar_icon_path, -1, out, (int)cap);
     else if (!strcmp(k, "anim_speed")) snprintf(out, cap, "%d", g_cfg.anim_speed);
     else if (!strcmp(k, "anim_open_ms")) snprintf(out, cap, "%d", g_cfg.anim_open_ms);
     else if (!strcmp(k, "anim_close_ms")) snprintf(out, cap, "%d", g_cfg.anim_close_ms);
@@ -440,6 +464,11 @@ static void config_load(void)
         else if (!_stricmp(k, "hide_uninstallers")) g_cfg.hide_uninstallers = parse_bool(v);
         else if (!_stricmp(k, "keep_query_seconds")) g_cfg.keep_query_seconds = CLAMP(atoi(v), 0, 24 * 3600);
         else if (!_stricmp(k, "animations")) g_cfg.animations = parse_bool(v);
+        else if (!_stricmp(k, "taskbar_button")) g_cfg.taskbar_button = parse_bool(v);
+        else if (!_stricmp(k, "taskbar_icon")) {
+            for (int i = 0; i < TBI__COUNT; i++)
+                if (!_stricmp(v, k_tbi_names[i])) g_cfg.taskbar_icon = i;
+        } else if (!_stricmp(k, "taskbar_icon_path")) utf8_to_w(v, -1, g_cfg.taskbar_icon_path, countof(g_cfg.taskbar_icon_path));
         else if (!_stricmp(k, "anim_speed")) g_cfg.anim_speed = CLAMP(atoi(v), 30, 400);
         else if (!_stricmp(k, "anim_open_ms")) g_cfg.anim_open_ms = CLAMP(atoi(v), 0, 1000);
         else if (!_stricmp(k, "anim_close_ms")) g_cfg.anim_close_ms = CLAMP(atoi(v), 0, 1000);
