@@ -17,6 +17,7 @@
 #include "ui.c"
 #include "settings.c"
 #include "taskbar.c"
+#include "media.c"
 
 #define WINDOW_CLASS L"MixLauncherWindow"
 
@@ -164,6 +165,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             theme_update();
             ui_invalidate();
             tb_theme_changed();
+            media_theme_changed();
         }
         return 0;
     case WM_POWERBROADCAST:
@@ -200,6 +202,9 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_APP_TASKBAR:
         tb_sync();
         return 0;
+    case WM_APP_MEDIA:
+        media_sync();
+        return 0;
     case WM_APP_CLICK_OUTSIDE:
         if (U.visible && !U.closing && !U.menu_open && !g_pinned) {
             U.no_focus_restore = true;
@@ -225,12 +230,14 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         if (g_ktrace_on) ktrace_dump();
         tray_remove();
         history_save();
+        if (g_ev_own_allowed) ev_own_stop(0);
         PostQuitMessage(0);
         return 0;
     default:
         if (msg == g_wm_taskbar_created && msg) {
             tray_add();
             tb_explorer_restarted();
+            media_explorer_restarted();
             return 0;
         }
         break;
@@ -290,6 +297,7 @@ static int cmd_test_everything(const WCHAR *query, const WCHAR *out)
     wc.lpszClassName = L"MixLauncherTest";
     RegisterClassW(&wc);
     g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, wc.hInstance, NULL);
+    g_ev_own_allowed = g_elevated;  // same rules as the launcher: our Everything only when elevated
     ev_start();
     f64 t0 = time_now();
     ev_request(1, query);
@@ -321,6 +329,24 @@ static int cmd_test_everything(const WCHAR *query, const WCHAR *out)
     write_utf8_file(out, &b);
     free(b.data);
     return 0;
+}
+
+// Installer hooks: close every running launcher and our copy of Everything, and wait for them,
+// so their files can be replaced or removed.
+static void shutdown_running(void)
+{
+    HWND h = NULL;
+    while ((h = FindWindowExW(NULL, h, WINDOW_CLASS, NULL)) != NULL) {
+        DWORD pid = 0;
+        GetWindowThreadProcessId(h, &pid);
+        HANDLE p = OpenProcess(SYNCHRONIZE, FALSE, pid);
+        PostMessageW(h, WM_APP_EXIT, 0, 0);
+        if (p) {
+            WaitForSingleObject(p, 5000);
+            CloseHandle(p);
+        }
+    }
+    ev_own_stop(5000);
 }
 
 static void init_paths(void)
@@ -359,6 +385,16 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
             HWND other = FindWindowW(WINDOW_CLASS, NULL);
             if (other) PostMessageW(other, WM_APP_EXIT, 0, 0);
             return 0;
+        } else if (!wcscmp(argv[i], L"--shutdown")) {
+            shutdown_running();
+            return 0;
+        } else if (!wcscmp(argv[i], L"--uninstall")) {
+            shutdown_running();
+            autostart_set(false);
+            run_key_set(false);
+            return 0;
+        } else if (!wcscmp(argv[i], L"--autostart") && i + 1 < argc) {
+            return autostart_set(!wcscmp(argv[i + 1], L"on")) ? 0 : 1;
         } else if (!wcscmp(argv[i], L"--test-unelevated") && i + 1 < argc) {
             CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
             WCHAR args[MAX_PATH + 64];
@@ -367,6 +403,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
             return shell_exec_unelevated_ex(L"cmd.exe", args, NULL, NULL, SW_HIDE) ? 0 : 1;
         } else if (!wcscmp(argv[i], L"--write-icon") && i + 1 < argc) {
             return app_icon_write_ico(argv[i + 1]) ? 0 : 1;
+        } else if (!wcscmp(argv[i], L"--media-dump") && i + 1 < argc) {
+            config_load();
+            return media_dump(argv[i + 1], i + 2 < argc ? _wtoi(argv[i + 2]) : 96, i + 3 < argc && !wcscmp(argv[i + 3], L"light"),
+                              i + 4 < argc && !wcscmp(argv[i + 4], L"sample"));
         } else if (!wcscmp(argv[i], L"--dump-apps") && i + 1 < argc) {
             config_load();
             return cmd_dump_apps(argv[i + 1]);
@@ -457,6 +497,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     HANDLE t = CreateThread(NULL, 0, indexer_thread, (void *)(uintptr_t)cached_sig, 0, NULL);
     if (t) CloseHandle(t);
 
+    g_ev_own_allowed = g_elevated && !g_pinned;
     ev_start();
     launch_start();
     if (!g_pinned) hook_start(g_cfg.hk);
@@ -469,6 +510,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     uipi_allow(g_hwnd, WM_APP_SETTINGS);
     if (!g_pinned) tray_add();
     if (g_cfg.taskbar_button) tb_set_enabled(true);
+    if (g_cfg.media_widget) media_set_enabled(true);
     elevation_housekeeping_start();
 
     if (opt_settings) settings_open();

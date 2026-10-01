@@ -76,4 +76,10 @@ if "%MODE%"=="debug" set CFLAGS=-std=c11 -O0 -g
 
 :done
 for %%f in (build\%OUT%.exe) do echo build\%OUT%.exe  %%~zf bytes
+rem Built-in Everything next to the exe, as the installer lays it out (tools\fetch-everything.ps1).
+if exist third_party\everything\Everything.exe (
+    if not exist build\Everything mkdir build\Everything
+    xcopy /d /y /q third_party\everything\Everything.exe build\Everything\ >nul 2>nul
+    xcopy /d /y /q third_party\everything\License.txt build\Everything\ >nul 2>nul
+)
 endlocal
