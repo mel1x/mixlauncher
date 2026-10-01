@@ -1164,8 +1164,9 @@ static void media_set_enabled(bool on)
 
 // Diagnostics: read the current session once and draw the widget over a taskbar-like
 // background into a BMP, without touching the real taskbar. --media-dump <out.bmp> [dpi] [light] [sample]
-// ("sample" draws a long title without a cover).
-static int media_dump(const WCHAR *out, int dpi, bool light, bool sample)
+// ("sample" draws a long title without a cover, "demo" a made-up playing track with a drawn cover;
+// "...-alpha" keeps the background transparent, straight alpha in the 4th byte).
+static int media_dump(const WCHAR *out, int dpi, bool light, const WCHAR *mode)
 {
     CoInitializeEx(NULL, COINIT_MULTITHREADED);
     if (!rt_load() || !font_init()) return 1;
@@ -1178,10 +1179,30 @@ static int media_dump(const WCHAR *out, int dpi, bool light, bool sample)
     M.h = (int)floorf(40.f * M.s + 0.5f);
     M.art_n = (int)media_cover();
     M.art = media_decode_art(thumb, M.art_n, &h);
-    if (sample || !M.info.title[0]) {
-        wcopy(M.info.title, countof(M.info.title), L"A rather long track title that does not fit");
+    bool sample = mode && wcsstr(mode, L"sample"), demo = mode && wcsstr(mode, L"demo"), alpha = mode && wcsstr(mode, L"alpha");
+    if (sample || demo || !M.info.title[0]) {
+        wcopy(M.info.title, countof(M.info.title), demo ? L"Midnight Drive" : L"A rather long track title that does not fit");
         free(M.art);
         M.art = NULL;
+    }
+    if (demo) {
+        wcopy(M.info.artist, countof(M.info.artist), L"Neon Coast");
+        M.info.status = MS_PLAYING;
+        M.info.can_prev = M.info.can_toggle = M.info.can_next = true;
+        int n = M.art_n;
+        M.art = (u32 *)malloc((size_t)n * n * 4);
+        for (int y = 0; M.art && y < n; y++)
+            for (int x = 0; x < n; x++) {
+                f32 u = (x + 0.5f) / n, v = (y + 0.5f) / n, t = CLAMP((u + v) * 0.5f, 0.f, 1.f);
+                f32 c[3] = { 28 + 150 * t, 30 + 40 * t, 92 + 60 * t };
+                f32 dx = u - 0.66f, dy = v - 0.38f, sun = CLAMP((0.22f - sqrtf(dx * dx + dy * dy)) * n * 0.5f, 0.f, 1.f);
+                f32 hill = CLAMP((v - (0.72f - 0.08f * sinf(u * 6.2f))) * n * 0.5f, 0.f, 1.f);
+                for (int k = 0; k < 3; k++) {
+                    c[k] = c[k] * (1 - sun) + (k == 0 ? 255.f : k == 1 ? 196.f : 140.f) * sun;
+                    c[k] = c[k] * (1 - hill) + (k == 0 ? 18.f : k == 1 ? 16.f : 40.f) * hill;
+                }
+                M.art[y * n + x] = 0xFF000000u | ((u32)c[0] << 16) | ((u32)c[1] << 8) | (u32)c[2];
+            }
     }
     media_layout();
     M.vis_t = M.swap_t = M.text_a = 1;
@@ -1193,11 +1214,12 @@ static int media_dump(const WCHAR *out, int dpi, bool light, bool sample)
     u32 bg = light ? 0xF3F3F3 : 0x1C1C1C;
     for (int y = 0; y < hh; y++)
         for (int x = 0; x < w; x++) {
-            u32 d = bg;
+            u32 d = alpha ? 0 : bg;
             if (y >= y0 && y < y0 + M.h) {
                 u32 p = M.bits[(y - y0) * w + x], a = p >> 24, r = 0;
-                for (int k = 0; k < 24; k += 8) r |= (MIN(255u, ((p >> k) & 255) + ((bg >> k) & 255) * (255 - a) / 255)) << k;
-                d = r;
+                for (int k = 0; k < 24; k += 8)
+                    r |= (alpha ? (a ? MIN(255u, ((p >> k) & 255) * 255 / a) : 0) : MIN(255u, ((p >> k) & 255) + ((bg >> k) & 255) * (255 - a) / 255)) << k;
+                d = alpha ? r | (a << 24) : r;
             }
             img[(hh - 1 - y) * w + x] = d;
         }

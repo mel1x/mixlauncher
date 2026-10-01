@@ -4,7 +4,7 @@ enum {
     SID_MAXAPPS, SID_HIDENOISE, SID_REINDEX, SID_MINCHARS, SID_FILTER, SID_CLEARHIST, SID_CONFIG,
     SID_DATADIR, SID_ADMIN, SID_EVERYTHING, SID_ABOUT,
     SID_ASPEED, SID_AOPEN, SID_ACLOSE, SID_ASCALE, SID_ACASCADE, SID_AROW, SID_ASTAGGER, SID_ASELECT, SID_ASCROLL, SID_AMENU,
-    SID_APAGE, SID_APREVIEW, SID_ARESET, SID_TASKBAR, SID_TBICON, SID_TBFILE, SID_MEDIA, SID_MEDIAPOS, SID_MEDIACTL, SID_MEDIAHIDE
+    SID_APAGE, SID_APREVIEW, SID_ARESET, SID_TASKBAR, SID_TBICON, SID_TBFILE, SID_MEDIA, SID_MEDIAPOS, SID_MEDIACTL, SID_MEDIAHIDE, SID_LANG
 };
 enum { PG_GENERAL, PG_APPEARANCE, PG_ANIM, PG_SEARCH, PG_ADVANCED, PG_ABOUT, PG__COUNT };
 
@@ -67,6 +67,11 @@ static const SItem k_sitems[] = {
       .desc = { L"Сколько секунд после закрытия хранить набранный текст. 0 - всегда начинать с пустого поля",
                 L"Seconds to keep the typed text after closing. 0 always starts empty" },
       .lo = 0, .hi = 3600, .step = 10, .unit = { L"с", L"s" } },
+    { .page = PG_GENERAL, .kind = SK_CHOICE, .id = SID_LANG, .group = { L"Язык", L"Language" },
+      .title = { L"Язык интерфейса", L"Interface language" },
+      .desc = { L"«Системный» берёт язык Windows: русский для русской Windows, иначе английский",
+                L"System follows Windows: Russian on a Russian Windows, English otherwise" },
+      .opt = { { L"Системный", L"System" }, { L"Русский", L"Русский" }, { L"English", L"English" } } },
 
     { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_THEME, .group = { L"Окно", L"Window" },
       .title = { L"Тема", L"Theme" }, .desc = { L"«Системная» следует настройке Windows", L"System follows the Windows setting" },
@@ -279,6 +284,7 @@ static int sval(int id)
     switch (id) {
     case SID_AUTOSTART: return SW.autostart;
     case SID_THEME: return g_cfg.theme;
+    case SID_LANG: return g_cfg.language;
     case SID_BACKDROP: return g_cfg.backdrop == BACKDROP_BLUR ? 0 : g_cfg.backdrop == BACKDROP_ACRYLIC ? 1 : 2;
     case SID_ANIM: return g_cfg.animations;
     case SID_TASKBAR: return g_cfg.taskbar_button;
@@ -400,6 +406,17 @@ static void sset(const SItem *it, int v)
     case SID_AUTOSTART:
         autostart_set(v != 0);
         SW.autostart = autostart_get();
+        break;
+    case SID_LANG:
+        g_cfg.language = v;
+        config_set("language", v == 1 ? "ru" : v == 2 ? "en" : "auto");
+        lang_apply();
+        apps_relocalize(U.apps);
+        SetWindowTextW(SW.hwnd, TR("Настройки MixLauncher", "MixLauncher Settings"));
+        if (U.visible) {
+            rebuild_rows(true);
+            ui_invalidate();
+        }
         break;
     case SID_THEME:
         g_cfg.theme = v;
@@ -979,12 +996,10 @@ static void draw_app_tile(f32 x, f32 y, f32 sz)
     f32 rad = floorf(sz * 0.225f + 0.5f);
     r_rect(x, y, sz, sz, RGBA(17, 17, 19, 255), rad);
     r_rect_ex(x, y, sz, sz, RGBA(255, 255, 255, 26), rad, 1.f, 0);
-    u32 white = RGBA(255, 255, 255, 255);
-    f32 fw = floorf(sz * 0.6f + 0.5f), fh = MAX(floorf(sz * 0.26f + 0.5f), 6.f);
-    f32 fx = floorf(x + (sz - fw) * 0.5f + 0.5f), fy = floorf(y + (sz - fh) * 0.5f + 0.5f);
-    r_rect_ex(fx, fy, fw, fh, white, fh * 0.5f, MAX(sz * 0.07f, 1.f), 0);
-    f32 cw = MAX(floorf(sz * 0.048f + 0.5f), 1.f), ch = MAX(floorf(sz * 0.136f + 0.5f), 3.f);
-    r_rect(floorf(x + sz * 0.36f - cw * 0.5f + 0.5f), floorf(y + (sz - ch) * 0.5f + 0.5f), cw, ch, white, cw * 0.5f);
+    f32 bars[3][4];
+    app_logo_bars(floorf(sz), bars);
+    for (int i = 0; i < 3; i++)
+        r_rect(x + bars[i][0], y + bars[i][1], bars[i][2], bars[i][3], RGBA(255, 255, 255, i == 1 ? 255 : (int)(APP_LOGO_DIM * 255.f + 0.5f)), bars[i][3] * 0.5f);
 }
 
 static void draw_skeycaps(f32 x, f32 cy, const KeyTok *t, int n, int font, f32 fs, f32 h, f32 pad, f32 gap, f32 rad, u32 bg, u32 border,
