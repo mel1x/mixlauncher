@@ -211,6 +211,20 @@ static AppList *applist_build(RawApp *raw, int n)
     return l;
 }
 
+// The UI language changed: rename the commands of a loaded list.
+static void apps_relocalize(AppList *l)
+{
+    if (!l) return;
+    for (int i = l->shell_count; i < l->count; i++) {
+        App *app = &l->apps[i];
+        for (int k = 0; k < countof(k_commands); k++)
+            if (k_commands[k].cmd == app->cmd) {
+                app->name = wdup(&l->arena, g_lang_ru ? k_commands[k].ru : k_commands[k].en, -1);
+                app_fill_match(&l->arena, app);
+            }
+    }
+}
+
 static void apps_cache_save(AppList *l)
 {
     Buf b = { 0 };

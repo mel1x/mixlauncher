@@ -5,12 +5,25 @@ static f32 sd_round_box(f32 px, f32 py, f32 hx, f32 hy, f32 r)
     return sqrtf(ox * ox + oy * oy) + MIN(MAX(qx, qy), 0.f) - r;
 }
 
+// Bars of the logo: x, y, w, h in pixels of an S x S icon, snapped to whole pixels; the middle one is the selected row.
+static void app_logo_bars(f32 S, f32 b[3][4])
+{
+    f32 mh = MAX(floorf(S * 0.135f + 0.5f), 2.f), sh = MAX(floorf(S * 0.095f + 0.5f), 1.f), gap = MAX(floorf(S * 0.08f + 0.5f), 1.f);
+    mh = MAX(mh, sh + 1.f);
+    f32 mw = floorf(S * 0.6f + 0.5f), mx = floorf((S - mw) * 0.5f + 0.5f), my = floorf((S - mh) * 0.5f + 0.5f);
+    f32 sx = mx + MAX(floorf(S * 0.042f + 0.5f), 1.f);
+    f32 r[3][4] = { { sx, my - gap - sh, floorf(S * 0.5f + 0.5f), sh }, { mx, my, mw, mh }, { sx, my + mh + gap, floorf(S * 0.417f + 0.5f), sh } };
+    memcpy(b, r, sizeof r);
+}
+
+#define APP_LOGO_DIM 0.32f
+
 static void app_icon_render(u32 *out, int S)
 {
     f32 s = (f32)S;
     f32 inset = s * 0.0625f, half = s * 0.5f - inset, rad = s * 0.225f;
-    f32 pw = MAX(s * 0.035f, 0.75f);
-    f32 cw = MAX(s * 0.024f, 0.65f), ch = MAX(s * 0.068f, 1.5f);
+    f32 bars[3][4];
+    app_logo_bars(s, bars);
     for (int y = 0; y < S; y++) {
         for (int x = 0; x < S; x++) {
             f32 px = x + 0.5f - s * 0.5f, py = y + 0.5f - s * 0.5f;
@@ -18,10 +31,12 @@ static void app_icon_render(u32 *out, int S)
             f32 abg = CLAMP(0.5f - dbg, 0.f, 1.f);
             f32 ring = CLAMP(0.5f - (fabsf(dbg + 0.5f + s * 0.004f) - 0.5f), 0.f, 1.f) * 0.10f;
             f32 v = 17.f + (255.f - 17.f) * ring;
-            f32 dp = fabsf(sd_round_box(px, py, s * 0.30f, s * 0.13f, s * 0.13f)) - pw;
-            f32 dc = sd_round_box(px + s * 0.14f, py, cw, ch, cw);
-            f32 m = CLAMP(0.5f - MIN(dp, dc), 0.f, 1.f);
-            v = v * (1 - m) + 255.f * m;
+            for (int i = 0; i < 3; i++) {
+                const f32 *b = bars[i];
+                f32 d = sd_round_box(x + 0.5f - (b[0] + b[2] * 0.5f), y + 0.5f - (b[1] + b[3] * 0.5f), b[2] * 0.5f, b[3] * 0.5f, b[3] * 0.5f);
+                f32 m = CLAMP(0.5f - d, 0.f, 1.f) * (i == 1 ? 1.f : APP_LOGO_DIM);
+                v = v * (1 - m) + 255.f * m;
+            }
             u32 a = (u32)(abg * 255.f + 0.5f), c = (u32)(v + 0.5f);
             out[y * S + x] = (a << 24) | (c << 16) | (c << 8) | c;
         }

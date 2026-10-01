@@ -11,6 +11,7 @@ typedef struct Hotkey { u8 mods, vk; } Hotkey;
 typedef struct Config {
     WCHAR hotkey[64];
     Hotkey hk;
+    int   language;
     int   theme;
     int   backdrop;
     int   width;
@@ -48,6 +49,9 @@ static const char k_default_config_ru[] =
     "; отключается (Win больше не открывает «Пуск», Win+D не сворачивает окна).\r\n"
     "; Примеры: win, alt+space, ctrl+space, win+d, f13, rctrl (одиночное нажатие правого Ctrl)\r\n"
     "hotkey = win\r\n"
+    "\r\n"
+    "; Язык: auto (как в Windows) | ru | en\r\n"
+    "language = auto\r\n"
     "\r\n"
     "; Тема: auto | dark | light\r\n"
     "theme = auto\r\n"
@@ -113,6 +117,9 @@ static const char k_default_config_en[] =
     "; (Win no longer opens Start, Win+D no longer shows the desktop).\r\n"
     "; Examples: win, alt+space, ctrl+space, win+d, f13, rctrl (a tap of the right Ctrl key)\r\n"
     "hotkey = win\r\n"
+    "\r\n"
+    "; Language: auto (follows Windows) | ru | en\r\n"
+    "language = auto\r\n"
     "\r\n"
     "; Theme: auto | dark | light\r\n"
     "theme = auto\r\n"
@@ -364,6 +371,7 @@ static void config_path(WCHAR *out) { data_path(out, L"config.ini"); }
 static bool config_value(const char *k, char *out, size_t cap)
 {
     if (!strcmp(k, "hotkey")) w_to_utf8(g_cfg.hotkey, -1, out, (int)cap);
+    else if (!strcmp(k, "language")) snprintf(out, cap, "%s", g_cfg.language == 1 ? "ru" : g_cfg.language == 2 ? "en" : "auto");
     else if (!strcmp(k, "theme")) snprintf(out, cap, "%s", g_cfg.theme == 1 ? "dark" : g_cfg.theme == 2 ? "light" : "auto");
     else if (!strcmp(k, "backdrop")) snprintf(out, cap, "%s", g_cfg.backdrop == BACKDROP_SOLID ? "solid" : g_cfg.backdrop == BACKDROP_ACRYLIC ? "acrylic" : "blur");
     else if (!strcmp(k, "width")) snprintf(out, cap, "%d", g_cfg.width);
@@ -429,6 +437,11 @@ static void config_write_all(void)
     free(b.data);
 }
 
+static void lang_apply(void)
+{
+    g_lang_ru = g_cfg.language == 1 || (g_cfg.language == 0 && PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_RUSSIAN);
+}
+
 static void config_load(void)
 {
     config_defaults(&g_cfg);
@@ -457,6 +470,7 @@ static void config_load(void)
         char *k = trim(line), *v = trim(eq + 1);
         if (!_stricmp(k, "win_key")) old_win_key = parse_bool(v);
         else if (!_stricmp(k, "hotkey")) utf8_to_w(v, -1, g_cfg.hotkey, countof(g_cfg.hotkey));
+        else if (!_stricmp(k, "language")) g_cfg.language = !_stricmp(v, "ru") ? 1 : !_stricmp(v, "en") ? 2 : 0;
         else if (!_stricmp(k, "theme")) g_cfg.theme = !_stricmp(v, "dark") ? 1 : !_stricmp(v, "light") ? 2 : 0;
         else if (!_stricmp(k, "backdrop")) g_cfg.backdrop = !_stricmp(v, "solid") ? BACKDROP_SOLID : !_stricmp(v, "acrylic") ? BACKDROP_ACRYLIC : BACKDROP_BLUR;
         else if (!_stricmp(k, "width")) g_cfg.width = CLAMP(atoi(v), 480, 1600);
@@ -489,6 +503,7 @@ static void config_load(void)
         else if (!_stricmp(k, "anim_page_ms")) g_cfg.anim_page_ms = CLAMP(atoi(v), 0, 800);
     }
     free(text);
+    lang_apply();
     if (old_win_key == 1) wcopy(g_cfg.hotkey, countof(g_cfg.hotkey), L"win");
     if (!hotkey_parse(g_cfg.hotkey, &g_cfg.hk) || !g_cfg.hk.vk) {
         wcopy(g_cfg.hotkey, countof(g_cfg.hotkey), L"win");

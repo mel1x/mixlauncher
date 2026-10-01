@@ -374,7 +374,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     WCHAR **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     bool opt_show = false, opt_settings = false;
     const WCHAR *opt_query = NULL;
-    int opt_backdrop = -1, opt_theme = -1;
+    int opt_backdrop = -1, opt_theme = -1, opt_lang = -1;
     for (int i = 1; i < argc; i++) {
         if (!wcscmp(argv[i], L"--exit")) {
             HWND other = FindWindowW(WINDOW_CLASS, NULL);
@@ -401,7 +401,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
         } else if (!wcscmp(argv[i], L"--media-dump") && i + 1 < argc) {
             config_load();
             return media_dump(argv[i + 1], i + 2 < argc ? _wtoi(argv[i + 2]) : 96, i + 3 < argc && !wcscmp(argv[i + 3], L"light"),
-                              i + 4 < argc && !wcscmp(argv[i + 4], L"sample"));
+                              i + 4 < argc ? argv[i + 4] : NULL);
         } else if (!wcscmp(argv[i], L"--dump-apps") && i + 1 < argc) {
             config_load();
             return cmd_dump_apps(argv[i + 1]);
@@ -414,6 +414,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
         } else if (!wcscmp(argv[i], L"--theme") && i + 1 < argc) {
             i++;
             opt_theme = !wcscmp(argv[i], L"dark") ? 1 : !wcscmp(argv[i], L"light") ? 2 : 0;
+        } else if (!wcscmp(argv[i], L"--lang") && i + 1 < argc) {
+            i++;
+            opt_lang = !wcscmp(argv[i], L"ru") ? 1 : !wcscmp(argv[i], L"en") ? 2 : 0;
         } else if (!wcscmp(argv[i], L"--other-monitor")) {
             g_other_monitor = true;
             g_ktrace_on = true;
@@ -442,6 +445,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     config_load();
     if (opt_backdrop >= 0) g_cfg.backdrop = opt_backdrop;
     if (opt_theme >= 0) g_cfg.theme = opt_theme;
+    if (opt_lang >= 0) {
+        g_cfg.language = opt_lang;
+        lang_apply();
+    }
     history_load();
     arena_init(&U.recent_arena, 1ull << 20);
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
@@ -504,8 +511,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     uipi_allow(g_hwnd, WM_APP_SHOW);
     uipi_allow(g_hwnd, WM_APP_SETTINGS);
     if (!g_pinned) tray_add();
-    if (g_cfg.taskbar_button) tb_set_enabled(true);
-    if (g_cfg.media_widget) media_set_enabled(true);
+    if (g_cfg.taskbar_button && !g_pinned) tb_set_enabled(true);
+    if (g_cfg.media_widget && !g_pinned) media_set_enabled(true);
     elevation_housekeeping_start();
 
     if (opt_settings) settings_open();
