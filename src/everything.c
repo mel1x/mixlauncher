@@ -197,10 +197,107 @@ static void ev_pump(void)
     }
 }
 
-static HWND ev_find_window(void)
+// Our own copy of Everything: Everything\Everything.exe next to our exe (the installer puts it there).
+// It runs as a separate hidden instance with its settings and index in our data folder, and only while
+// the user has no Everything of their own: theirs is always preferred, so the disk is never indexed twice.
+#define EV_INSTANCE L"MixLauncher"
+#define EV_OWN_CLASS L"EVERYTHING_TASKBAR_NOTIFICATION_(" EV_INSTANCE L")"
+
+enum { EVS_NONE, EVS_USER, EVS_OWN };
+
+static bool g_ev_own_allowed;  // set by main: only an elevated launcher can give it NTFS access
+static HANDLE g_ev_own_proc;
+static f64 g_ev_own_started;
+
+static HWND ev_user_window(void)
 {
     HWND h = FindWindowW(L"EVERYTHING_TASKBAR_NOTIFICATION", NULL);
     if (!h) h = FindWindowW(L"EVERYTHING_TASKBAR_NOTIFICATION_(1.5a)", NULL);
+    return h;
+}
+
+static int ev_state(void) { return ev_user_window() ? EVS_USER : FindWindowW(EV_OWN_CLASS, NULL) ? EVS_OWN : EVS_NONE; }
+
+static bool ev_own_exe(WCHAR *out)
+{
+    WCHAR dir[MAX_PATH];
+    wcopy(dir, MAX_PATH, g_exe_path);
+    PathRemoveFileSpecW(dir);
+    _snwprintf(out, MAX_PATH, L"%s\\Everything\\Everything.exe", dir);
+    out[MAX_PATH - 1] = 0;
+    return GetFileAttributesW(out) != INVALID_FILE_ATTRIBUTES;
+}
+
+static HANDLE ev_own_run(const WCHAR *args)
+{
+    WCHAR exe[MAX_PATH], cmd[3 * MAX_PATH + 128];
+    if (!ev_own_exe(exe)) return NULL;
+    _snwprintf(cmd, countof(cmd), L"\"%s\" -instance " EV_INSTANCE L" %s", exe, args);
+    cmd[countof(cmd) - 1] = 0;
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    memset(&si, 0, sizeof si);
+    si.cb = sizeof si;
+    if (!CreateProcessW(exe, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+        log_msg("everything: could not run our copy (%lu)", GetLastError());
+        return NULL;
+    }
+    CloseHandle(pi.hThread);
+    return pi.hProcess;
+}
+
+static void ev_own_start(void)
+{
+    if (!g_ev_own_allowed) return;
+    if (g_ev_own_proc && WaitForSingleObject(g_ev_own_proc, 0) == WAIT_TIMEOUT) return;  // still coming up
+    if (g_ev_own_started && time_now() - g_ev_own_started < 30.0) return;              // it quit: don't hammer
+    WCHAR exe[MAX_PATH];
+    if (!ev_own_exe(exe)) return;
+    WCHAR dir[MAX_PATH], ini[MAX_PATH], db[MAX_PATH], args[2 * MAX_PATH + 64];
+    data_path(dir, L"Everything");
+    CreateDirectoryW(dir, NULL);
+    _snwprintf(ini, MAX_PATH, L"%s\\Everything.ini", dir);
+    _snwprintf(db, MAX_PATH, L"%s\\Everything.db", dir);
+    ini[MAX_PATH - 1] = db[MAX_PATH - 1] = 0;
+    if (GetFileAttributesW(ini) == INVALID_FILE_ATTRIBUTES) {
+        static const char k_ini[] = "[Everything]\r\n"
+                                    "show_tray_icon=0\r\n"
+                                    "run_in_background=1\r\n"
+                                    "check_for_updates_on_startup=0\r\n"
+                                    "auto_include_fixed_volumes=1\r\n";
+        write_file_atomic(ini, k_ini, (DWORD)(sizeof k_ini - 1));
+    }
+    _snwprintf(args, countof(args), L"-startup -config \"%s\" -db \"%s\"", ini, db);
+    args[countof(args) - 1] = 0;
+    if (g_ev_own_proc) CloseHandle(g_ev_own_proc);
+    g_ev_own_proc = ev_own_run(args);
+    g_ev_own_started = time_now();
+    if (g_ev_own_proc) log_msg("everything: started our own copy");
+}
+
+// Asks our copy to save its index and quit; wait_ms > 0 waits for it.
+static void ev_own_stop(DWORD wait_ms)
+{
+    if (!FindWindowW(EV_OWN_CLASS, NULL)) return;
+    HANDLE p = ev_own_run(wait_ms ? L"-exit -wait" : L"-exit");
+    if (p) {
+        if (wait_ms) WaitForSingleObject(p, wait_ms);
+        CloseHandle(p);
+    }
+}
+
+static HWND ev_find_window(void)
+{
+    HWND h = ev_user_window();
+    if (h) {
+        if (g_ev_own_allowed && FindWindowW(EV_OWN_CLASS, NULL)) ev_own_stop(0);  // the user started theirs
+        return h;
+    }
+    h = FindWindowW(EV_OWN_CLASS, NULL);
+    if (h) return h;
+    ev_own_start();
+    // A fresh start creates its window within a moment; the index loads behind it.
+    for (int i = 0; !h && i < 40 && g_ev_own_proc && WaitForSingleObject(g_ev_own_proc, 50) == WAIT_TIMEOUT; i++) h = FindWindowW(EV_OWN_CLASS, NULL);
     return h;
 }
 
@@ -230,13 +327,15 @@ static int ev_send_query(HWND ev, const WCHAR *search, DWORD offset, DWORD max_r
     DWORD_PTR res = 0;
     if (!SendMessageTimeoutW(ev, WM_COPYDATA, (WPARAM)E.reply, (LPARAM)&cds, SMTO_ABORTIFHUNG | SMTO_NORMAL, 3000, &res) || !res) return 0;
     f64 t0 = time_now();
+    // Our copy builds its index on the very first run and answers once it is done.
+    f64 limit = g_ev_own_started && t0 - g_ev_own_started < 60.0 ? 30.0 : 5.0;
     while (!E.got) {
         if (ev_superseded()) {
             E.waiting_tag = 0;
             return -1;
         }
         f64 el = time_now() - t0;
-        if (el > 5.0) {
+        if (el > limit) {
             E.waiting_tag = 0;
             return 0;
         }
@@ -509,6 +608,7 @@ static DWORD WINAPI ev_thread(void *param)
         norm_str(E.profile_norm, prof, E.profile_len);
     }
     CoTaskMemFree(prof);
+    ev_find_window();  // start our copy of Everything now, so it is ready by the first search
 
     for (;;) {
         MsgWaitForMultipleObjects(1, &E.event, FALSE, INFINITE, QS_ALLINPUT);

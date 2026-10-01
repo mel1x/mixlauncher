@@ -437,6 +437,7 @@ enum {
     WM_APP_SETTINGS,
     WM_APP_KEYCAP,
     WM_APP_TASKBAR,
+    WM_APP_MEDIA,                // media.c worker published a new state
 };
 
 static HWND g_hwnd;   // main window, target of all worker notifications

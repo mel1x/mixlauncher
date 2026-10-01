@@ -6,7 +6,7 @@ enum {
     SID_MAXAPPS, SID_HIDENOISE, SID_REINDEX, SID_MINCHARS, SID_FILTER, SID_CLEARHIST, SID_CONFIG,
     SID_DATADIR, SID_ADMIN, SID_EVERYTHING, SID_ABOUT,
     SID_ASPEED, SID_AOPEN, SID_ACLOSE, SID_ASCALE, SID_ACASCADE, SID_AROW, SID_ASTAGGER, SID_ASELECT, SID_ASCROLL, SID_AMENU,
-    SID_APAGE, SID_APREVIEW, SID_ARESET, SID_TASKBAR, SID_TBICON, SID_TBFILE
+    SID_APAGE, SID_APREVIEW, SID_ARESET, SID_TASKBAR, SID_TBICON, SID_TBFILE, SID_MEDIA, SID_MEDIAPOS, SID_MEDIACTL, SID_MEDIAHIDE
 };
 enum { PG_GENERAL, PG_APPEARANCE, PG_ANIM, PG_SEARCH, PG_ADVANCED, PG_ABOUT, PG__COUNT };
 
@@ -52,6 +52,18 @@ static const SItem k_sitems[] = {
     { .page = PG_GENERAL, .kind = SK_BUTTON, .id = SID_TBFILE, .title = { L"Свой значок", L"Custom icon" },
       .desc = { L"PNG, ICO или JPG. Лучше квадратный, от 48×48, с прозрачным фоном", L"PNG, ICO or JPG. Square, 48×48 or larger, with a transparent background works best" },
       .opt = { { L"Выбрать…", L"Choose…" } }, .glyph = 0xE8E5 },
+    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_MEDIA, .group = { L"Сейчас играет", L"Now playing" },
+      .title = { L"Медиа на панели задач", L"Media on the taskbar" },
+      .desc = { L"Обложка, название и исполнитель из любого плеера: Spotify, браузера, Медиаплеера. Клик открывает плеер",
+                L"Cover, title and artist from any player: Spotify, a browser, Media Player. A click opens the player" } },
+    { .page = PG_GENERAL, .kind = SK_CHOICE, .id = SID_MEDIAPOS, .title = { L"Положение", L"Position" },
+      .desc = { L"Справа — у значков в трее. Если значки панели выровнены по левому краю, всегда справа",
+                L"Right sits next to the tray icons. Always right when taskbar icons are aligned left" },
+      .opt = { { L"Слева", L"Left" }, { L"Справа", L"Right" } } },
+    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_MEDIACTL, .title = { L"Кнопки управления", L"Playback buttons" },
+      .desc = { L"Предыдущий трек, пауза и следующий", L"Previous track, pause and next" } },
+    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_MEDIAHIDE, .title = { L"Скрывать на паузе", L"Hide when paused" },
+      .desc = { L"Показывать виджет, только пока что-то играет", L"Show the widget only while something plays" } },
     { .page = PG_GENERAL, .kind = SK_STEPPER, .id = SID_KEEPQUERY, .group = { L"Поведение", L"Behavior" },
       .title = { L"Помнить запрос", L"Keep the query" },
       .desc = { L"Сколько секунд после закрытия хранить набранный текст. 0 — всегда начинать с пустого поля",
@@ -151,7 +163,8 @@ static const SItem k_sitems[] = {
                 L"commands. No AI, no network, no telemetry." } },
     { .page = PG_ABOUT, .kind = SK_INFO, .id = SID_EVERYTHING, .group = { L"Состояние", L"Status" },
       .title = { L"Everything", L"Everything" },
-      .desc = { L"Поиск файлов работает через запущенный Everything", L"File search works through a running Everything" } },
+      .desc = { L"Поиск файлов идёт через ваш Everything, а если его нет — через встроенный",
+                L"File search goes through your own Everything, or the built-in one when you have none" } },
 };
 #define SITEMS countof(k_sitems)
 #define SROWS_MAX 24
@@ -207,7 +220,8 @@ static struct {
     bool armed;              // "clear history" waits for a confirming click
     int flash_id;            // item showing a short "done" note
     f64 flash_until;
-    bool autostart, everything_ok;
+    bool autostart;
+    int everything;          // EVS_*
     // dropdown list of a choice row
     bool pop_open;
     int pop_row, pop_hover;
@@ -279,6 +293,10 @@ static int sval(int id)
     case SID_ANIM: return g_cfg.animations;
     case SID_TASKBAR: return g_cfg.taskbar_button;
     case SID_TBICON: return g_cfg.taskbar_icon;
+    case SID_MEDIA: return g_cfg.media_widget;
+    case SID_MEDIAPOS: return g_cfg.media_position;
+    case SID_MEDIACTL: return g_cfg.media_controls;
+    case SID_MEDIAHIDE: return g_cfg.media_hide_paused;
     case SID_WIDTH: return g_cfg.width;
     case SID_ROWS: return g_cfg.rows;
     case SID_MAXAPPS: return g_cfg.max_apps;
@@ -317,6 +335,8 @@ static void save_wstr(const char *key, const WCHAR *v)
 static void settings_apply_theme(void);
 static void tb_set_enabled(bool on);  // taskbar.c
 static void tb_icon_changed(void);     // taskbar.c
+static void media_set_enabled(bool on);    // media.c
+static void media_settings_changed(void);  // media.c
 
 static int choice_count(const SItem *it)
 {
@@ -415,6 +435,26 @@ static void sset(const SItem *it, int v)
         g_cfg.taskbar_button = v;
         config_set("taskbar_button", v ? "1" : "0");
         tb_set_enabled(v != 0);
+        break;
+    case SID_MEDIA:
+        g_cfg.media_widget = v;
+        config_set("media_widget", v ? "1" : "0");
+        media_set_enabled(v != 0);
+        break;
+    case SID_MEDIAPOS:
+        g_cfg.media_position = v;
+        config_set("media_position", v ? "right" : "left");
+        media_settings_changed();
+        break;
+    case SID_MEDIACTL:
+        g_cfg.media_controls = v;
+        config_set("media_controls", v ? "1" : "0");
+        media_settings_changed();
+        break;
+    case SID_MEDIAHIDE:
+        g_cfg.media_hide_paused = v;
+        config_set("media_hide_paused", v ? "1" : "0");
+        media_settings_changed();
         break;
     case SID_ANIM:
         g_cfg.animations = v;
@@ -526,15 +566,10 @@ static void button_action(const SItem *it)
     settings_invalidate();
 }
 
-static bool everything_running(void)
-{
-    return FindWindowW(L"EVERYTHING_TASKBAR_NOTIFICATION", NULL) || FindWindowW(L"EVERYTHING_TASKBAR_NOTIFICATION_(1.5a)", NULL);
-}
-
 static void refresh_status(void)
 {
     SW.autostart = autostart_get();
-    SW.everything_ok = everything_running();
+    SW.everything = ev_state();
 }
 
 // Status text of an info row; *good selects the dot color.
@@ -544,8 +579,9 @@ static const WCHAR *info_text(int id, bool *good)
         *good = g_elevated;
         return g_elevated ? ss((Str){ L"Есть", L"Granted" }) : ss((Str){ L"Нет", L"No" });
     }
-    *good = SW.everything_ok;
-    return SW.everything_ok ? ss((Str){ L"Запущен", L"Running" }) : ss((Str){ L"Не запущен", L"Not running" });
+    *good = SW.everything != EVS_NONE;
+    if (SW.everything == EVS_OWN) return ss((Str){ L"Встроенный, запущен", L"Built-in, running" });
+    return SW.everything == EVS_USER ? ss((Str){ L"Запущен", L"Running" }) : ss((Str){ L"Не запущен", L"Not running" });
 }
 
 // Hotkey display and recording
