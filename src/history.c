@@ -1,16 +1,14 @@
-// history.c — frecency (decayed launch counts) and query memory ("for 'ch' I pick Chrome").
-
 #define FREC_HALF_LIFE_DAYS 14.0
 #define QMEM_HALF_LIFE_DAYS 30.0
 #define QMEM_MAX_QUERY 24
 
 typedef struct HistEntry {
-    u64 hash;          // type + case-insensitive key
-    WCHAR *key;        // app id or file path, original case
-    f64 score;         // decayed count at time `last`
-    i64 last;          // unix seconds
+    u64 hash;
+    WCHAR *key;
+    f64 score;
+    i64 last;
     u32 count;
-    u8 type;           // 'a' app, 'c' command, 'f' file, 'd' folder
+    u8 type;
     u8 used;
 } HistEntry;
 
@@ -23,8 +21,8 @@ typedef struct QueryMem {
 
 #define HIST_CAP 8192
 static struct {
-    Arena arena;              // strings; compacted on save when it grows
-    HistEntry *entries;       // open addressing, HIST_CAP
+    Arena arena;
+    HistEntry *entries;
     int count;
     QueryMem *qmem;
     int qcount, qcap;
@@ -94,8 +92,8 @@ static f32 qmem_bonus(u8 type, const WCHAR *key, const WCHAR *qnorm, int qlen, i
         int ml = wlen(q->query);
         f64 rel;
         if (ml == ql && wmem_eq(q->query, qnorm, ql)) rel = 1.0;
-        else if (ml > ql && wmem_eq(q->query, qnorm, ql)) rel = 0.8;         // typed less than last time
-        else if (ml < ql && wmem_eq(q->query, qnorm, ml)) rel = 0.55;        // typed more than last time
+        else if (ml > ql && wmem_eq(q->query, qnorm, ql)) rel = 0.8;
+        else if (ml < ql && wmem_eq(q->query, qnorm, ml)) rel = 0.55;
         else continue;
         f64 w = decay(q->weight, q->last, now, QMEM_HALF_LIFE_DAYS);
         f64 v = rel * (1.0 - exp(-w / 1.5));
@@ -174,7 +172,7 @@ static void history_save(void)
         HistEntry *e = &H.entries[i];
         if (!e->used) continue;
         f64 v = decay(e->score, e->last, now, FREC_HALF_LIFE_DAYS);
-        if (v < 0.02) continue;  // forgotten
+        if (v < 0.02) continue;
         buf_printf(&b, "H\t%c\t%.4f\t%lld\t%u\t", e->type, e->score, (long long)e->last, e->count);
         buf_put_w(&b, e->key);
         buf_put(&b, "\n", 1);
@@ -253,7 +251,6 @@ static void history_load(void)
     free(text);
 }
 
-// Most-used files, for the empty-query view.
 typedef struct RecentFile {
     const WCHAR *path;
     bool folder;

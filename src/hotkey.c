@@ -1,22 +1,20 @@
-// hotkey.c — the launcher hotkey, via a low-level keyboard hook on its own high-priority thread.
-
 #define WM_HOOK_MASK (WM_APP + 100)
 #define WM_HOOK_REINSTALL (WM_APP + 101)
 #define WM_HOOK_MOUSE (WM_APP + 102)
 #define WM_HOOK_WATCHDOG (WM_APP + 104)
 #define WM_HOOK_VISIBLE (WM_APP + 105)
-#define ML_INJECT_MAGIC ((ULONG_PTR)0x4D4C4E43u)   // 'MLNC'
+#define ML_INJECT_MAGIC ((ULONG_PTR)0x4D4C4E43u)
 
 static struct {
     DWORD tid;
     HHOOK hook, mouse_hook;
     HWND watchdog;
     bool watchdog_on;
-    volatile LONG bind;         // Hotkey: mods << 8 | vk; 0 = none
-    volatile LONG ui_visible;   // launcher open: clicks outside of it close it
-    HWND volatile capture;      // settings window recording a hotkey
-    bool tap_down;              // the hotkey's tap key is held
-    bool tap_armed;             // ... and nothing else happened since it went down
+    volatile LONG bind;
+    volatile LONG ui_visible;
+    HWND volatile capture;
+    bool tap_down;
+    bool tap_armed;
     DWORD tap_vk;
     DWORD swallow_vk;
     DWORD swallow_time;
@@ -24,7 +22,7 @@ static struct {
     DWORD pending_vk;
     UINT_PTR fallback_timer;
     u32 hook_presses;
-    u32 raw_presses;            // ... and by raw input
+    u32 raw_presses;
     u32 reinstalls;
 } K;
 
@@ -132,14 +130,14 @@ static LRESULT CALLBACK ll_keyboard(int code, WPARAM wp, LPARAM lp)
             return 1;
         }
         if (!(k->flags & LLKHF_INJECTED) && b.vk && key_class(vk) == key_class(b.vk)) K.hook_presses++;
-        if (K.tap_armed && vk != K.tap_vk) K.tap_armed = false;  // something else pressed: a combination
+        if (K.tap_armed && vk != K.tap_vk) K.tap_armed = false;
         if (!b.vk) goto pass;
         if (bit && hk_vk_match(b.vk, vk)) {
             bool repeat = K.tap_down && vk == K.tap_vk && (GetAsyncKeyState((int)vk) & 0x8000);
             if (!repeat) {
                 K.tap_down = true;
                 K.tap_vk = vk;
-                K.tap_armed = (held_mods() & ~bit) == b.mods;  // other modifiers held: not our tap
+                K.tap_armed = (held_mods() & ~bit) == b.mods;
                 PostThreadMessageW(K.tid, WM_HOOK_MOUSE, 0, 0);
             }
         } else if (!bit && hk_vk_match(b.vk, vk) && held_mods() == b.mods) {
@@ -180,7 +178,7 @@ static bool tb_hit(POINT pt);
 static LRESULT CALLBACK ll_mouse(int code, WPARAM wp, LPARAM lp)
 {
     if (code == HC_ACTION && wp != WM_MOUSEMOVE) {
-        if (K.tap_down) K.tap_armed = false;  // Win+click, Win+wheel
+        if (K.tap_down) K.tap_armed = false;
         bool press = wp == WM_LBUTTONDOWN || wp == WM_RBUTTONDOWN || wp == WM_MBUTTONDOWN || wp == WM_XBUTTONDOWN;
         if (press && K.ui_visible) {
             const MSLLHOOKSTRUCT *m = (const MSLLHOOKSTRUCT *)lp;
@@ -225,7 +223,7 @@ static LRESULT CALLBACK watchdog_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
                 memset(&fake, 0, sizeof fake);
                 fake.time = GetTickCount();
                 fake.vkCode = ri.data.keyboard.VKey;
-                fake.flags = ri.header.hDevice ? 0x100 : 0x110;  // 0x100 marks "raw input" in the trace
+                fake.flags = ri.header.hDevice ? 0x100 : 0x110;
                 ktrace(&fake, (ri.data.keyboard.Flags & RI_KEY_BREAK) ? WM_KEYUP : WM_KEYDOWN, 'r');
             }
         }
@@ -247,11 +245,10 @@ static LRESULT CALLBACK watchdog_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 static void watchdog_set(bool on)
 {
     if (!K.watchdog || on == K.watchdog_on) return;
-    RAWINPUTDEVICE rid = { 0x01, 0x06, on ? RIDEV_INPUTSINK : RIDEV_REMOVE, on ? K.watchdog : NULL };  // keyboard
+    RAWINPUTDEVICE rid = { 0x01, 0x06, on ? RIDEV_INPUTSINK : RIDEV_REMOVE, on ? K.watchdog : NULL };
     if (RegisterRawInputDevices(&rid, 1, sizeof rid)) K.watchdog_on = on;
     else log_msg("raw input watchdog %s failed (%lu)", on ? "register" : "remove", GetLastError());
     if (g_ktrace_on) log_msg("watchdog %s t=%lu", on ? "on" : "off", GetTickCount());
-    // Presses that happened while it was off must not look like misses.
     K.raw_presses = K.hook_presses;
 }
 
@@ -285,7 +282,7 @@ static DWORD WINAPI hook_thread(void *param)
 {
     HANDLE ready = (HANDLE)param;
     MSG msg;
-    PeekMessageW(&msg, NULL, 0, 0, PM_NOREMOVE);  // create the message queue
+    PeekMessageW(&msg, NULL, 0, 0, PM_NOREMOVE);
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
     opt_out_of_throttling(GetCurrentThread());
     hook_install(false);
@@ -343,7 +340,7 @@ static DWORD WINAPI hook_thread(void *param)
             break;
         case WM_HOOK_REINSTALL:
             hook_install(false);
-            if (!msg.wParam) K.tap_down = K.tap_armed = false;  // wParam 1: re-arm only, keep key state
+            if (!msg.wParam) K.tap_down = K.tap_armed = false;
             break;
         case WM_HOOK_WATCHDOG:
             if (msg.wParam) watchdog_sync(GetForegroundWindow());
@@ -397,7 +394,6 @@ static void hook_watchdog_sync(void)
     if (K.tid) PostThreadMessageW(K.tid, WM_HOOK_WATCHDOG, 1, 0);
 }
 
-// Launcher open/closed: while open, a click outside of it closes it.
 static void hook_set_visible(bool visible)
 {
     if (K.tid) PostThreadMessageW(K.tid, WM_HOOK_VISIBLE, visible ? 1 : 0, 0);

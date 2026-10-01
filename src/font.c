@@ -1,11 +1,9 @@
-// font.c — DirectWrite glyph rasterization into a coverage atlas, plus simple text layout.
-
 enum { FONT_TEXT, FONT_TEXT_SEMIBOLD, FONT_DISPLAY, FONT_ICON, FONT__COUNT };
 
 typedef struct Face {
     DWFontFace *face;
     f32 upem;
-    f32 ascent, descent, cap_height;   // design units
+    f32 ascent, descent, cap_height;
 } Face;
 
 static const WCHAR *k_fallback_families[] = {
@@ -22,27 +20,25 @@ static struct {
     DWFontCollection *coll;
     Face faces[FONT__COUNT + FALLBACK_COUNT];
     bool fallback_tried[FALLBACK_COUNT];
-    bool overflow;            // atlas filled up during this frame
+    bool overflow;
     int shelf_x, shelf_y, shelf_h;
 } F;
 
-// Codepoint -> (face, glyph, advance) map, per primary font.
 typedef struct GlyphMap {
     u32 key;
     u16 glyph;
     u8 face;
     u8 used;
-    f32 adv;          // advance in em units
+    f32 adv;
 } GlyphMap;
 
 #define GMAP_SIZE 16384
 static GlyphMap g_gmap[GMAP_SIZE];
 
-// Rasterized glyph cache.
 typedef struct GlyphRaster {
     u64 key;
     u16 x, y, w, h;
-    i16 ox, oy;       // bitmap offset from pen position / baseline
+    i16 ox, oy;
 } GlyphRaster;
 
 #define GRAST_SIZE 16384
@@ -164,7 +160,6 @@ static GlyphMap *glyph_map(int font, u32 cp)
             return e;
         }
     }
-    // Table full (practically impossible): reset and retry.
     memset(g_gmap, 0, sizeof g_gmap);
     return glyph_map(font, cp);
 }
@@ -397,7 +392,6 @@ static f32 text_draw_fit(int font, f32 size, f32 x, f32 baseline, f32 max_w, con
         text_draw(font, size, end, baseline, ell, 1, color);
         return w + ew;
     } else {
-        // Walk backwards over code units; surrogate pairs are kept whole.
         f32 w = 0;
         int cut = len;
         while (cut > 0) {

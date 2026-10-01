@@ -1,5 +1,3 @@
-// ui.c — immediate-mode UI: state, layout, drawing, input, show/hide.
-
 typedef struct Theme {
     bool dark;
     u32 bg, bg_solid;
@@ -29,14 +27,14 @@ typedef struct AppHit {
 #define TIMER_REHOOK 2
 
 static struct {
-    bool visible;                 // window is on screen (also while fading out)
-    bool closing;                 // fade-out running; input is ignored
-    f32 vis, vis_target;          // open/close progress 0..1
-    int alpha;                    // current layered window alpha
+    bool visible;
+    bool closing;
+    f32 vis, vis_target;
+    int alpha;
     HWND prev_fg;
     bool app_mode;
     bool no_focus_restore;
-    int settings_btn[4];          // footer "Settings" button rect (x0, y0, x1, y1)
+    int settings_btn[4];
     bool settings_hover, press_settings;
     f64 hide_time;
 
@@ -50,16 +48,16 @@ static struct {
     AppHit *hits;
     int hit_count, hit_cap;
     bool files_alt;
-    FileResults *files;           // first result of the current query
+    FileResults *files;
     u32 files_req_id;
     bool files_pending;
     FileResults **fpages;
     int fpage_count, fpage_cap;
     FileItem **flist;
     int flist_count, flist_cap;
-    int files_shown;              // how many of flist have rows
+    int files_shown;
     u32 files_total, files_fetched;
-    bool files_more_pending;      // a page request is in flight
+    bool files_more_pending;
     f32 files_end_y;
     WCHAR files_header[64];
 
@@ -76,25 +74,24 @@ static struct {
     f32 content_h;
     f32 scroll, scroll_target, scroll_v;
     f32 hl_y, hl_h, hl_vy, hl_vh;
-    f64 open_time;                 // rows cascade in after this moment (open animation)
-    f32 settings_hover_t;          // footer button hover fade 0..1
+    f64 open_time;
+    f32 settings_hover_t;
     const WCHAR *sub_text;
     u32 sub_col;
-    f32 sub_t;                     // its fade 0..1 (out when a file row is selected)
-    // Context menu, drawn inside the launcher (see "Context menu" below).
+    f32 sub_t;
     struct {
         bool open, closing;
-        f32 t;                     // entrance progress 0..1 (runs back when closing)
+        f32 t;
         f32 x, y, w, h;
         int n, hover, press;
-        f32 hl_y, hl_v;            // hover pill (spring)
+        f32 hl_y, hl_v;
         bool hl_init;
         struct { int cmd; u32 glyph; const WCHAR *label, *keys; bool sep; f32 y; } it[6];
     } cm;
     f64 last_frame;
     bool dirty, animating;
 
-    App *armed;                   // dangerous command waiting for a second Enter
+    App *armed;
     int mouse_x, mouse_y;
     bool menu_open;
 
@@ -112,15 +109,12 @@ static bool g_other_monitor;
 
 static void ui_invalidate(void) { U.dirty = true; }
 
-// Context menu (defined with the input code below).
 static bool cm_animate(f32 dt);
 static void cm_draw(void);
 static void cm_close(bool animate);
 
 static f32 S(f32 v) { return v * U.s; }
 static f32 SR(f32 v) { return floorf(v * U.s + 0.5f); }
-
-// Theme
 
 static bool reg_dword(HKEY root, const WCHAR *key, const WCHAR *name, DWORD *out)
 {
@@ -199,7 +193,7 @@ static bool backdrop_apply(HWND h)
         DwmExtendFrameIntoClientArea(h, &m);
         int type = 3;  // DWMSBT_TRANSIENTWINDOW
         if (SUCCEEDED(DwmSetWindowAttribute(h, 38 /*DWMWA_SYSTEMBACKDROP_TYPE*/, &type, sizeof type))) return true;
-        mode = BACKDROP_BLUR;  // older Windows: fall back to accent blur
+        mode = BACKDROP_BLUR;
     }
     DwmSetWindowAttribute(h, 38, &none, sizeof none);
     MARGINS zero = { 0, 0, 0, 0 };
@@ -208,14 +202,12 @@ static bool backdrop_apply(HWND h)
     if (mode == BACKDROP_BLUR) {
         ap.accent_state = 4;  // ACCENT_ENABLE_ACRYLICBLURBEHIND
         ap.accent_flags = 2;
-        ap.gradient_color = U.th.dark ? 0x30201e1eu : 0x30f8f6f6u;  // AABBGGRR, light tint: we paint the rest
+        ap.gradient_color = U.th.dark ? 0x30201e1eu : 0x30f8f6f6u;
     }
     ML_WINCOMPATTR_DATA d = { 19 /*WCA_ACCENT_POLICY*/, &ap, sizeof ap };
     bool ok = swca && swca(h, &d);
     return mode == BACKDROP_BLUR && ok;
 }
-
-// Layout
 
 #define ROW_H 42.f
 #define HEADER_H 30.f
@@ -281,7 +273,6 @@ static void row_file(FileItem *f)
     if (r) r->file = f;
 }
 
-// First row whose bottom is below content y (rows are sorted by y).
 static int row_first_below(f32 y)
 {
     int lo = 0, hi = U.row_count;
@@ -303,7 +294,7 @@ static int first_selectable(int from, int dir)
 }
 
 #define FILES_STEP 40
-#define FILES_VIRTUAL_MAX 100000  // the scroll range covers at most this many files
+#define FILES_VIRTUAL_MAX 100000
 
 static int files_virtual_total(void)
 {
@@ -341,7 +332,7 @@ static void rebuild_rows(bool keep_sel)
         if (want_files && U.files) {
             if (U.files->status == EV_NOT_RUNNING) {
                 row_header(TR("Файлы", "Files"));
-                row_info(TR("Everything не запущен — поиск файлов недоступен", "Everything is not running — file search is unavailable"));
+                row_info(TR("Everything не запущен - поиск файлов недоступен", "Everything is not running - file search is unavailable"));
             } else if (U.files->status == EV_ERROR) {
                 row_header(TR("Файлы", "Files"));
                 row_info(TR("Everything не ответил", "Everything did not respond"));
@@ -395,13 +386,11 @@ static void ensure_visible(int idx, bool animate)
     U.animating = true;
 }
 
-// Search
-
 static int cmp_hits(const void *a, const void *b)
 {
     const AppHit *x = (const AppHit *)a, *y = (const AppHit *)b;
     if (x->score != y->score) return x->score < y->score ? 1 : -1;
-    return x->app < y->app ? -1 : 1;   // apps are pre-sorted by name
+    return x->app < y->app ? -1 : 1;
 }
 
 static int query_norm(WCHAR *out)
@@ -592,7 +581,6 @@ static void files_load_more(void)
             ui_invalidate();
         }
     }
-    // Keep a page ahead of the rows in memory.
     if (!U.files_more_pending && U.files_fetched < U.files_total && U.flist_count - U.files_shown < FILES_STEP &&
         U.flist_count < FILES_VIRTUAL_MAX) {
         U.files_more_pending = true;
@@ -611,7 +599,6 @@ static void on_files_ready(FileResults *r)
     for (int i = 0; i < r->count; i++) r->items[i].score += frec_bonus(hist_frecency((r->items[i].flags & FI_FOLDER) ? 'd' : 'f', r->items[i].full, now));
     qsort(r->items, r->count, sizeof(FileItem), cmp_file_score2);
     if (r->page) {
-        // A further page: appended below what is shown, nothing above moves.
         U.files_more_pending = false;
         U.files_total = r->total;
         U.files_fetched = r->fetched;
@@ -672,8 +659,6 @@ static void on_apps_ready(AppList *l)
     ui_invalidate();
 }
 
-// Text editing
-
 static bool is_word_char(WCHAR c) { return c != ' ' && !is_sep(c); }
 
 static int word_left(int i)
@@ -713,7 +698,6 @@ static void edit_replace(int a, int b, const WCHAR *s, int n)
         a = b;
         b = t;
     }
-    // Clean input: no control characters, newlines become spaces.
     WCHAR clean[Q_MAX + 1];
     int cn = 0;
     for (int i = 0; i < n && cn < Q_MAX; i++) {
@@ -777,12 +761,10 @@ static void clipboard_paste(void)
     CloseClipboard();
 }
 
-// Show / hide / activate
-
 static void ui_render(void);
-static void settings_open(void);              // settings.c
-static void settings_device_lost(void);       // settings.c
-static void settings_device_restored(void);   // settings.c
+static void settings_open(void);
+static void settings_device_lost(void);
+static void settings_device_restored(void);
 static void open_settings_from_launcher(void);
 
 static UINT monitor_dpi(HMONITOR m)
@@ -878,7 +860,6 @@ static bool anims_enabled(void)
 
 static f32 anim_sec(int ms) { return (f32)ms / 1000.f * 100.f / (f32)MAX(g_cfg.anim_speed, 1); }
 
-// Spring stiffness that arrives (~95%) in the configured time; 0 = jump.
 static f32 anim_omega(int ms)
 {
     f32 t = anim_sec(ms);
@@ -901,7 +882,6 @@ static void vis_set_direction(bool opening)
     U.vis = opening ? 1.f - sqrtf(sqrtf(1.f - a)) : sqrtf(a);
 }
 
-// Cascade of the k-th visible row after opening: 0 = hidden, 1 = in place.
 static f32 row_in(int k, f64 now)
 {
     f32 dur = anim_sec(g_cfg.anim_row_ms);
@@ -1081,7 +1061,7 @@ static void ui_show(void)
     U.settings_hover_t = 0;
     U.vis_target = 1;
     U.press_row = -1;
-    POINT cur;                           // ignore the synthetic mouse move sent on show
+    POINT cur;
     GetCursorPos(&cur);
     ScreenToClient(g_hwnd, &cur);
     U.mouse_x = cur.x;
@@ -1206,7 +1186,6 @@ static void jump_section(int dir)
 {
     int i = U.sel;
     if (i < 0) return;
-    // find next header in direction, then its first item
     if (dir > 0) {
         for (int k = i + 1; k < U.row_count; k++)
             if (U.rows[k].kind == ROW_HEADER) {
@@ -1237,8 +1216,6 @@ static void jump_section(int dir)
     U.armed = NULL;
     ui_invalidate();
 }
-
-// Drawing
 
 static void draw_placeholder_icon(f32 x, f32 y, f32 sz, const WCHAR *name)
 {
@@ -1393,7 +1370,6 @@ static void draw_footer(f32 y0)
             if (xr - SR(200) > min_x) xr = draw_hint(xr, cy, TR("Копировать путь", "Copy path"), k_copy, 2, t->dim);
         }
     }
-    // Left: settings button (gear + label), like Raycast's bottom-left corner.
     const WCHAR *label = TR("Настройки", "Settings");
     f32 lfs = S(12.5f), lw = text_width(FONT_TEXT, lfs, label, -1);
     f32 bx = SR(8), bh = SR(28), by = floorf(cy - bh * 0.5f);
@@ -1456,7 +1432,6 @@ static void ui_draw(void)
     bool cascade = rows_cascading(now);
     f32 hl_op = 1.f;
     if (row_selectable(U.sel)) {
-        // The highlight arrives together with the row under it.
         int k = 0;
         for (int i = 0; cascade && i < U.sel; i++)
             if (U.rows[i].y + U.rows[i].h >= U.scroll) k++;
@@ -1478,7 +1453,6 @@ static void ui_draw(void)
         }
         draw_row(r, off + r->y + dy, i == U.sel);
     }
-    // The selected row's note, riding on the highlight.
     u32 note_col;
     const WCHAR *note = row_note(sel_row(), &note_col);
     if (note) {
@@ -1495,7 +1469,6 @@ static void ui_draw(void)
     R.opacity = 1.f;
     r_set_clip(0, 0, (f32)U.W, (f32)U.H);
 
-    // Scrollbar: a thin pill that appears only when content overflows.
     f32 ms = max_scroll();
     if (ms > 0) {
         f32 lh = list_height(), bar_h = MAX(SR(24), lh * lh / U.content_h);
@@ -1527,7 +1500,6 @@ static void animate(f32 dt)
     anim |= spring_step(&U.scroll, &U.scroll_v, U.scroll_target, anim_omega(g_cfg.anim_scroll_ms), dt);
     if (row_selectable(U.sel)) {
         f32 ty = U.rows[U.sel].y, th = U.rows[U.sel].h;
-        // Long jumps (PageDown, End) snap instead of sweeping across the list.
         if (fabsf(ty - U.hl_y) > list_height()) {
             U.hl_y = ty;
             U.hl_vy = 0;
@@ -1545,7 +1517,6 @@ static void animate(f32 dt)
         anim |= U.vis != U.vis_target;
     }
     if (!U.closing && rows_cascading(time_now())) anim = true;
-    // Skeleton rows in view pulse while their files load.
     if (U.files_end_y >= 0 && U.files_end_y < U.scroll + list_height() && files_virtual_total() > U.files_shown) anim = true;
     U.animating = anim;
 }
@@ -1579,8 +1550,6 @@ static void ui_render(void)
     U.dirty = false;
     if (U.closing && U.vis <= 0.f) ui_hide_finish();
 }
-
-// Input
 
 static int row_at(int y)
 {
@@ -1664,7 +1633,7 @@ static void ui_context_menu(int x, int y, bool keyboard)
     w = MIN(w, (f32)U.W - 2 * m);
     f32 px = CLAMP((f32)x, m, (f32)U.W - w - m);
     f32 py = (f32)y + SR(4);
-    if (py + h > (f32)U.H - m) py = MAX(m, (f32)y - SR(4) - h);  // no room below: open upwards
+    if (py + h > (f32)U.H - m) py = MAX(m, (f32)y - SR(4) - h);
     U.cm.x = floorf(px);
     U.cm.y = floorf(py);
     U.cm.w = w;
@@ -1673,7 +1642,7 @@ static void ui_context_menu(int x, int y, bool keyboard)
     U.cm.press = -1;
     U.cm.hl_init = false;
     if (!reopen || U.cm.t <= 0.f) U.cm.t = anims_enabled() ? 0.f : 1.f;
-    if (reopen) U.cm.t = MIN(U.cm.t, 0.35f);  // moved: a short re-entrance
+    if (reopen) U.cm.t = MIN(U.cm.t, 0.35f);
     U.cm.open = true;
     U.cm.closing = false;
     U.animating = true;
@@ -1747,7 +1716,7 @@ static void cm_draw(void)
     f32 x = U.cm.x, y = U.cm.y - floorf((1.f - e) * SR(6) + 0.5f), w = U.cm.w, h = U.cm.h, rad = SR(10);
     R.opacity = e;
     r_set_clip(0, 0, (f32)U.W, (f32)U.H);
-    r_rect_ex(x, y + SR(8), w, h, t->dark ? RGBA(0, 0, 0, 110) : RGBA(0, 0, 0, 40), rad, 0, SR(18));  // shadow
+    r_rect_ex(x, y + SR(8), w, h, t->dark ? RGBA(0, 0, 0, 110) : RGBA(0, 0, 0, 40), rad, 0, SR(18));
     r_rect(x, y, w, h, t->dark ? RGBA(40, 40, 43, 252) : RGBA(252, 252, 253, 252), rad);
     r_rect_ex(x, y, w, h, t->dark ? RGBA(255, 255, 255, 20) : RGBA(0, 0, 0, 22), rad, 1.f, 0);
     f32 ix = x + SR(CM_PAD), iw = w - SR(CM_PAD) * 2;
@@ -1770,7 +1739,6 @@ static void cm_draw(void)
     R.opacity = 1.f;
 }
 
-// Keys while the menu is open. Returns true if consumed.
 static bool cm_key(WPARAM vk)
 {
     if (!U.cm.open || U.cm.closing) return false;
@@ -1796,7 +1764,7 @@ static bool cm_key(WPARAM vk)
     case VK_TAB:
         return true;
     }
-    cm_close(true);  // anything else (typing) closes the menu and goes on
+    cm_close(true);
     return false;
 }
 
@@ -1879,7 +1847,7 @@ static bool ui_keydown(WPARAM vk)
         case 'V': clipboard_paste(); return true;
         case 'N': case 'J': move_sel(1); return true;
         case 'P': case 'K': move_sel(-1); return true;
-        case VK_OEM_COMMA: open_settings_from_launcher(); return true;  // Ctrl+, as on macOS
+        case VK_OEM_COMMA: open_settings_from_launcher(); return true;
         }
     }
     return false;
@@ -1888,7 +1856,7 @@ static bool ui_keydown(WPARAM vk)
 static void ui_char(WCHAR c)
 {
     if (c < 0x20 || c == 0x7F) return;
-    if (U.cm.open && !U.cm.closing) return;  // keys went to the menu (Space, Enter)
+    if (U.cm.open && !U.cm.closing) return;
     edit_replace(U.anchor, U.caret, &c, 1);
 }
 
@@ -1899,14 +1867,14 @@ static bool in_settings_button(int x, int y)
 
 static void open_settings_from_launcher(void)
 {
-    U.no_focus_restore = true;  // the settings window takes the focus right away
+    U.no_focus_restore = true;
     ui_hide();
     settings_open();
 }
 
 static void ui_mouse_move(int x, int y)
 {
-    if (x == U.mouse_x && y == U.mouse_y) return;  // WM_MOUSEMOVE also fires after scrolling
+    if (x == U.mouse_x && y == U.mouse_y) return;
     U.mouse_x = x;
     U.mouse_y = y;
     if (U.cm.open && !U.cm.closing) {

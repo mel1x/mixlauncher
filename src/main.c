@@ -1,5 +1,3 @@
-// MixLauncher — a native Start-menu / Spotlight-style launcher for Windows.
-
 #include "base.h"
 #include "com_min.h"
 #include "config.c"
@@ -55,7 +53,6 @@ static void tray_menu(void)
 
 static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
-    // While fading out the window is already "gone": no keys, no clicks.
     if (U.closing && ((msg >= WM_KEYFIRST && msg <= WM_KEYLAST) || (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST))) return 0;
     switch (msg) {
     case WM_NCCALCSIZE:
@@ -116,7 +113,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         if ((wp & 0xFFF0) == SC_TASKLIST && hotkey_is_win_tap()) return 0;
         break;
     case WM_SYSCHAR:
-        return 0;  // no menu beep on Alt+key
+        return 0;
     case WM_CHAR:
         ui_char((WCHAR)wp);
         return 0;
@@ -152,7 +149,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         if (wp == TIMER_REHOOK) {
             KillTimer(h, TIMER_REHOOK);
             hook_rearm();
-            if (U.app_mode) taskbar_button_remove();  // the shell may add the button a bit after show
+            if (U.app_mode) taskbar_button_remove();
             return 0;
         }
         if (wp == TIMER_CARET) {
@@ -245,8 +242,6 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     return DefWindowProcW(h, msg, wp, lp);
 }
 
-// Diagnostics modes (used during development; harmless in release)
-
 static void write_utf8_file(const WCHAR *path, Buf *b) { write_file_atomic(path, b->data ? b->data : "", (DWORD)b->len); }
 
 static int cmd_dump_apps(const WCHAR *out)
@@ -297,7 +292,7 @@ static int cmd_test_everything(const WCHAR *query, const WCHAR *out)
     wc.lpszClassName = L"MixLauncherTest";
     RegisterClassW(&wc);
     g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, wc.hInstance, NULL);
-    g_ev_own_allowed = g_elevated;  // same rules as the launcher: our Everything only when elevated
+    g_ev_own_allowed = g_elevated;
     ev_start();
     f64 t0 = time_now();
     ev_request(1, query);
@@ -421,7 +416,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
             opt_theme = !wcscmp(argv[i], L"dark") ? 1 : !wcscmp(argv[i], L"light") ? 2 : 0;
         } else if (!wcscmp(argv[i], L"--other-monitor")) {
             g_other_monitor = true;
-            g_ktrace_on = true;      // + trace of Win key decisions in log.txt on exit
+            g_ktrace_on = true;
         } else if (!wcscmp(argv[i], L"--pin")) {
             g_pinned = true;
         } else if (!wcscmp(argv[i], L"--settings")) {
@@ -474,7 +469,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     if (!g_hwnd) return 1;
     theme_update();
     U.backdrop_ok = backdrop_apply(g_hwnd);
-    SetLayeredWindowAttributes(g_hwnd, 0, 255, LWA_ALPHA);  // layered: open/close fades animate its alpha
+    SetLayeredWindowAttributes(g_hwnd, 0, 255, LWA_ALPHA);
     BOOL no_dwm_anim = TRUE;
     DwmSetWindowAttribute(g_hwnd, 3 /*DWMWA_TRANSITIONS_FORCEDISABLED*/, &no_dwm_anim, sizeof no_dwm_anim);
 

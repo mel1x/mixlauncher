@@ -1,44 +1,37 @@
-// media.c — "now playing" on the taskbar: cover, title, artist and playback buttons, in the spirit of
-// FluentFlyout's taskbar widget. A worker reads the system media session (GSMTC) through raw WinRT
-// vtables; the main thread draws a layered child window of the taskbar, the same way as the Start button.
-
 #define MW_CLASS L"MixLauncherMediaWidget"
 #define MW_TIMER_ANIM 1
 #define MW_TIMER_SYNC 2
 
-enum { MS_CLOSED, MS_OPENED, MS_CHANGING, MS_STOPPED, MS_PLAYING, MS_PAUSED };  // GSMTC playback status
+enum { MS_CLOSED, MS_OPENED, MS_CHANGING, MS_STOPPED, MS_PLAYING, MS_PAUSED };
 enum { MC_NONE, MC_PREV, MC_TOGGLE, MC_NEXT };
-enum { MP_NONE = -1, MP_INFO, MP_PREV, MP_TOGGLE, MP_NEXT };                  // parts of the widget
+enum { MP_NONE = -1, MP_INFO, MP_PREV, MP_TOGGLE, MP_NEXT };
 
 typedef struct MediaInfo {
-    bool has;                 // a media session exists
-    int status;               // MS_*
+    bool has;
+    int status;
     bool can_prev, can_toggle, can_next;
     WCHAR title[256], artist[256], app[256];
 } MediaInfo;
 
-typedef struct MText {        // one line of text rasterized to coverage
+typedef struct MText {
     u8 *cov;
-    int w, h, base;           // base: baseline row inside the bitmap
-    int adv;                  // pen advance, pixels
+    int w, h, base;
+    int adv;
 } MText;
 
 static struct {
     bool enabled;
     HANDLE thread, wake;
     SRWLOCK lock;
-    // published by the worker
     MediaInfo pub;
-    u32 *pub_art;             // art_px x art_px premultiplied BGRA, or NULL
+    u32 *pub_art;
     int pub_art_n;
     u32 pub_art_gen;
-    RECT widgets_btn;         // the Widgets (weather) button, screen coordinates; empty if none
-    // requests to the worker
-    volatile LONG cmd;        // MC_*
+    RECT widgets_btn;
+    volatile LONG cmd;
     volatile LONG art_px;
     volatile LONG art_reload;
     volatile LONG want_widgets_btn;
-    // main thread
     HWND wnd, taskbar;
     MediaInfo info;
     u32 *art;
@@ -49,16 +42,16 @@ static struct {
     f32 s;
     MText title, artist, note;
     int w, h;
-    int x;                    // position inside the taskbar
-    f32 part[4][4];           // x0, y0, x1, y1 per MP_*
+    int x;
+    f32 part[4][4];
     f32 text_x, text_w;
     bool visible, want;
-    f64 idle_since;           // status left "playing" at this time
-    int hover, press;         // MP_*
+    f64 idle_since;
+    int hover, press;
     bool hover_any;
     f32 vis_t, swap_t, hov_t, hp_t[4], press_t[4], text_a;
-    f32 scroll, scroll_t;     // marquee offset (pixels) and hover time
-    bool toggle_local;        // play/pause clicked: show the new state before the player confirms
+    f32 scroll, scroll_t;
+    bool toggle_local;
     int toggle_status;
     f64 toggle_until;
     f64 last_anim;
@@ -77,7 +70,7 @@ static struct {
     HRESULT (WINAPI *create_string)(const WCHAR *, UINT32, ML_HSTRING *);
     HRESULT (WINAPI *delete_string)(ML_HSTRING);
     const WCHAR *(WINAPI *string_buf)(ML_HSTRING, UINT32 *);
-    HRESULT (WINAPI *stream_over)(IUnknown *, REFIID, void **);  // CreateStreamOverRandomAccessStream
+    HRESULT (WINAPI *stream_over)(IUnknown *, REFIID, void **);
 } RTF;
 
 static const GUID ML_IID_IGSMTCSessionManagerStatics = { 0x2050c4ee, 0x11a0, 0x57de, { 0xae, 0xd7, 0xc9, 0x7c, 0x70, 0x33, 0x82, 0x45 } };
@@ -90,16 +83,16 @@ typedef HRESULT (STDMETHODCALLTYPE *RtOutFn)(void *, void *);
 #define RT_GET(o, slot, out) (((RtOutFn)(*(void ***)(o))[slot])((o), (out)))
 
 enum {
-    RT_STATICS_REQUEST = 6,                                            // IGlobalSystemMediaTransportControlsSessionManagerStatics
-    RT_MGR_CURRENT = 6,                                                // ...SessionManager
-    RT_SES_APP = 6, RT_SES_PROPS = 7, RT_SES_PLAYBACK = 9,             // ...Session
+    RT_STATICS_REQUEST = 6,
+    RT_MGR_CURRENT = 6,
+    RT_SES_APP = 6, RT_SES_PROPS = 7, RT_SES_PLAYBACK = 9,
     RT_SES_NEXT = 16, RT_SES_PREV = 17, RT_SES_TOGGLE = 20,
-    RT_PROPS_TITLE = 6, RT_PROPS_ALBUM_ARTIST = 8, RT_PROPS_ARTIST = 9, RT_PROPS_THUMB = 15,  // ...MediaProperties
-    RT_PB_CONTROLS = 6, RT_PB_STATUS = 7,                              // ...PlaybackInfo
-    RT_CTL_PLAY = 6, RT_CTL_PAUSE = 7, RT_CTL_NEXT = 12, RT_CTL_PREV = 13, RT_CTL_TOGGLE = 16,  // ...PlaybackControls
-    RT_STREAMREF_OPEN = 6,                                             // IRandomAccessStreamReference
-    RT_ASYNC_RESULTS = 8,                                              // IAsyncOperation<T>
-    RT_INFO_STATUS = 7, RT_INFO_CANCEL = 9,                            // IAsyncInfo
+    RT_PROPS_TITLE = 6, RT_PROPS_ALBUM_ARTIST = 8, RT_PROPS_ARTIST = 9, RT_PROPS_THUMB = 15,
+    RT_PB_CONTROLS = 6, RT_PB_STATUS = 7,
+    RT_CTL_PLAY = 6, RT_CTL_PAUSE = 7, RT_CTL_NEXT = 12, RT_CTL_PREV = 13, RT_CTL_TOGGLE = 16,
+    RT_STREAMREF_OPEN = 6,
+    RT_ASYNC_RESULTS = 8,
+    RT_INFO_STATUS = 7, RT_INFO_CANCEL = 9,
 };
 
 static bool rt_load(void)
@@ -115,7 +108,6 @@ static bool rt_load(void)
     return RTF.get_factory && RTF.create_string && RTF.delete_string && RTF.string_buf;
 }
 
-// Waits for an IAsyncOperation<T> and returns its result. Takes ownership of op.
 static IUnknown *rt_await(IUnknown *op, DWORD timeout_ms)
 {
     if (!op) return NULL;
@@ -168,7 +160,6 @@ static IUnknown *media_manager(void)
     return mgr;
 }
 
-// Cover art: center square, scaled to n x n, premultiplied BGRA.
 static u32 *media_decode_art(IUnknown *thumb, int n, u64 *hash)
 {
     static const GUID clsid = { 0xcacaf262, 0x9370, 0x4615, { 0xa1, 0x3b, 0x9f, 0x55, 0x39, 0xda, 0x4c, 0x0a } };
@@ -248,7 +239,6 @@ static void media_read(IUnknown *ses, MediaInfo *in, IUnknown **thumb)
     }
 }
 
-// The Widgets (weather) button at the left end of the taskbar, to sit right after it.
 static bool media_widgets_button(IUIAutomation **uia, IUIAutomationElement **el, f64 *retry, RECT *out)
 {
     memset(out, 0, sizeof *out);
@@ -274,11 +264,11 @@ static bool media_widgets_button(IUIAutomation **uia, IUIAutomationElement **el,
     }
     RECT r;
     if (FAILED(IUIAutomationElement_get_CurrentBoundingRectangle(*el, &r))) {
-        SAFE_RELEASE(*el);  // gone (Explorer restarted)
+        SAFE_RELEASE(*el);
         *retry = 0;
         return false;
     }
-    if (r.right <= r.left || r.bottom <= r.top) return false;  // turned off
+    if (r.right <= r.left || r.bottom <= r.top) return false;
     *out = r;
     return true;
 }
@@ -323,7 +313,7 @@ static DWORD WINAPI media_thread(void *param)
         memset(&in, 0, sizeof in);
         IUnknown *ses = NULL, *thumb = NULL;
         if (mgr && FAILED(RT_GET(mgr, RT_MGR_CURRENT, &ses))) {
-            SAFE_RELEASE(mgr);  // the service went away: get a new manager
+            SAFE_RELEASE(mgr);
             mgr_retry = now + 1.0;
         }
         LONG cmd = InterlockedExchange(&M.cmd, MC_NONE);
@@ -331,7 +321,7 @@ static DWORD WINAPI media_thread(void *param)
             if (cmd != MC_NONE) {
                 IUnknown *op = NULL;
                 RT_GET(ses, cmd == MC_PREV ? RT_SES_PREV : cmd == MC_NEXT ? RT_SES_NEXT : RT_SES_TOGGLE, &op);
-                SAFE_RELEASE(op);  // fire and forget; the next polls pick up the result
+                SAFE_RELEASE(op);
                 fast = 10;
             }
             media_read(ses, &in, &thumb);
@@ -364,7 +354,7 @@ static DWORD WINAPI media_thread(void *param)
                 art = NULL;
             }
         } else if (!thumb && track_changed && art_hash) {
-            art_hash = 0;  // no cover for this one
+            art_hash = 0;
             art_new = true;
         }
         SAFE_RELEASE(thumb);
@@ -401,15 +391,12 @@ static DWORD WINAPI media_thread(void *param)
     return 0;
 }
 
-// Main thread: text
-
 static void mtext_free(MText *t)
 {
     free(t->cov);
     memset(t, 0, sizeof *t);
 }
 
-// Rasterizes a line with DirectWrite into an 8-bit coverage bitmap (grayscale antialiasing).
 static void mtext_make(MText *t, int font, f32 size, const WCHAR *s)
 {
     mtext_free(t);
@@ -488,7 +475,6 @@ static void mtext_make(MText *t, int font, f32 size, const WCHAR *s)
     }
 }
 
-// Coverage at a fractional x (marquee scrolls smoothly), pen-relative: x = 0 is the pen start.
 static f32 mtext_at(const MText *t, f32 x, int y)
 {
     if (!t->cov || y < 0 || y >= t->h) return 0;
@@ -501,13 +487,10 @@ static f32 mtext_at(const MText *t, f32 x, int y)
     return (a + (b - a) * fr) / 255.f;
 }
 
-// Main thread: geometry and drawing
-
 static f32 MS(f32 v) { return floorf(v * M.s + 0.5f); }
 
 static bool media_controls(void) { return g_cfg.media_controls; }
 
-// Low taskbars ("small icons") get a smaller cover and the title alone.
 static bool media_small(void) { return (f32)M.h < MS(36); }
 static f32 media_cover(void) { return media_small() ? MIN(MS(24), (f32)M.h - MS(4)) : MS(32); }
 
@@ -518,7 +501,7 @@ static void media_layout(void)
     f32 size = media_text_size();
     mtext_make(&M.title, FONT_TEXT, size, M.info.title);
     mtext_make(&M.artist, FONT_TEXT, size, media_small() ? L"" : M.info.artist);
-    static const WCHAR note[] = { 0xEC4F, 0 };  // MusicNote
+    static const WCHAR note[] = { 0xEC4F, 0 };
     mtext_make(&M.note, FONT_ICON, floorf(16.f * M.s + 0.5f), note);
 
     f32 pad = MS(4), cover = media_cover(), gap = MS(8);
@@ -550,7 +533,6 @@ static void media_layout(void)
     M.w = (int)x;
 }
 
-// iq's exact signed distance to a triangle.
 static f32 sd_triangle(f32 px, f32 py, f32 x0, f32 y0, f32 x1, f32 y1, f32 x2, f32 y2)
 {
     f32 e0x = x1 - x0, e0y = y1 - y0, e1x = x2 - x1, e1y = y2 - y1, e2x = x0 - x2, e2y = y0 - y2;
@@ -565,7 +547,6 @@ static f32 sd_triangle(f32 px, f32 py, f32 x0, f32 y0, f32 x1, f32 y1, f32 x2, f
     return -sqrtf(dx) * (dy > 0 ? 1.f : -1.f);
 }
 
-// Playback glyphs, filled with softly rounded corners. (fx, fy) relative to the button center.
 static f32 media_icon(int part, bool playing, f32 fx, f32 fy)
 {
     f32 u = M.s, r = 1.1f * u, d;
@@ -640,13 +621,11 @@ static void media_render(void)
     f32 bg_a = hov_base * M.hov_t * vis;
     f32 brad = MS(5), s = M.s;
 
-    // cover
     f32 cover = media_cover(), cx0 = MS(4), cy0 = floorf(((f32)h - cover) * 0.5f), crad = MS(4);
     bool art = M.art && M.art_n == (int)cover;
     f32 ccx = cx0 + cover * 0.5f, ccy = cy0 + cover * 0.5f;
     f32 note_size = floorf(16.f * s + 0.5f);
     int note_base = (int)floorf(ccy + (font_ascent(FONT_ICON, note_size) - font_descent(FONT_ICON, note_size)) * 0.5f + 0.5f);
-    // text lines
     f32 size = media_text_size(), cap = font_cap_height(FONT_TEXT, size);
     bool two = M.artist.cov != NULL;
     f32 c = (f32)h * 0.5f;
@@ -663,7 +642,6 @@ static void media_render(void)
             f32 col[3] = { 0, 0, 0 }, a = 0;
             if (bg_a > 0.f) tb_over(col, &a, fg, bg_a * CLAMP(0.5f - tb_sdbox(fx - (f32)w * 0.5f, fy - (f32)h * 0.5f, (f32)w * 0.5f, (f32)h * 0.5f - MS(1), brad), 0.f, 1.f));
 
-            // buttons
             for (int p = MP_PREV; p <= MP_NEXT && media_controls(); p++) {
                 const f32 *r = M.part[p];
                 if (fx < r[0] || fx >= r[2] || fy < r[1] || fy >= r[3]) continue;
@@ -676,7 +654,6 @@ static void media_render(void)
                 if (m > 0.f) tb_over(col, &a, fg, m * content * (en ? (light ? 0.86f : 0.92f) : 0.3f));
             }
 
-            // cover
             if (fx >= cx0 - 1 && fx < cx0 + cover + 1 && fy >= cy0 - 1 && fy < cy0 + cover + 1) {
                 f32 m = CLAMP(0.5f - tb_sdbox(fx - ccx, fy - ccy, cover * 0.5f, cover * 0.5f, crad), 0.f, 1.f) * content;
                 if (m > 0.f && art) {
@@ -696,7 +673,6 @@ static void media_render(void)
                 }
             }
 
-            // text
             if (fx >= tx0 && fx < tx1 + 1) {
                 for (int line = 0; line < 2; line++) {
                     const MText *t = line ? &M.artist : &M.title;
@@ -733,8 +709,6 @@ static void media_render(void)
     if (M.wnd) UpdateLayeredWindow(M.wnd, NULL, NULL, &sz, M.dc, &src, 0, &bf, ULW_ALPHA);
 }
 
-// Main thread: behavior
-
 static void media_animate(void);
 
 static void media_kick(void)
@@ -758,7 +732,6 @@ static void media_animate(void)
         anim |= approach(&M.hp_t[p], M.hover == p || M.press == p ? 1.f : 0.f, 20.f, dt);
         anim |= approach(&M.press_t[p], M.press == p ? 1.f : 0.f, 30.f, dt);
     }
-    // Marquee: long titles scroll while the pointer is over the widget; on leave they fade back to the start.
     bool over = (f32)MAX(M.title.adv, M.artist.adv) > M.text_w + 0.5f;
     if (M.hover_any && over && M.text_a > 0.99f) {
         M.scroll_t += dt;
@@ -794,18 +767,17 @@ static bool media_win11(void)
     return v != 0;
 }
 
-// Icons on the left (Windows 10, or "Taskbar alignment: Left") take the left end: stay right then.
 static bool media_on_left(void) { return g_cfg.media_position == 0 && media_win11() && tb_read_centered(); }
 
-static void media_place(void)
+static bool media_place(bool left)
 {
-    if (!M.wnd || !M.taskbar) return;
+    if (!M.wnd || !M.taskbar) return false;
     RECT tr;
     GetWindowRect(M.taskbar, &tr);
     int tw = tr.right - tr.left, th = tr.bottom - tr.top;
-    if (tw <= 0 || th <= 0 || th > tw) return;  // vertical taskbars are not supported
+    if (tw <= 0 || th <= 0 || th > tw) return false;
     int x;
-    if (media_on_left()) {
+    if (left) {
         RECT wb;
         AcquireSRWLockShared(&M.lock);
         wb = M.widgets_btn;
@@ -827,9 +799,10 @@ static void media_place(void)
     ScreenToClient(M.taskbar, &cp);
     bool moved = cp.x != p.x || cp.y != p.y || cur.right - cur.left != M.w || cur.bottom - cur.top != M.h;
     bool covered = GetWindow(M.wnd, GW_HWNDPREV) != NULL;  // the taskbar's XAML island went above us
-    if (moved || covered || !IsWindowVisible(M.wnd))
-        SetWindowPos(M.wnd, HWND_TOP, p.x, p.y, M.w, M.h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    bool shown = !IsWindowVisible(M.wnd);
+    if (moved || covered || shown) SetWindowPos(M.wnd, HWND_TOP, p.x, p.y, M.w, M.h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     M.x = x;
+    return shown;
 }
 
 static void media_sync(void);
@@ -852,11 +825,10 @@ static bool media_create(void)
         return false;
     }
     SetTimer(M.wnd, MW_TIMER_SYNC, 1000, NULL);
-    M.dpi = 0;  // lay out again
+    M.dpi = 0;
     return true;
 }
 
-// Everything that can change the picture or the position: new media state, DPI, taskbar moves.
 static void media_sync(void)
 {
     if (!M.enabled) return;
@@ -882,7 +854,11 @@ static void media_sync(void)
     }
 
     bool track = wcscmp(in.title, M.info.title) || wcscmp(in.artist, M.info.artist);
-    if (M.toggle_local && (in.status != M.info.status || time_now() >= M.toggle_until)) M.toggle_local = false;
+    bool changed = new_art || memcmp(&in, &M.info, sizeof in) != 0;
+    if (M.toggle_local && (in.status != M.info.status || time_now() >= M.toggle_until)) {
+        M.toggle_local = false;
+        changed = true;
+    }
     M.info = in;
 
     UINT dpi = monitor_dpi(MonitorFromWindow(M.taskbar, MONITOR_DEFAULTTONEAREST));
@@ -894,8 +870,10 @@ static void media_sync(void)
         M.dpi = dpi;
         M.s = (f32)dpi / 96.f;
     }
-    InterlockedExchange(&M.want_widgets_btn, media_on_left());
+    bool left = media_on_left();
+    InterlockedExchange(&M.want_widgets_btn, left);
     if (relayout) {
+        changed = true;
         M.h = MAX(h, 16);
         LONG px = (LONG)media_cover();
         if (InterlockedExchange(&M.art_px, px) != px) {
@@ -913,12 +891,15 @@ static void media_sync(void)
     f64 now = time_now();
     if (playing || !M.idle_since) M.idle_since = playing ? 0 : now;
     bool want = active && (!g_cfg.media_hide_paused || playing || now - M.idle_since < 1.0);
-    if (want != M.want) M.want = want;
+    if (want != M.want) {
+        M.want = want;
+        changed = true;
+    }
     if (want) {
-        media_place();
+        changed |= media_place(left);
         M.visible = true;
     }
-    if (M.visible) media_kick();
+    if (M.visible && changed) media_kick();
 }
 
 static void media_send(int cmd)
@@ -933,7 +914,6 @@ static BOOL CALLBACK media_find_window(HWND h, LPARAM lp)
 {
     MediaFind *mf = (MediaFind *)lp;
     if (!IsWindowVisible(h) || GetWindow(h, GW_OWNER) || (GetWindowLongW(h, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) || !GetWindowTextLengthW(h)) return TRUE;
-    // UWP apps and anything with an explicit AppUserModelID carry it on the window.
     IPropertyStore *ps = NULL;
     if (SUCCEEDED(SHGetPropertyStoreForWindow(h, &IID_IPropertyStore, (void **)&ps)) && ps) {
         static const PROPERTYKEY key = { { 0x9f4c2855, 0x9f79, 0x4b39, { 0xa8, 0xd0, 0xe1, 0xd4, 0x2d, 0xe1, 0xd5, 0xf3 } }, 5 };
@@ -947,7 +927,6 @@ static BOOL CALLBACK media_find_window(HWND h, LPARAM lp)
             return FALSE;
         }
     }
-    // Desktop players report their exe name ("Spotify.exe").
     DWORD pid = 0;
     GetWindowThreadProcessId(h, &pid);
     HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
@@ -1026,7 +1005,7 @@ static int media_part_at(int x, int y)
         const f32 *r = M.part[p];
         if ((f32)x >= r[0] && (f32)x < r[2] && (f32)y >= r[1] && (f32)y < r[3]) return p;
     }
-    return MP_INFO;  // the gaps around the buttons belong to the info area
+    return MP_INFO;
 }
 
 static void media_click(int part)
@@ -1138,7 +1117,7 @@ static void media_explorer_restarted(void)
 static void media_settings_changed(void)
 {
     if (!M.enabled) return;
-    M.dpi = 0;  // lay out again
+    M.dpi = 0;
     media_sync();
 }
 

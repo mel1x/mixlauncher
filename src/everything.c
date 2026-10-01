@@ -1,5 +1,3 @@
-// everything.c — file search through Everything's WM_COPYDATA IPC (no SDK DLL needed).
-
 #define EV_COPYDATA_QUERY2W 18
 #define EV_REQ_NAME 0x00000001
 #define EV_REQ_PATH 0x00000002
@@ -21,7 +19,7 @@
 #define EV_ITEM_FOLDER 0x1
 #define EV_ITEM_DRIVE 0x2
 #define EV_FIRST_PAGE 256
-#define EV_PAGE 256         // each further page
+#define EV_PAGE 256
 
 enum { EV_OK, EV_NOT_RUNNING, EV_ERROR };
 enum { FI_FOLDER = 1 };
@@ -30,7 +28,7 @@ typedef struct FileItem {
     WCHAR *name;
     WCHAR *dir;
     WCHAR *full;
-    i64 mtime;         // FILETIME ticks
+    i64 mtime;
     u32 flags;
     f32 score;
     u64 icon_key;
@@ -40,7 +38,7 @@ typedef struct FileResults {
     Arena arena;
     u32 id;
     int status;
-    u32 total;         // files matching in Everything
+    u32 total;
     u32 fetched;
     bool page;
     int count;
@@ -117,7 +115,6 @@ static bool ev_superseded(void)
     return r;
 }
 
-// Read a length-prefixed, NUL-terminated UTF-16 string.
 static const u8 *ev_read_str(const u8 *p, const u8 *end, const WCHAR **out)
 {
     if (!p || p + 4 > end) return NULL;
@@ -205,7 +202,7 @@ static void ev_pump(void)
 
 enum { EVS_NONE, EVS_USER, EVS_OWN };
 
-static bool g_ev_own_allowed;  // set by main: only an elevated launcher can give it NTFS access
+static bool g_ev_own_allowed;
 static HANDLE g_ev_own_proc;
 static f64 g_ev_own_started;
 
@@ -249,8 +246,8 @@ static HANDLE ev_own_run(const WCHAR *args)
 static void ev_own_start(void)
 {
     if (!g_ev_own_allowed) return;
-    if (g_ev_own_proc && WaitForSingleObject(g_ev_own_proc, 0) == WAIT_TIMEOUT) return;  // still coming up
-    if (g_ev_own_started && time_now() - g_ev_own_started < 30.0) return;              // it quit: don't hammer
+    if (g_ev_own_proc && WaitForSingleObject(g_ev_own_proc, 0) == WAIT_TIMEOUT) return;
+    if (g_ev_own_started && time_now() - g_ev_own_started < 30.0) return;
     WCHAR exe[MAX_PATH];
     if (!ev_own_exe(exe)) return;
     WCHAR dir[MAX_PATH], ini[MAX_PATH], db[MAX_PATH], args[2 * MAX_PATH + 64];
@@ -275,7 +272,6 @@ static void ev_own_start(void)
     if (g_ev_own_proc) log_msg("everything: started our own copy");
 }
 
-// Asks our copy to save its index and quit; wait_ms > 0 waits for it.
 static void ev_own_stop(DWORD wait_ms)
 {
     if (!FindWindowW(EV_OWN_CLASS, NULL)) return;
@@ -290,13 +286,12 @@ static HWND ev_find_window(void)
 {
     HWND h = ev_user_window();
     if (h) {
-        if (g_ev_own_allowed && FindWindowW(EV_OWN_CLASS, NULL)) ev_own_stop(0);  // the user started theirs
+        if (g_ev_own_allowed && FindWindowW(EV_OWN_CLASS, NULL)) ev_own_stop(0);
         return h;
     }
     h = FindWindowW(EV_OWN_CLASS, NULL);
     if (h) return h;
     ev_own_start();
-    // A fresh start creates its window within a moment; the index loads behind it.
     for (int i = 0; !h && i < 40 && g_ev_own_proc && WaitForSingleObject(g_ev_own_proc, 50) == WAIT_TIMEOUT; i++) h = FindWindowW(EV_OWN_CLASS, NULL);
     return h;
 }
@@ -312,7 +307,7 @@ static int ev_send_query(HWND ev, const WCHAR *search, DWORD offset, DWORD max_r
     E.waiting_tag = 0x4D4C0000u | E.tag;
     q[0] = (DWORD)(uintptr_t)E.reply;
     q[1] = E.waiting_tag;
-    q[2] = 0;  // search flags: case-insensitive, no regex
+    q[2] = 0;
     q[3] = offset;
     q[4] = max_results;
     q[5] = EV_REQ_NAME | EV_REQ_PATH | EV_REQ_DATE_MODIFIED;
@@ -383,7 +378,6 @@ static f32 ev_rank(const RawFile *r, const WCHAR *full, int full_len, const WCHA
     f32 s;
     if (plain) {
         int tier = score_query(nn, nl, ws, qn, qlen);
-        // exact stem: "report" == "report.docx"
         const WCHAR *dot = NULL;
         for (int i = nl - 1; i > 0; i--)
             if (nn[i] == '.') {
@@ -391,7 +385,7 @@ static f32 ev_rank(const RawFile *r, const WCHAR *full, int full_len, const WCHA
                 break;
             }
         if (dot && (int)(dot - nn) == qlen && wmem_eq(nn, qn, qlen)) tier = SCORE_EXACT;
-        s = tier ? (f32)tier : 1500.f;  // matched by path only
+        s = tier ? (f32)tier : 1500.f;
     } else {
         s = 3000.f;
     }
@@ -441,7 +435,6 @@ static int cmp_file_score(const void *a, const void *b)
     return x->score < y->score ? 1 : x->score > y->score ? -1 : 0;
 }
 
-// Adds a path hash; false if it was handed out already.
 static bool seen_add(u64 h)
 {
     if (!h) h = 1;
@@ -469,7 +462,6 @@ static bool seen_add(u64 h)
     return true;
 }
 
-// Turns E.raw into ranked, de-duplicated items of `res`.
 static void ev_build(FileResults *res, size_t reserve)
 {
     arena_init(&res->arena, reserve);
@@ -483,7 +475,6 @@ static void ev_build(FileResults *res, size_t reserve)
         full[countof(full) - 1] = 0;
         int fl = wlen(full);
         if (!seen_add(hash_wstr_i(full, fl))) continue;
-        // Start menu shortcuts are already covered by the Applications section.
         if (wends_with_i(full, fl, L".lnk") && StrStrIW(full, L"\\Start Menu\\Programs\\")) continue;
         FileItem *fi = &res->items[res->count++];
         fi->full = wdup(&res->arena, full, fl);
@@ -511,7 +502,7 @@ static void ev_run(u32 id, const WCHAR *query, const WCHAR *filter)
     arena_reset(&E.scratch);
     E.raw_count = 0;
     E.raw_total = 0;
-    E.cur_id = 0;  // pages of the previous query are no longer wanted
+    E.cur_id = 0;
 
     WCHAR search[2048];
     if (filter[0]) _snwprintf(search, countof(search), L"<%s> %s", query, filter);
@@ -570,14 +561,14 @@ static void ev_run_more(u32 id)
     E.raw_count = 0;
     E.raw_total = 0;
     int ok = ev_send_query(ev, E.cur_search, E.cur_fetched, EV_PAGE, EV_SORT_DATE_MODIFIED_DESC);
-    if (ok < 0) return;  // a new query: it resets everything
+    if (ok < 0) return;
     FileResults *res = (FileResults *)calloc(1, sizeof(FileResults));
     if (!res) return;
     res->id = id;
     res->page = true;
     if (ok == 0) {
         res->status = EV_ERROR;
-        E.cur_fetched = E.cur_total;  // stop asking
+        E.cur_fetched = E.cur_total;
     } else {
         if (E.raw_total) E.cur_total = E.raw_total;
         E.cur_fetched = E.raw_count ? E.cur_fetched + (u32)E.raw_count : E.cur_total;
@@ -608,7 +599,7 @@ static DWORD WINAPI ev_thread(void *param)
         norm_str(E.profile_norm, prof, E.profile_len);
     }
     CoTaskMemFree(prof);
-    ev_find_window();  // start our copy of Everything now, so it is ready by the first search
+    ev_find_window();
 
     for (;;) {
         MsgWaitForMultipleObjects(1, &E.event, FALSE, INFINITE, QS_ALLINPUT);

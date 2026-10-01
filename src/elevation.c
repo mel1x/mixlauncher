@@ -1,5 +1,3 @@
-// elevation.c — living as an administrator process (see the manifest).
-
 static bool g_elevated;
 
 static bool process_is_elevated(void)
@@ -95,7 +93,6 @@ static bool shell_exec_unelevated(const WCHAR *file, const WCHAR *args, const WC
     return shell_exec_unelevated_ex(file, args, dir, verb, SW_SHOWNORMAL);
 }
 
-// Run a console tool invisibly and wait for it.
 static bool run_tool(const WCHAR *exe, const WCHAR *args, DWORD wait_ms, DWORD *exit_code)
 {
     WCHAR cmd[2048];
@@ -114,8 +111,6 @@ static bool run_tool(const WCHAR *exe, const WCHAR *args, DWORD wait_ms, DWORD *
     CloseHandle(pi.hProcess);
     return done;
 }
-
-// Start with Windows
 
 #define AUTOSTART_TASK L"MixLauncher"
 #define OLD_HELPER_TASK L"MixLauncher Admin Hook"
