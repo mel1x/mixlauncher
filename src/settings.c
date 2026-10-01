@@ -1,5 +1,3 @@
-// settings.c — the settings window, in the style of Raycast's preferences.
-
 enum { SK_TOGGLE, SK_CHOICE, SK_STEPPER, SK_TEXT, SK_HOTKEY, SK_BUTTON, SK_INFO, SK_ABOUT };
 enum {
     SID_NONE, SID_HOTKEY, SID_AUTOSTART, SID_KEEPQUERY, SID_THEME, SID_BACKDROP, SID_ANIM, SID_WIDTH, SID_ROWS,
@@ -24,12 +22,12 @@ static const struct { Str name; u32 glyph; } k_pages[PG__COUNT] = {
 
 typedef struct SItem {
     u8 page, kind, id;
-    Str group;       // starts a new group with this header
+    Str group;
     Str title, desc;
     int lo, hi, step;
     Str unit;
-    Str opt[4];      // SK_CHOICE options; opt[0] is the SK_BUTTON label
-    u32 glyph;       // SK_BUTTON icon
+    Str opt[4];
+    u32 glyph;
 } SItem;
 
 static const SItem k_sitems[] = {
@@ -57,7 +55,7 @@ static const SItem k_sitems[] = {
       .desc = { L"Обложка, название и исполнитель из любого плеера: Spotify, браузера, Медиаплеера. Клик открывает плеер",
                 L"Cover, title and artist from any player: Spotify, a browser, Media Player. A click opens the player" } },
     { .page = PG_GENERAL, .kind = SK_CHOICE, .id = SID_MEDIAPOS, .title = { L"Положение", L"Position" },
-      .desc = { L"Справа — у значков в трее. Если значки панели выровнены по левому краю, всегда справа",
+      .desc = { L"Справа - у значков в трее. Если значки панели выровнены по левому краю, всегда справа",
                 L"Right sits next to the tray icons. Always right when taskbar icons are aligned left" },
       .opt = { { L"Слева", L"Left" }, { L"Справа", L"Right" } } },
     { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_MEDIACTL, .title = { L"Кнопки управления", L"Playback buttons" },
@@ -66,7 +64,7 @@ static const SItem k_sitems[] = {
       .desc = { L"Показывать виджет, только пока что-то играет", L"Show the widget only while something plays" } },
     { .page = PG_GENERAL, .kind = SK_STEPPER, .id = SID_KEEPQUERY, .group = { L"Поведение", L"Behavior" },
       .title = { L"Помнить запрос", L"Keep the query" },
-      .desc = { L"Сколько секунд после закрытия хранить набранный текст. 0 — всегда начинать с пустого поля",
+      .desc = { L"Сколько секунд после закрытия хранить набранный текст. 0 - всегда начинать с пустого поля",
                 L"Seconds to keep the typed text after closing. 0 always starts empty" },
       .lo = 0, .hi = 3600, .step = 10, .unit = { L"с", L"s" } },
 
@@ -74,7 +72,7 @@ static const SItem k_sitems[] = {
       .title = { L"Тема", L"Theme" }, .desc = { L"«Системная» следует настройке Windows", L"System follows the Windows setting" },
       .opt = { { L"Системная", L"System" }, { L"Тёмная", L"Dark" }, { L"Светлая", L"Light" } } },
     { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_BACKDROP, .title = { L"Фон", L"Background" },
-      .desc = { L"Стекло — полупрозрачное размытие, акрил — как у системных меню Windows 11",
+      .desc = { L"Стекло - полупрозрачное размытие, акрил - как у системных меню Windows 11",
                 L"Glass is a translucent blur, acrylic looks like Windows 11 system menus" },
       .opt = { { L"Стекло", L"Glass" }, { L"Акрил", L"Acrylic" }, { L"Сплошной", L"Solid" } } },
     { .page = PG_APPEARANCE, .kind = SK_STEPPER, .id = SID_WIDTH, .group = { L"Размер", L"Size" },
@@ -86,7 +84,7 @@ static const SItem k_sitems[] = {
       .desc = { L"Все анимации лаунчера и настроек. Выключаются и системной настройкой «Эффекты анимации»",
                 L"Every animation of the launcher and settings. Also off when Windows animation effects are off" } },
     { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ASPEED, .title = { L"Общая скорость", L"Overall speed" },
-      .desc = { L"Множитель для всех длительностей ниже: 200 % — всё вдвое быстрее, 50 % — вдвое медленнее",
+      .desc = { L"Множитель для всех длительностей ниже: 200 % - всё вдвое быстрее, 50 % - вдвое медленнее",
                 L"Multiplies every duration below: 200% makes everything twice as fast, 50% twice as slow" },
       .lo = 30, .hi = 400, .step = 10, .unit = { L"%", L"%" } },
     { .page = PG_ANIM, .kind = SK_BUTTON, .id = SID_APREVIEW, .title = { L"Проверить", L"Try it" },
@@ -94,13 +92,13 @@ static const SItem k_sitems[] = {
       .opt = { { L"Открыть лаунчер", L"Open launcher" } }, .glyph = 0xE768 },
 
     { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_AOPEN, .group = { L"Открытие и закрытие", L"Open and close" },
-      .title = { L"Появление окна", L"Window appears" }, .desc = { L"Проявление стекла и содержимого. 0 — сразу", L"Fade-in of the glass and content. 0 is instant" },
+      .title = { L"Появление окна", L"Window appears" }, .desc = { L"Проявление стекла и содержимого. 0 - сразу", L"Fade-in of the glass and content. 0 is instant" },
       .lo = 0, .hi = 1000, .step = 10, .unit = { L"мс", L"ms" } },
     { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ACLOSE, .title = { L"Закрытие", L"Window closes" },
       .desc = { L"Короче появления, чтобы Esc не ощущался задержкой", L"Shorter than opening so Esc never feels delayed" },
       .lo = 0, .hi = 1000, .step = 10, .unit = { L"мс", L"ms" } },
     { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ASCALE, .title = { L"Начальный масштаб", L"Starting scale" },
-      .desc = { L"С какого размера содержимое «наплывает» при открытии. 100 % — без увеличения",
+      .desc = { L"С какого размера содержимое «наплывает» при открытии. 100 % - без увеличения",
                 L"The size the content grows from when opening. 100% means no zoom" },
       .lo = 80, .hi = 100, .step = 1, .unit = { L"%", L"%" } },
     { .page = PG_ANIM, .kind = SK_TOGGLE, .id = SID_ACASCADE, .title = { L"Каскад строк", L"Row cascade" },
@@ -146,7 +144,7 @@ static const SItem k_sitems[] = {
                 L"Launch counts and remembered queries that order the results" },
       .opt = { { L"Очистить", L"Clear" } }, .glyph = 0xE74D },
     { .page = PG_ADVANCED, .kind = SK_BUTTON, .id = SID_CONFIG, .title = { L"Файл настроек", L"Settings file" },
-      .desc = { L"config.ini — все параметры с комментариями", L"config.ini with every option and comments" },
+      .desc = { L"config.ini - все параметры с комментариями", L"config.ini with every option and comments" },
       .opt = { { L"Открыть", L"Open" } }, .glyph = 0xE8E5 },
     { .page = PG_ADVANCED, .kind = SK_BUTTON, .id = SID_DATADIR, .title = { L"Папка данных", L"Data folder" },
       .desc = { L"Настройки, история, кэш списка приложений и журнал", L"Settings, history, app list cache and log" },
@@ -157,13 +155,13 @@ static const SItem k_sitems[] = {
                 L"Needed for the hotkey to work over games and admin windows. Programs started from the launcher get normal rights" } },
 
     { .page = PG_ABOUT, .kind = SK_ABOUT, .id = SID_ABOUT,
-      .desc = { L"Нативный лаунчер для Windows в духе Raycast и Spotlight: приложения, файлы через Everything и команды "
-                L"питания. Без ИИ, без сети, без телеметрии.",
-                L"A native Raycast/Spotlight-style launcher for Windows: apps, files through Everything and power "
-                L"commands. No AI, no network, no telemetry." } },
+      .desc = { L"Быстрый лаунчер для Windows. Приложения, файлы и команды по одной клавише, музыка на панели задач. "
+                L"Всё работает на вашем компьютере: без ИИ, без сети и без телеметрии.",
+                L"A fast launcher for Windows. Apps, files and commands on one key, music on the taskbar. "
+                L"It all runs on your computer: no AI, no network, no telemetry." } },
     { .page = PG_ABOUT, .kind = SK_INFO, .id = SID_EVERYTHING, .group = { L"Состояние", L"Status" },
       .title = { L"Everything", L"Everything" },
-      .desc = { L"Поиск файлов идёт через ваш Everything, а если его нет — через встроенный",
+      .desc = { L"Поиск файлов идёт через ваш Everything, а если его нет - через встроенный",
                 L"File search goes through your own Everything, or the built-in one when you have none" } },
 };
 #define SITEMS countof(k_sitems)
@@ -171,11 +169,11 @@ static const SItem k_sitems[] = {
 
 typedef struct SRow {
     int item;
-    bool first;              // first row of its card (no separator above)
+    bool first;
     f32 x, y, w, h;
-    f32 ty;                  // vertical center of the title line
-    f32 cx, cy, cw, ch;      // control
-    int ndesc, desc_at[4];   // wrapped description lines
+    f32 ty;
+    f32 cx, cy, cw, ch;
+    int ndesc, desc_at[4];
 } SRow;
 
 typedef struct SBox { f32 x, y, w, h; } SBox;
@@ -191,7 +189,6 @@ typedef struct KeyTok { WCHAR label[24]; const WCHAR *side; } KeyTok;
 #define SETTINGS_TIMER_CARET 1
 #define SETTINGS_TIMER_FLASH 2
 
-// Recorder: sided modifier bits of the keys held right now.
 enum { RM_LCTRL = 1, RM_RCTRL = 2, RM_LALT = 4, RM_RALT = 8, RM_LSHIFT = 16, RM_RSHIFT = 32, RM_LWIN = 64, RM_RWIN = 128 };
 
 static struct {
@@ -207,43 +204,40 @@ static struct {
     int nrows;
     SBox cards[12];
     int ncards;
-    SBox heads[12];          // header text position (x, baseline y)
+    SBox heads[12];
     Str head_text[12];
     int nheads;
-    int focus;               // row with keyboard focus, -1 = none
+    int focus;
     bool focus_visible;
     SHit hover, press;
-    int editing;             // text row being edited, -1
+    int editing;
     WCHAR edit[512];
     int edit_len, edit_caret;
     bool caret_on;
-    bool armed;              // "clear history" waits for a confirming click
-    int flash_id;            // item showing a short "done" note
+    bool armed;
+    int flash_id;
     f64 flash_until;
     bool autostart;
-    int everything;          // EVS_*
-    // dropdown list of a choice row
+    int everything;
     bool pop_open;
     int pop_row, pop_hover;
     f32 pop_x, pop_y, pop_w, pop_h;
-    // hotkey recorder
     struct {
         bool open;
-        u8 held;             // RM_* bits
-        u8 key;              // non-modifier key held
-        bool used;           // the current chord already produced a result
-        bool has;            // a result is shown
+        u8 held;
+        u8 key;
+        bool used;
+        bool has;
         Hotkey hk;
     } rec;
     f32 rec_panel[4], rec_btn[2][4];
-    // motion (see settings_animate)
     bool animating;
     f64 last_frame;
     f32 scroll_target, scroll_v;
-    f32 nav_y, nav_v;        // sliding selection pill of the sidebar
-    f32 nav_hov[PG__COUNT];  // hover fades of the sidebar items
-    f32 win_hov[2];          // hover fades of the window buttons
-    f32 tog[SITEMS];         // toggle positions 0..1
+    f32 nav_y, nav_v;
+    f32 nav_hov[PG__COUNT];
+    f32 win_hov[2];
+    f32 tog[SITEMS];
     f32 page_t, pop_t, rec_t;
 } SW = { .focus = -1, .editing = -1, .pop_row = -1, .flash_id = -1, .page_t = 1, .pop_t = 1, .rec_t = 1 };
 
@@ -255,8 +249,6 @@ static bool settings_needs_render(void) { return SW.hwnd && (SW.dirty || SW.anim
 
 static bool in_box(const f32 *b, f32 x, f32 y) { return x >= b[0] && x < b[2] && y >= b[1] && y < b[3]; }
 
-// Geometry
-
 static f32 sb_x(void) { return SSR(10); }
 static f32 sb_w(void) { return SSR(228); }
 static f32 nav_y0(void) { return sb_x() + SSR(78); }
@@ -265,7 +257,7 @@ static f32 top_h(void) { return SSR(60); }
 static f32 content_x0(void) { return sb_x() + sb_w() + SSR(26); }
 static f32 content_x1(void) { return (f32)SW.W - SSR(26); }
 
-static void winbtn_rect(int i, f32 *r)  // 0 minimize, 1 close
+static void winbtn_rect(int i, f32 *r)
 {
     f32 w = SSR(46), h = SSR(34);
     r[0] = (f32)SW.W - w * (f32)(2 - i);
@@ -281,8 +273,6 @@ static void nav_rect(int i, f32 *r)
     r[2] = sb_x() + sb_w() - SSR(8);
     r[3] = r[1] + SSR(36);
 }
-
-// Values
 
 static int sval(int id)
 {
@@ -333,10 +323,10 @@ static void save_wstr(const char *key, const WCHAR *v)
 }
 
 static void settings_apply_theme(void);
-static void tb_set_enabled(bool on);  // taskbar.c
-static void tb_icon_changed(void);     // taskbar.c
-static void media_set_enabled(bool on);    // media.c
-static void media_settings_changed(void);  // media.c
+static void tb_set_enabled(bool on);
+static void tb_icon_changed(void);
+static void media_set_enabled(bool on);
+static void media_settings_changed(void);
 
 static int choice_count(const SItem *it)
 {
@@ -372,7 +362,6 @@ static bool pick_taskbar_icon(void)
     return ok;
 }
 
-// Animation timings: the config field and ini key of an SID_A* item.
 static const struct { u8 id; const char *key; size_t off; } k_anim_fields[] = {
     { SID_ASPEED, "anim_speed", offsetof(Config, anim_speed) },
     { SID_AOPEN, "anim_open_ms", offsetof(Config, anim_open_ms) },
@@ -463,7 +452,7 @@ static void sset(const SItem *it, int v)
     case SID_WIDTH:
         g_cfg.width = v;
         save_int("width", v);
-        U.dpi = 0;  // re-layout on next show
+        U.dpi = 0;
         break;
     case SID_ROWS:
         g_cfg.rows = v;
@@ -572,7 +561,6 @@ static void refresh_status(void)
     SW.everything = ev_state();
 }
 
-// Status text of an info row; *good selects the dot color.
 static const WCHAR *info_text(int id, bool *good)
 {
     if (id == SID_ADMIN) {
@@ -583,8 +571,6 @@ static const WCHAR *info_text(int id, bool *good)
     if (SW.everything == EVS_OWN) return ss((Str){ L"Встроенный, запущен", L"Built-in, running" });
     return SW.everything == EVS_USER ? ss((Str){ L"Запущен", L"Running" }) : ss((Str){ L"Не запущен", L"Not running" });
 }
-
-// Hotkey display and recording
 
 static int hk_tokens(Hotkey h, KeyTok *out)
 {
@@ -627,7 +613,6 @@ static u8 rec_generic(u8 held)
     return m;
 }
 
-// Why a hotkey cannot be used (NULL if it can).
 static const Str *hotkey_problem(Hotkey h)
 {
     static const Str none = { L"Нажмите клавишу или сочетание", L"Press a key or a shortcut" };
@@ -654,7 +639,7 @@ static void rec_open(void)
     memset(&SW.rec, 0, sizeof SW.rec);
     SW.rec.open = true;
     SW.rec_t = 0;
-    SW.rec.has = true;  // shows the current hotkey until a key is pressed
+    SW.rec.has = true;
     SW.rec.hk = g_cfg.hk;
     hook_capture(SW.hwnd);
     settings_invalidate();
@@ -674,12 +659,11 @@ static void rec_close(bool save)
     settings_invalidate();
 }
 
-// A key went down/up while recording (left/right specific VK codes).
 static void rec_key(UINT vk, bool down)
 {
     u8 bit = rec_bit(vk);
     if (down) {
-        if (bit ? (SW.rec.held & bit) != 0 : SW.rec.key == vk) return;  // auto-repeat
+        if (bit ? (SW.rec.held & bit) != 0 : SW.rec.key == vk) return;
         bool idle = !SW.rec.held && !SW.rec.key;
         if (idle && vk == VK_ESCAPE) {
             rec_close(false);
@@ -689,7 +673,7 @@ static void rec_key(UINT vk, bool down)
             rec_close(true);
             return;
         }
-        if (idle) SW.rec.has = SW.rec.used = false;  // a new chord starts
+        if (idle) SW.rec.has = SW.rec.used = false;
         if (bit) {
             SW.rec.held |= bit;
         } else {
@@ -721,8 +705,6 @@ static UINT sided_vk(WPARAM vk, LPARAM lp)
     if (vk == VK_MENU) return ext ? VK_RMENU : VK_LMENU;
     return (UINT)vk;
 }
-
-// Text editing (Everything filter)
 
 static void begin_edit(int row)
 {
@@ -795,8 +777,6 @@ static void edit_key(UINT vk, bool ctrl)
     SW.caret_on = true;
     settings_invalidate();
 }
-
-// Layout
 
 static int wrap_lines(int font, f32 size, const WCHAR *s, f32 max_w, int *at, int max_lines)
 {
@@ -931,8 +911,6 @@ static bool row_focusable(int r)
     u8 k = k_sitems[SW.rows[r].item].kind;
     return k != SK_INFO && k != SK_ABOUT;
 }
-
-// Drawing
 
 typedef struct SColors {
     u32 bg, panel, panel_border, card, card_border, sep, nav_sel, nav_sel_border, nav_hover, ctl, ctl_hover, field, field_border;
@@ -1072,7 +1050,7 @@ static void draw_toggle(f32 x, f32 cy, f32 on, bool hov, const Theme *t, const S
     u32 knob = c->knob;
     f32 lum = (0.299f * (f32)(t->accent & 255) + 0.587f * (f32)((t->accent >> 8) & 255) + 0.114f * (f32)((t->accent >> 16) & 255)) / 255.f;
     if (lum > 0.62f) knob = color_mix(knob, RGBA(24, 24, 26, 255), on);
-    r_rect_ex(kx, y + SSR(2) + SSR(1), k, k, RGBA(0, 0, 0, 50), k * 0.5f, 0, SSR(1.5f));  // knob shadow
+    r_rect_ex(kx, y + SSR(2) + SSR(1), k, k, RGBA(0, 0, 0, 50), k * 0.5f, 0, SSR(1.5f));
     r_rect(kx, y + SSR(2), k, k, knob, k * 0.5f);
 }
 
@@ -1089,7 +1067,7 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
         draw_app_tile(r->x, y + SSR(2), tile);
         f32 nx = r->x + tile + SSR(18);
         text_draw(FONT_TEXT_SEMIBOLD, SSC(22), nx, floorf(y + SSR(32)), L"MixLauncher", -1, t->text);
-        text_draw(FONT_TEXT, SSC(13), nx, floorf(y + SSR(54)), ss((Str){ L"Версия 1.0", L"Version 1.0" }), -1, t->dim);
+        text_draw(FONT_TEXT, SSC(13), nx, floorf(y + SSR(54)), ss((Str){ L"Версия 1.0.0", L"Version 1.0.0" }), -1, t->dim);
         const WCHAR *d = ss(it->desc);
         int n = wlen(d);
         for (int k = 0; k < r->ndesc; k++) {
@@ -1140,8 +1118,8 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
         if (hov && SW.hover.part == PART_PLUS && can_inc) r_rect(cx + cw - bw, cy, bw, ch, c->ctl_hover, SSR(7));
         r_rect(cx + bw, cy + SSR(7), 1, ch - SSR(14), c->sep, 0);
         r_rect(cx + cw - bw, cy + SSR(7), 1, ch - SSR(14), c->sep, 0);
-        text_draw_icon(0xE738, SSC(11), cx + bw * 0.5f, mid, can_dec ? t->text : t->faint);  // Remove
-        text_draw_icon(0xE710, SSC(11), cx + cw - bw * 0.5f, mid, can_inc ? t->text : t->faint);  // Add
+        text_draw_icon(0xE738, SSC(11), cx + bw * 0.5f, mid, can_dec ? t->text : t->faint);
+        text_draw_icon(0xE710, SSC(11), cx + cw - bw * 0.5f, mid, can_inc ? t->text : t->faint);
         WCHAR num[16];
         _snwprintf(num, countof(num), L"%d", v);
         num[15] = 0;
@@ -1272,8 +1250,8 @@ static void draw_recorder(const Theme *t, const SColors *c)
         msg = ss(*problem);
         msg_col = t->danger;
     } else if (!n || live) {
-        msg = ss((Str){ L"Одна клавиша (Win, F1–F24, правый Ctrl…) или сочетание с Ctrl, Alt, Shift, Win",
-                        L"A single key (Win, F1–F24, right Ctrl…) or a shortcut with Ctrl, Alt, Shift, Win" });
+        msg = ss((Str){ L"Одна клавиша (Win, F1-F24, правый Ctrl…) или сочетание с Ctrl, Alt, Shift, Win",
+                        L"A single key (Win, F1-F24, right Ctrl…) or a shortcut with Ctrl, Alt, Shift, Win" });
     }
     if (msg) {
         f32 fs = SSC(12.5f), w = MIN(text_width(FONT_TEXT, fs, msg, -1), pw - SSR(40));
@@ -1289,7 +1267,7 @@ static void draw_recorder(const Theme *t, const SColors *c)
 
     bool can_save = SW.rec.has && !problem;
     f32 xr = px + pw - SSR(14);
-    for (int b = 1; b >= 0; b--) {  // 1 save (rightmost), 0 cancel
+    for (int b = 1; b >= 0; b--) {
         const WCHAR *lbl = b ? ss((Str){ L"Сохранить", L"Save" }) : ss((Str){ L"Отмена", L"Cancel" });
         KeyTok cap;
         wcopy(cap.label, countof(cap.label), b ? L"Enter" : L"Esc");
@@ -1324,11 +1302,9 @@ static void settings_draw(void)
 
     draw_sidebar(t, &c);
 
-    // A new page fades in and rises a few pixels.
     f32 pe = ease_out_cubic(SW.page_t), rise = floorf((1.f - pe) * SSR(10) + 0.5f);
     R.opacity = pe;
 
-    // Page title (the strip it sits in drags the window).
     f32 x0 = content_x0();
     text_draw_fit(FONT_TEXT_SEMIBOLD, SSC(20), x0 + SSR(2), SSR(40) + rise, content_x1() - x0 - SSR(100), ss(k_pages[SW.page].name), -1, t->text,
                   false);
@@ -1357,7 +1333,6 @@ static void settings_draw(void)
         r_rect((f32)SW.W - SSR(7), floorf(by), SSR(3), floorf(bar_h), t->faint, SSR(1.5f));
     }
 
-    // Window buttons.
     for (int i = 0; i < 2; i++) {
         f32 r[4];
         winbtn_rect(i, r);
@@ -1453,8 +1428,6 @@ static void settings_render(void)
     SW.dirty = false;
 }
 
-// Input
-
 static SHit settings_hit(int mx, int my)
 {
     SHit h = { HT_NONE, PART_ROW, -1 };
@@ -1498,7 +1471,7 @@ static SHit settings_hit(int mx, int my)
         if (x < r->x || x >= r->x + r->w || cy < r->y || cy >= r->y + r->h) continue;
         h.type = HT_ROW;
         h.idx = i;
-        f32 g = SSR(4);  // a little slack around small controls
+        f32 g = SSR(4);
         if (x >= r->cx - g && x < r->cx + r->cw + g && cy >= r->cy - g && cy < r->cy + r->ch + g) {
             h.part = PART_CONTROL;
             if (k_sitems[r->item].kind == SK_STEPPER) {
@@ -1551,6 +1524,7 @@ static void pop_close(void)
 static void set_page(int page)
 {
     page = (page + PG__COUNT) % PG__COUNT;
+    if (page == SW.page) return;
     end_edit(true);
     SW.pop_open = false;
     SW.armed = false;
@@ -1689,7 +1663,6 @@ static void settings_mouse_down(int mx, int my)
     } else if (h.type == HT_ROW) {
         SW.focus = h.idx;
         const SItem *it = &k_sitems[SW.rows[h.idx].item];
-        // Toggles react to the whole row, everything else to its control.
         if ((it->kind == SK_TOGGLE || h.part != PART_ROW) && !(it->kind == SK_TEXT && SW.editing == h.idx)) activate_row(h.idx, h.part);
         else if (SW.armed) SW.armed = false;
     } else if (SW.armed) {
@@ -1738,7 +1711,6 @@ static LRESULT settings_nchittest(HWND h, LPARAM lp)
         winbtn_rect(i, r);
         if (in_box(r, x, y)) return HTCLIENT;
     }
-    // Drag by the page title strip or by the header of the sidebar.
     if (y < top_h() && x >= sb_x() + sb_w()) return HTCAPTION;
     if (x < sb_x() + sb_w() && y < nav_y0() - SSR(6)) return HTCAPTION;
     return HTCLIENT;
@@ -1845,7 +1817,7 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             rec_key(sided_vk(wp, lp), down);
             return 0;
         }
-        if ((wp == VK_LWIN || wp == VK_RWIN) && hotkey_is_win_tap()) return 0;  // the hotkey, see main.c
+        if ((wp == VK_LWIN || wp == VK_RWIN) && hotkey_is_win_tap()) return 0;
         if (!down) break;
         if (msg == WM_SYSKEYDOWN && wp == VK_F4) break;
         settings_key((UINT)wp);
@@ -1853,8 +1825,8 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_SYSCHAR:
         if (SW.rec.open) return 0;
-        if (wp == ' ') break;  // Alt+Space: the window menu
-        return 0;              // no menu beep on Alt+key
+        if (wp == ' ') break;
+        return 0;
     case WM_SYSCOMMAND:
         if ((wp & 0xFFF0) == SC_TASKLIST && hotkey_is_win_tap()) return 0;
         break;
@@ -1941,7 +1913,7 @@ static void settings_open(void)
     POINT pt;
     GetCursorPos(&pt);
     HMONITOR mon = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
-    if (g_pinned || g_other_monitor) {  // debugging: keep off the monitor in use
+    if (g_pinned || g_other_monitor) {
         HMONITOR io[2] = { mon, NULL };
         EnumDisplayMonitors(NULL, NULL, find_other_monitor, (LPARAM)io);
         if (io[1]) mon = io[1];
@@ -1979,7 +1951,7 @@ static void settings_open(void)
     settings_snap_motion();
     SW.last_frame = time_now();
     SW.dirty = true;
-    settings_render();  // first frame before the window appears
+    settings_render();
     hook_watchdog_off();
     ShowWindow(SW.hwnd, SW_SHOW);
     SetForegroundWindow(SW.hwnd);

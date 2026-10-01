@@ -1,8 +1,5 @@
-// config.c — tiny ini reader for %LOCALAPPDATA%\MixLauncher\config.ini.
-
 enum { BACKDROP_SOLID, BACKDROP_ACRYLIC, BACKDROP_BLUR };
 
-// Icon of our Start button (taskbar.c).
 enum { TBI_DIAMOND, TBI_GRID, TBI_LINES, TBI_CUSTOM, TBI__COUNT };
 static const char *const k_tbi_names[TBI__COUNT] = { "diamond", "grid", "lines", "custom" };
 
@@ -13,9 +10,9 @@ typedef struct Hotkey { u8 mods, vk; } Hotkey;
 
 typedef struct Config {
     WCHAR hotkey[64];
-    Hotkey hk;              // parsed hotkey
-    int   theme;            // 0 auto, 1 dark, 2 light
-    int   backdrop;         // BACKDROP_*
+    Hotkey hk;
+    int   theme;
+    int   backdrop;
     int   width;
     int   rows;
     int   max_apps;
@@ -25,27 +22,27 @@ typedef struct Config {
     int   keep_query_seconds;
     bool  animations;
     bool  taskbar_button;
-    int   taskbar_icon;     // TBI_*
-    WCHAR taskbar_icon_path[MAX_PATH];  // TBI_CUSTOM: PNG/ICO/JPG
-    bool  media_widget;     // now playing on the taskbar (media.c)
-    int   media_position;   // 0 left, 1 right
+    int   taskbar_icon;
+    WCHAR taskbar_icon_path[MAX_PATH];
+    bool  media_widget;
+    int   media_position;
     bool  media_controls;
     bool  media_hide_paused;
     int   anim_speed;
     int   anim_open_ms, anim_close_ms;
-    int   anim_open_scale;  // content scale the window opens from, percent
-    int   anim_cascade;     // rows cascade in after opening (1/0)
+    int   anim_open_scale;
+    int   anim_cascade;
     int   anim_row_ms, anim_stagger_ms;
-    int   anim_select_ms;   // selection highlight travel (spring settle time)
+    int   anim_select_ms;
     int   anim_scroll_ms;
-    int   anim_menu_ms;     // context menu / dropdown entrance
-    int   anim_page_ms;     // settings page switch
+    int   anim_menu_ms;
+    int   anim_page_ms;
 } Config;
 
 static Config g_cfg;
 
 static const char k_default_config_ru[] =
-    "; MixLauncher — настройки. Удобнее менять в окне настроек (кнопка «Настройки» в лаунчере или Ctrl+,).\r\n"
+    "; MixLauncher - настройки. Удобнее менять в окне настроек (кнопка «Настройки» в лаунчере или Ctrl+,).\r\n"
     "\r\n"
     "; Клавиша или сочетание, которое открывает и закрывает лаунчер. Прежнее действие сочетания\r\n"
     "; отключается (Win больше не открывает «Пуск», Win+D не сворачивает окна).\r\n"
@@ -94,9 +91,9 @@ static const char k_default_config_ru[] =
     "; Анимации открытия и закрытия (1/0). Выключаются и системной настройкой «Эффекты анимации».\r\n"
     "animations = 1\r\n"
     "\r\n"
-    "; Тонкая настройка анимаций (миллисекунды). anim_speed — общая скорость в процентах (200 = вдвое быстрее),\r\n"
-    "; anim_open_scale — с какого масштаба (в процентах) проявляется окно, anim_cascade — каскад строк (1/0).\r\n"
-    "; Выделение и прокрутка движутся на пружине: значение — примерное время, за которое она доезжает.\r\n"
+    "; Тонкая настройка анимаций (миллисекунды). anim_speed - общая скорость в процентах (200 = вдвое быстрее),\r\n"
+    "; anim_open_scale - с какого масштаба (в процентах) проявляется окно, anim_cascade - каскад строк (1/0).\r\n"
+    "; Выделение и прокрутка движутся на пружине: значение - примерное время, за которое она доезжает.\r\n"
     "anim_speed = 100\r\n"
     "anim_open_ms = 160\r\n"
     "anim_close_ms = 90\r\n"
@@ -174,8 +171,6 @@ static const char k_default_config_en[] =
     "anim_menu_ms = 140\r\n"
     "anim_page_ms = 220\r\n";
 
-// Hotkey names
-
 typedef struct KeyName { u8 vk; const char *name; const WCHAR *label; } KeyName;
 
 static const KeyName k_key_names[] = {
@@ -206,7 +201,6 @@ static u8 vk_mod_bit(u32 vk)
     return 0;
 }
 
-// Does a physical (left/right specific) key match the hotkey key?
 static bool hk_vk_match(u32 bind, u32 vk)
 {
     if (bind == vk) return true;
@@ -234,7 +228,6 @@ static int key_by_name(const char *name)
         int v = (int)strtol(name + 2, NULL, 16);
         if (v > 0 && v < 0xFF) return v;
     }
-    // Older spellings.
     if (!strcmp(name, "control")) return VK_CONTROL;
     if (!strcmp(name, "escape")) return VK_ESCAPE;
     if (!strcmp(name, "tilde")) return VK_OEM_3;
@@ -269,7 +262,6 @@ static void key_label(u32 vk, WCHAR *out, int cap, const WCHAR **side)
     else if (vk >= VK_F1 && vk <= VK_F24) _snwprintf(out, cap, L"F%u", vk - VK_F1 + 1);
     else if (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD9) _snwprintf(out, cap, L"Num %u", vk - VK_NUMPAD0);
     else {
-        // Media, browser and other rare keys: ask the keyboard layout.
         UINT sc = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC_EX);
         LONG lp = (LONG)((sc & 0xFF) << 16) | ((sc & 0xE000) ? (1 << 24) : 0);
         if (!sc || GetKeyNameTextW(lp, out, cap) <= 0) _snwprintf(out, cap, L"VK %02X", vk & 0xFF);
@@ -295,7 +287,7 @@ static bool hotkey_parse(const WCHAR *s, Hotkey *out)
         int vk = key_by_name(tok);
         *cur = save;
         if (!vk) return false;
-        if (last) {  // not the last token after all: must be a modifier
+        if (last) {
             u8 m = vk_mod_bit((u32)last);
             if (!m) return false;
             h.mods |= m;
@@ -445,7 +437,6 @@ static void config_load(void)
     char *text = read_file(path, NULL);
     if (!text) {
         const char *def = g_lang_ru ? k_default_config_ru : k_default_config_en;
-        // UTF-8 BOM so Notepad never guesses the wrong code page.
         Buf b = { 0 };
         buf_put(&b, "\xEF\xBB\xBF", 3);
         buf_put(&b, def, strlen(def));

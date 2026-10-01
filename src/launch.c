@@ -1,14 +1,12 @@
-// launch.c — runs actions on a dedicated STA thread so a slow launch never blocks the UI.
-
 enum { ACT_OPEN, ACT_REVEAL, ACT_RUNAS, ACT_PROPERTIES };
 
 typedef struct LaunchJob {
     int act;
     bool is_app;
     u8 cmd;
-    WCHAR *target;      // app id or file path
-    WCHAR *path;        // resolved file path for apps (may be NULL)
-    WCHAR *dir;         // working directory for files
+    WCHAR *target;
+    WCHAR *path;
+    WCHAR *dir;
     u8 hist_type;
     WCHAR *hist_key;
 } LaunchJob;
@@ -63,9 +61,9 @@ static void app_exec(const WCHAR *verb, const WCHAR *app_uri, const WCHAR *path)
 {
     DWORD err = 0;
     if (shell_exec_ex(verb, app_uri, NULL, &err, true)) return;
-    if (err == ERROR_CANCELLED) return;  // UAC prompt declined
+    if (err == ERROR_CANCELLED) return;
     if (path && shell_exec(verb, path, NULL, &err)) return;
-    if (!path) shell_exec(verb, app_uri, NULL, &err);  // repeat with UI so the user sees why
+    if (!path) shell_exec(verb, app_uri, NULL, &err);
 }
 
 static void reveal_in_explorer(const WCHAR *path)
@@ -125,7 +123,7 @@ static void launch_exec(LaunchJob *j)
     switch (j->act) {
     case ACT_OPEN:
         if (j->is_app) {
-            const WCHAR *what = wcsstr(j->target, L"://") ? j->target : app_uri;  // steam:// etc. directly
+            const WCHAR *what = wcsstr(j->target, L"://") ? j->target : app_uri;
             if (!g_elevated || !shell_exec_unelevated(what, NULL, NULL, NULL)) app_exec(NULL, app_uri, j->path);
         } else if (GetFileAttributesW(j->target) == INVALID_FILE_ATTRIBUTES) {
             DWORD e = GetLastError();

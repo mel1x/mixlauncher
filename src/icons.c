@@ -1,5 +1,3 @@
-// icons.c — asynchronous shell icon loading into a GPU atlas.
-
 enum { ICON_KIND_APP, ICON_KIND_FILE };
 enum { ICON_EMPTY, ICON_PENDING, ICON_READY, ICON_FAILED };
 
@@ -22,7 +20,7 @@ typedef struct IconRes {
     u64 hash;
     u32 gen;
     int px;
-    u32 *pixels;   // NULL = failed
+    u32 *pixels;
 } IconRes;
 
 #define ICON_HASH 4096
@@ -30,8 +28,8 @@ typedef struct IconRes {
 
 static struct {
     IconEntry table[ICON_HASH];
-    int px;               // icon size in physical pixels
-    int slot_px;          // px + gutter
+    int px;
+    int slot_px;
     int per_row, slot_count;
     u64 slot_owner[ICON_MAX_SLOTS];
     u32 slot_used[ICON_MAX_SLOTS];
@@ -204,8 +202,6 @@ static bool icons_process_results(void)
     return any;
 }
 
-// Worker side
-
 static u32 *hbitmap_to_pixels(HBITMAP bmp, int px)
 {
     BITMAP bm;
@@ -217,7 +213,7 @@ static u32 *hbitmap_to_pixels(HBITMAP bmp, int px)
     memset(&bi, 0, sizeof bi);
     bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     bi.bmiHeader.biWidth = w;
-    bi.bmiHeader.biHeight = -h;   // top-down
+    bi.bmiHeader.biHeight = -h;
     bi.bmiHeader.biPlanes = 1;
     bi.bmiHeader.biBitCount = 32;
     bi.bmiHeader.biCompression = BI_RGB;
@@ -252,7 +248,6 @@ static u32 *hbitmap_to_pixels(HBITMAP bmp, int px)
     if (w == px && h == px) {
         memcpy(out, src, (size_t)px * px * 4);
     } else {
-        // Box-filter resample into px x px keeping aspect, centered.
         f32 scale = (f32)px / (f32)MAX(w, h);
         int dw = MAX(1, (int)(w * scale + 0.5f)), dh = MAX(1, (int)(h * scale + 0.5f));
         int ox = (px - dw) / 2, oy = (px - dh) / 2;
@@ -315,7 +310,7 @@ static DWORD WINAPI icon_worker(void *param)
         IconReq req;
         AcquireSRWLockExclusive(&I.lock);
         while (!I.req_count) SleepConditionVariableSRW(&I.cv, &I.lock, INFINITE, 0);
-        req = I.reqs[--I.req_count];   // LIFO: newest request first
+        req = I.reqs[--I.req_count];
         ReleaseSRWLockExclusive(&I.lock);
 
         IconRes res = { req.hash, req.gen, req.px, NULL };

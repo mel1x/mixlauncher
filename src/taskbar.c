@@ -1,5 +1,3 @@
-// taskbar.c — our button over the Windows 11 Start button.
-
 #define TB_MAX 4
 #define TB_CLASS L"MixLauncherStartButton"
 #define TB_TIMER_ANIM 1
@@ -17,11 +15,11 @@ typedef struct TbButton {
     f64 last_anim;
     COLORREF plate;
     bool plate_ok;
-    HDC dc;               // reusable w x h bitmap for UpdateLayeredWindow
+    HDC dc;
     HBITMAP bmp;
     u32 *bits;
     int bmp_w, bmp_h;
-    f64 sampled;          // last plate color sample
+    f64 sampled;
     u32 *img;
     int img_n;
     u32 img_gen;
@@ -30,15 +28,12 @@ typedef struct TbButton {
 static struct {
     bool enabled;
     HANDLE thread, wake;
-    // published by the worker, read by the main thread
     SRWLOCK lock;
     struct { HWND taskbar; RECT r; } found[TB_MAX];
     int nfound;
-    // requests to the worker
     volatile LONG menu_for;
-    volatile LONG reset;      // Explorer restarted: drop cached elements
-    volatile f64 fast_until;  // poll every frame until this time
-    // main thread
+    volatile LONG reset;
+    volatile f64 fast_until;
     TbButton b[TB_MAX];
     int n;
     bool light;
@@ -56,8 +51,6 @@ static bool tb_hit(POINT pt)
     return false;
 }
 
-// Worker: UI Automation
-
 static int tb_taskbars(HWND *out)
 {
     int n = 0;
@@ -67,7 +60,7 @@ static int tb_taskbars(HWND *out)
     return n;
 }
 
-static volatile LONG g_tb_centered = 1;  // taskbar icons centered: the Start button moves with them
+static volatile LONG g_tb_centered = 1;
 
 static bool tb_read_centered(void)
 {
@@ -124,7 +117,7 @@ static DWORD WINAPI tb_thread(void *param)
             for (int i = 0; i < TB_MAX; i++) SAFE_RELEASE(els[i]);
             memset(bars, 0, sizeof bars);
             retry_at = 0;
-            last_n = -1;  // publish again even if nothing moved
+            last_n = -1;
         }
 
         HWND cur[TB_MAX];
@@ -152,7 +145,7 @@ static DWORD WINAPI tb_thread(void *param)
                     rs[nf++] = r;
                 }
             } else if (els[i]) {
-                SAFE_RELEASE(els[i]);  // gone (Explorer restarted, taskbar re-created)
+                SAFE_RELEASE(els[i]);
             }
         }
         for (int i = n; i < TB_MAX; i++) {
@@ -189,14 +182,12 @@ static DWORD WINAPI tb_thread(void *param)
             memcpy(last, rs, sizeof(RECT) * nf);
             last_n = nf;
             PostMessageW(g_hwnd, WM_APP_TASKBAR, 0, 0);
-            if (changed) TB.fast_until = MAX(TB.fast_until, time_now() + 0.3);  // it is moving: follow closely
+            if (changed) TB.fast_until = MAX(TB.fast_until, time_now() + 0.3);
         }
     }
     if (hook) UnhookWinEvent(hook);
     return 0;
 }
-
-// Main thread: the button windows
 
 static bool taskbar_light(void)
 {
@@ -214,7 +205,6 @@ static f32 tb_sdbox(f32 px, f32 py, f32 hx, f32 hy, f32 r)
     return sqrtf(ox * ox + oy * oy) + MIN(MAX(qx, qy), 0.f) - r;
 }
 
-// Premultiplied "over" of a straight color.
 static void tb_over(f32 *c, f32 *a, const f32 *col, f32 alpha)
 {
     for (int k = 0; k < 3; k++) c[k] = col[k] * alpha + c[k] * (1.f - alpha);
@@ -262,7 +252,6 @@ static u32 *tb_load_image(const WCHAR *path, int n)
     u32 *out = NULL, *tmp = NULL;
     if (FAILED(CoCreateInstance(&clsid, NULL, CLSCTX_INPROC_SERVER, &iid, (void **)&f)) || !f) goto done;
     if (FAILED(IWICImagingFactory_CreateDecoderFromFilename(f, path, NULL, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec))) goto done;
-    // Icons hold several sizes: take the largest.
     UINT frames = 0, best = 0, best_w = 0;
     IWICBitmapDecoder_GetFrameCount(dec, &frames);
     for (UINT i = 0; i < frames && i < 32; i++) {
@@ -346,7 +335,7 @@ static void tb_shape(int style, f32 fx, f32 fy, f32 u, f32 dim, const f32 *fg, f
         f32 half = 3.3f * u, rad = 1.2f * u, off = 6.5f * u;
         for (int d = 0; d < 4; d++) {
             f32 qx = fx - k_dots[d][0] * off, qy = fy - k_dots[d][1] * off;
-            f32 rx = (qx + qy) * 0.70710678f, ry = (qy - qx) * 0.70710678f;  // rotated 45 degrees
+            f32 rx = (qx + qy) * 0.70710678f, ry = (qy - qx) * 0.70710678f;
             f32 m = CLAMP(0.5f - tb_sdbox(rx, ry, half, half, rad), 0.f, 1.f);
             if (m > 0.f) tb_over(c, a, fg, m * (d == 0 ? 1.f : dim));
         }
@@ -405,7 +394,7 @@ static void tb_render(TbButton *b)
             b->img_n = n;
             b->img_gen = TB.icon_gen;
         }
-        if (!b->img) style = TBI_DIAMOND;  // file missing or unreadable
+        if (!b->img) style = TBI_DIAMOND;
     }
 
     u32 *px = b->bits;
@@ -413,13 +402,12 @@ static void tb_render(TbButton *b)
         for (int x = 0; x < w; x++) {
             f32 fx = (f32)x + 0.5f - cx, fy = (f32)y + 0.5f - cy;
             f32 c[3] = { 0, 0, 0 }, a = 0;
-            // Opaque plate over the logo, feathered only outside its 1 px margin.
             tb_over(c, &a, plate_c, CLAMP(0.5f - tb_sdbox(fx, fy, plate * 0.5f, plate * 0.5f, 2.f * s), 0.f, 1.f));
             if (hov_a > 0.f) tb_over(c, &a, hov_c, hov_a * CLAMP(0.5f - tb_sdbox(fx, fy, box * 0.5f, box * 0.5f, brad), 0.f, 1.f));
             if (style == TBI_CUSTOM) {
                 f32 ic[3], ia = tb_sample_img(b->img, b->img_n, fx / zoom + logo * 0.5f, fy / zoom + logo * 0.5f, ic);
                 if (ia > 0.f) {
-                    f32 k = 1.f - 0.1f * b->press_t;  // pressed: a touch darker
+                    f32 k = 1.f - 0.1f * b->press_t;
                     for (int q = 0; q < 3; q++) c[q] = ic[q] * k + c[q] * (1.f - ia);
                     a = ia + a * (1.f - ia);
                 }
@@ -548,7 +536,6 @@ static void tb_publish_hits(void)
     g_tb_hit_count = n;
 }
 
-// Worker found new positions: create, move or remove the button windows.
 static void tb_sync(void)
 {
     if (!TB.enabled) return;
@@ -565,7 +552,7 @@ static void tb_sync(void)
         for (int k = 0; k < TB.n; k++)
             if (TB.b[k].taskbar == f[i].taskbar && TB.b[k].wnd && IsWindow(TB.b[k].wnd)) {
                 *b = TB.b[k];
-                TB.b[k].wnd = NULL;  // taken over (with its picture)
+                TB.b[k].wnd = NULL;
                 TB.b[k].img = NULL;
                 TB.b[k].dc = NULL;
                 TB.b[k].bmp = NULL;
@@ -602,15 +589,14 @@ static void tb_sync(void)
         RECT cur;
         GetWindowRect(b->wnd, &cur);
         bool moved = memcmp(&cur, &b->screen, sizeof cur) != 0;
-        bool resample = moved || time_now() - b->sampled > 5.0;  // reading the screen goes through DWM
+        bool resample = moved || time_now() - b->sampled > 5.0;
         if ((resample && tb_sample(b)) || resized) tb_render(b);
-        bool covered = GetWindow(b->wnd, GW_HWNDPREV) != NULL;  // a sibling above us
+        bool covered = GetWindow(b->wnd, GW_HWNDPREV) != NULL;
         if (moved || covered || !IsWindowVisible(b->wnd)) SetWindowPos(b->wnd, HWND_TOP, p.x, p.y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
     tb_publish_hits();
 }
 
-// The icon setting changed (or the custom file): redraw with it.
 static void tb_icon_changed(void)
 {
     TB.icon_gen++;

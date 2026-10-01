@@ -1,5 +1,3 @@
-// match.c — query normalization and fuzzy scoring. Pure functions, safe on any thread.
-
 enum {
     SCORE_EXACT = 10000,
     SCORE_PREFIX = 9000,
@@ -12,8 +10,8 @@ enum {
 static WCHAR norm_char(WCHAR c)
 {
     if (c < 0x80) return wlower_ascii(c);
-    if (c >= 0x410 && c <= 0x42F) return (WCHAR)(c + 32);        // А-Я
-    if (c == 0x401 || c == 0x451) return 0x435;                  // Ё ё -> е
+    if (c >= 0x410 && c <= 0x42F) return (WCHAR)(c + 32);
+    if (c == 0x401 || c == 0x451) return 0x435;
     if (c >= 0x430 && c <= 0x44F) return c;
     if (c >= 0x400 && c <= 0x40F) return (WCHAR)(c + 80);
     if (c == 0x00A0) return ' ';
@@ -87,7 +85,6 @@ static int score_fuzzy(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int 
     return CLAMP(sc, 1000, SCORE_FUZZY_MAX);
 }
 
-// Score one query token against a normalized name.
 static int score_token(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int m)
 {
     if (m <= 0) return 1;
@@ -140,7 +137,6 @@ static int score_query(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int 
     return MAX(whole, multi);
 }
 
-// Wrong keyboard layout: convert between QWERTY and ЙЦУКЕН positions.
 static const WCHAR k_layout_en[] = L"`qwertyuiop[]asdfghjkl;'zxcvbnm,./";
 static const WCHAR k_layout_ru[] = L"\x0451\x0439\x0446\x0443\x043a\x0435\x043d\x0433\x0448\x0449\x0437\x0445\x044a"
                                    L"\x0444\x044b\x0432\x0430\x043f\x0440\x043e\x043b\x0434\x0436\x044d"
@@ -153,7 +149,7 @@ static bool layout_convert(const WCHAR *q, int m, WCHAR *out)
         if (q[i] >= 0x430 && q[i] <= 0x451) has_ru = true;
         else if (q[i] >= 'a' && q[i] <= 'z') has_en = true;
     }
-    if (has_ru == has_en) {  // mixed or none: ambiguous, skip
+    if (has_ru == has_en) {
         out[0] = 0;
         return false;
     }

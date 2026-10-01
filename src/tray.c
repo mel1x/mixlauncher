@@ -1,5 +1,3 @@
-// tray.c — procedural app icon, notification-area icon, autostart and dark native menus.
-
 static f32 sd_round_box(f32 px, f32 py, f32 hx, f32 hy, f32 r)
 {
     f32 qx = fabsf(px) - hx + r, qy = fabsf(py) - hy + r;
@@ -7,13 +5,12 @@ static f32 sd_round_box(f32 px, f32 py, f32 hx, f32 hy, f32 r)
     return sqrtf(ox * ox + oy * oy) + MIN(MAX(qx, qy), 0.f) - r;
 }
 
-// Straight-alpha BGRA, top-down.
 static void app_icon_render(u32 *out, int S)
 {
     f32 s = (f32)S;
     f32 inset = s * 0.0625f, half = s * 0.5f - inset, rad = s * 0.225f;
-    f32 pw = MAX(s * 0.035f, 0.75f);                        // field outline width
-    f32 cw = MAX(s * 0.024f, 0.65f), ch = MAX(s * 0.068f, 1.5f);  // caret
+    f32 pw = MAX(s * 0.035f, 0.75f);
+    f32 cw = MAX(s * 0.024f, 0.65f), ch = MAX(s * 0.068f, 1.5f);
     for (int y = 0; y < S; y++) {
         for (int x = 0; x < S; x++) {
             f32 px = x + 0.5f - s * 0.5f, py = y + 0.5f - s * 0.5f;
@@ -93,7 +90,7 @@ static bool app_icon_write_ico(const WCHAR *path)
         u32 *px = (u32 *)malloc((size_t)S * S * 4);
         if (!px) return false;
         app_icon_render(px, S);
-        for (int y = S - 1; y >= 0; y--) buf_put(&b, px + y * S, (size_t)S * 4);  // bottom-up
+        for (int y = S - 1; y >= 0; y--) buf_put(&b, px + y * S, (size_t)S * 4);
         free(px);
         u32 mask_row = (u32)((S + 31) / 32) * 4;
         u8 zero[64];

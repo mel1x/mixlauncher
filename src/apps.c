@@ -1,5 +1,3 @@
-// apps.c — application index.
-
 enum { APP_SHELL, APP_CMD };
 enum { CMD_NONE, CMD_LOCK, CMD_SLEEP, CMD_RESTART, CMD_SHUTDOWN, CMD_SIGNOUT, CMD_RECYCLE };
 
@@ -15,20 +13,20 @@ typedef struct App {
     u64 id_hash;
     u8 kind;
     u8 cmd;
-    bool danger;        // needs confirmation (shutdown, restart, sign out)
-    u16 glyph;          // Fluent icon for commands
+    bool danger;
+    u16 glyph;
     int kw_count;
     WCHAR *kw[APP_MAX_KW];
     u8 *kw_ws[APP_MAX_KW];
     int kw_len[APP_MAX_KW];
-    f32 frec;           // UI-thread cache of the frecency bonus
+    f32 frec;
 } App;
 
 typedef struct AppList {
     Arena arena;
     App *apps;
-    int count;          // apps + commands
-    int shell_count;    // apps[0..shell_count) are real apps, sorted by name
+    int count;
+    int shell_count;
     u64 signature;
 } AppList;
 
@@ -73,7 +71,6 @@ static bool looks_like_noise(const WCHAR *norm, const WCHAR *path)
         int n = wlen(path);
         for (int i = 0; i < countof(doc_ext); i++)
             if (wends_with_i(path, n, doc_ext[i])) return true;
-        // Shortcuts to plain folders ("SDK\Samples").
         if (path[1] == ':' && !*PathFindExtensionW(path)) {
             DWORD attr = GetFileAttributesW(path);
             if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) return true;
@@ -123,7 +120,7 @@ static void app_add_kw(Arena *a, App *app, const WCHAR *s, int len)
     WCHAR *orig = wdup(a, s, len);
     WCHAR *norm = (WCHAR *)arena_push(a, (size_t)(len + 1) * sizeof(WCHAR));
     norm_str(norm, orig, len);
-    if (len == app->len && wmem_eq(norm, app->norm, len)) return;  // same as the visible name
+    if (len == app->len && wmem_eq(norm, app->norm, len)) return;
     for (int i = 0; i < app->kw_count; i++)
         if (app->kw_len[i] == len && wmem_eq(app->kw[i], norm, len)) return;
     int j = app->kw_count++;
@@ -195,7 +192,6 @@ static AppList *applist_build(RawApp *raw, int n)
         app->id = wdup(&l->arena, idbuf, -1);
         app->id_hash = hash_wstr_i(app->id, -1);
         app_fill_match(&l->arena, app);
-        // keywords: '|' separated
         const WCHAR *k = k_commands[i].kw;
         while (*k && app->kw_count < APP_MAX_KW) {
             const WCHAR *e = k;
@@ -214,8 +210,6 @@ static AppList *applist_build(RawApp *raw, int n)
     l->signature = sig;
     return l;
 }
-
-// --- disk cache: UTF-8 lines "name \t id \t path"
 
 static void apps_cache_save(AppList *l)
 {
@@ -277,8 +271,6 @@ static AppList *apps_cache_load(void)
     return l;
 }
 
-// --- live enumeration (indexer thread, COM STA)
-
 static AppList *apps_enumerate(void)
 {
     IShellItem *folder = NULL;
@@ -310,7 +302,7 @@ static AppList *apps_enumerate(void)
         }
         if (name && parse && name[0] && parse[0]) {
             WCHAR *path = target && target[0] ? wdup(&tmp, target, -1) : resolve_known_folder_path(&tmp, parse);
-            if (path && path[0] == ':' && path[1] == ':') path = NULL;  // shell namespace (Control Panel etc.)
+            if (path && path[0] == ':' && path[1] == ':') path = NULL;
             WCHAR norm[512];
             int nl = MIN(wlen(name), 511);
             norm_str(norm, name, nl);
@@ -350,7 +342,7 @@ static void apps_request_reindex(void)
 
 static DWORD WINAPI indexer_thread(void *param)
 {
-    u64 last_sig = (u64)(uintptr_t)param;  // signature of the cached list already shown
+    u64 last_sig = (u64)(uintptr_t)param;
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 
@@ -385,7 +377,6 @@ static DWORD WINAPI indexer_thread(void *param)
         DWORD r = WaitForMultipleObjects((DWORD)nw, waits, FALSE, 20 * 60 * 1000);
         if (r >= WAIT_OBJECT_0 + 1 && r < WAIT_OBJECT_0 + (DWORD)nw) {
             FindNextChangeNotification(waits[r - WAIT_OBJECT_0]);
-            // Installers touch many files in a burst: settle before re-enumerating.
             for (;;) {
                 DWORD r2 = WaitForMultipleObjects((DWORD)nw - 1, waits + 1, FALSE, 1500);
                 if (r2 == WAIT_TIMEOUT || r2 == WAIT_FAILED) break;

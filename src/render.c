@@ -1,9 +1,7 @@
-// render.c — Direct3D 11 batch renderer presented through DirectComposition.
-
 typedef struct RInst {
     f32 x0, y0, x1, y1;
     f32 u0, v0, u1, v1;
-    u32 color;          // straight-alpha RGBA8
+    u32 color;
     f32 cx0, cy0, cx1, cy1;
     f32 radius, border, soft, mode;
 } RInst;
@@ -18,7 +16,6 @@ static u32 color_alpha(u32 c, f32 k)
     return (c & 0x00FFFFFFu) | (a << 24);
 }
 
-// Straight-alpha blend of two colors, t = 0..1.
 static u32 color_mix(u32 a, u32 b, f32 t)
 {
     t = CLAMP(t, 0.f, 1.f);
@@ -30,12 +27,9 @@ static u32 color_mix(u32 a, u32 b, f32 t)
     return r;
 }
 
-// Motion helpers, shared by the launcher and the settings window.
-
-// Critically damped spring; ~95% there after 4.7/omega s, velocity kept when the target moves.
 static bool spring_step(f32 *x, f32 *v, f32 target, f32 omega, f32 dt)
 {
-    if (omega <= 0.f) {  // zero duration: jump
+    if (omega <= 0.f) {
         *x = target;
         *v = 0;
         return false;
@@ -107,8 +101,8 @@ typedef struct Renderer {
     ID3D11Texture2D *icon_tex;
     ID3D11ShaderResourceView *icon_srv;
 
-    RTarget main;       // the launcher window
-    RTarget *t;         // target of the frame being built
+    RTarget main;
+    RTarget *t;
 
     RInst *inst;
     u32 count, cap;
@@ -116,7 +110,6 @@ typedef struct Renderer {
     f32 scale;
     f32 opacity;
 
-    // CPU mirror of the glyph atlas + dirty rect (uploaded once per frame)
     u8 *glyph_cpu;
     int dirty_x0, dirty_y0, dirty_x1, dirty_y1;
     bool ok;
@@ -151,7 +144,7 @@ static const char k_shader_src[] =
     "SamplerState sl : register(s1);\n"
     "float sdrr(float2 p, float2 b, float r) { float2 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }\n"
     "float4 ps(V i) : SV_Target {\n"
-    "  float2 fp = i.cpos;\n"  // clip rects live in unscaled layout space
+    "  float2 fp = i.cpos;\n"
     "  if (fp.x < i.clip.x || fp.y < i.clip.y || fp.x > i.clip.z || fp.y > i.clip.w) discard;\n"
     "  float4 c = i.c;\n"
     "  float a;\n"
@@ -174,8 +167,6 @@ static const char k_shader_src[] =
     "  a *= c.a;\n"
     "  return float4(c.rgb * a, a);\n"
     "}\n";
-
-// Targets (one per window)
 
 static bool r_target_views(RTarget *t)
 {
@@ -237,7 +228,6 @@ static bool r_target_init(RTarget *t, HWND hwnd, int w, int h)
             IDXGISwapChain2_Release(sc2);
         }
     }
-    // DirectComposition: hwnd <- target <- visual <- swap chain
     if (FAILED(R.dc->lpVtbl->CreateTargetForHwnd(R.dc, hwnd, TRUE, &t->dct)) ||
         FAILED(R.dc->lpVtbl->CreateVisual(R.dc, &t->dcv)) ||
         FAILED(t->dcv->lpVtbl->SetContent(t->dcv, (IUnknown *)t->swap)) ||
@@ -270,10 +260,7 @@ static void r_target_resize(RTarget *t, int w, int h)
 
 static void r_resize(int w, int h) { r_target_resize(&R.main, w, h); }
 
-// Frames built after this go to `t`.
 static void r_use(RTarget *t) { R.t = t; }
-
-// Device
 
 static void r_shutdown(void)
 {
@@ -345,7 +332,6 @@ static bool r_init(HWND hwnd, int w, int h)
         return false;
     }
 
-    // Shaders
     static PFN_D3DCompile compile;
     if (!compile) {
         HMODULE m = LoadLibraryW(L"d3dcompiler_47.dll");
@@ -450,8 +436,6 @@ static bool r_init(HWND hwnd, int w, int h)
     R.ok = true;
     return true;
 }
-
-// Frame building
 
 static void r_wait_frame(void)
 {
@@ -566,7 +550,6 @@ static void r_upload_icon(int x, int y, int size, const u32 *bgra)
     ID3D11DeviceContext_UpdateSubresource(R.ctx, (ID3D11Resource *)R.icon_tex, 0, &box, bgra, (UINT)size * 4, 0);
 }
 
-// Returns false when the device was lost and must be re-created.
 static bool r_end_and_present(void)
 {
     RTarget *t = R.t;

@@ -1,4 +1,3 @@
-// base.h — types, arenas, strings, hashing, time, logging.
 #pragma once
 
 #ifndef UNICODE
@@ -129,8 +128,6 @@ static void arena_release(Arena *a)
     memset(a, 0, sizeof(*a));
 }
 
-// Wide string helpers
-
 static int wlen(const WCHAR *s) { return s ? (int)wcslen(s) : 0; }
 
 static WCHAR *wdup(Arena *a, const WCHAR *s, int len)
@@ -154,7 +151,6 @@ static WCHAR *wcat3(Arena *a, const WCHAR *x, const WCHAR *y, const WCHAR *z)
     return d;
 }
 
-// Heap copy, for strings crossing thread boundaries.
 static WCHAR *wdup_heap(const WCHAR *s)
 {
     if (!s) return NULL;
@@ -226,7 +222,6 @@ static u64 hash_u64(u64 x)
     return x;
 }
 
-// UTF-8 <-> UTF-16 into caller buffers.
 static int utf8_to_w(const char *s, int n, WCHAR *out, int cap)
 {
     int r = MultiByteToWideChar(CP_UTF8, 0, s, n, out, cap - 1);
@@ -242,8 +237,6 @@ static int w_to_utf8(const WCHAR *s, int n, char *out, int cap)
     out[r] = 0;
     return r;
 }
-
-// Time
 
 static f64 g_qpc_inv;
 
@@ -261,7 +254,6 @@ static f64 time_now(void)
     return (f64)c.QuadPart * g_qpc_inv;
 }
 
-// Seconds since unix epoch.
 static i64 unix_now(void)
 {
     FILETIME ft;
@@ -277,9 +269,7 @@ static i64 filetime_now(void)
     return ((i64)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
 }
 
-// Paths & logging
-
-static WCHAR g_data_dir[MAX_PATH];   // %LOCALAPPDATA%\MixLauncher
+static WCHAR g_data_dir[MAX_PATH];
 static WCHAR g_exe_path[MAX_PATH];
 
 static void data_path(WCHAR *out, const WCHAR *file)
@@ -308,7 +298,6 @@ static void log_msg(const char *fmt, ...)
     HANDLE f = CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, 0, NULL);
     if (f != INVALID_HANDLE_VALUE) {
         LARGE_INTEGER sz;
-        // Keep the log small: start over when it grows past 256 KB.
         if (GetFileSizeEx(f, &sz) && sz.QuadPart > 256 * 1024) {
             CloseHandle(f);
             f = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, 0, NULL);
@@ -327,7 +316,6 @@ static void log_msg(const char *fmt, ...)
     ReleaseSRWLockExclusive(&g_log_lock);
 }
 
-// Read a whole file into malloc'ed memory (NUL-terminated). Caller frees.
 static char *read_file(const WCHAR *path, DWORD *out_size)
 {
     HANDLE f = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, 0, NULL);
@@ -348,7 +336,6 @@ static char *read_file(const WCHAR *path, DWORD *out_size)
     return buf;
 }
 
-// Atomic replace: write to .tmp then rename over the target.
 static bool write_file_atomic(const WCHAR *path, const void *data, DWORD size)
 {
     WCHAR tmp[MAX_PATH + 8];
@@ -366,7 +353,6 @@ static bool write_file_atomic(const WCHAR *path, const void *data, DWORD size)
     return MoveFileExW(tmp, path, MOVEFILE_REPLACE_EXISTING) != 0;
 }
 
-// Growable byte buffer for building files.
 typedef struct Buf {
     char *data;
     size_t len, cap;
@@ -422,22 +408,20 @@ static char *next_line(char **cursor)
     return line;
 }
 
-// Messages posted to the main window by worker threads.
-
 enum {
-    WM_APP_TOGGLE = WM_APP + 1,  // hotkey / Win tap
-    WM_APP_SHOW,                 // second instance asked us to show
-    WM_APP_APPS_READY,           // lParam: AppList*
+    WM_APP_TOGGLE = WM_APP + 1,
+    WM_APP_SHOW,
+    WM_APP_APPS_READY,
     WM_APP_ICONS_READY,
-    WM_APP_FILES_READY,          // lParam: FileResults*
+    WM_APP_FILES_READY,
     WM_APP_TRAY,
     WM_APP_EXIT,
-    WM_APP_LAUNCH_FAILED,        // lParam: heap WCHAR* key of item that failed
-    WM_APP_CLICK_OUTSIDE,        // mouse button pressed outside the open launcher
+    WM_APP_LAUNCH_FAILED,
+    WM_APP_CLICK_OUTSIDE,
     WM_APP_SETTINGS,
     WM_APP_KEYCAP,
     WM_APP_TASKBAR,
-    WM_APP_MEDIA,                // media.c worker published a new state
+    WM_APP_MEDIA,
 };
 
-static HWND g_hwnd;   // main window, target of all worker notifications
+static HWND g_hwnd;
