@@ -6,7 +6,7 @@ setlocal
 cd /d "%~dp0"
 
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\fetch-everything.ps1 || exit /b 1
-call build.bat || exit /b 1
+call "%~dp0build.bat" || exit /b 1
 if not exist build\mixlauncher.exe exit /b 1
 
 set "ISCC="
