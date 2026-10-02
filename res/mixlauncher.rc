@@ -1,4 +1,5 @@
 #include <windows.h>
+#include "version.h"
 
 1 ICON "mixlauncher.ico"
 #ifdef ML_DEV_BUILD
@@ -10,8 +11,8 @@ CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "mixlauncher.manifest"
 #endif
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 1,1,0,0
-PRODUCTVERSION 1,1,0,0
+FILEVERSION ML_VER_MAJOR,ML_VER_MINOR,ML_VER_PATCH,0
+PRODUCTVERSION ML_VER_MAJOR,ML_VER_MINOR,ML_VER_PATCH,0
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -21,8 +22,8 @@ BEGIN
         BEGIN
             VALUE "FileDescription", "MixLauncher"
             VALUE "ProductName", "MixLauncher"
-            VALUE "FileVersion", "1.1.0"
-            VALUE "ProductVersion", "1.1.0"
+            VALUE "FileVersion", ML_VER_STR
+            VALUE "ProductVersion", ML_VER_STR
             VALUE "OriginalFilename", "mixlauncher.exe"
         END
     END

@@ -38,6 +38,7 @@
 #include <wincodec.h>
 #include <d3d11.h>
 #include <dxgi1_3.h>
+#include <winhttp.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdarg.h>
@@ -59,7 +60,13 @@
 #pragma comment(lib, "d3d11")
 #pragma comment(lib, "dxgi")
 #pragma comment(lib, "uuid")
+#pragma comment(lib, "winhttp")
 #endif
+
+#include "../res/version.h"
+#define ML_WIDEN2(x) L##x
+#define ML_WIDEN(x) ML_WIDEN2(x)
+#define ML_VER_WSTR ML_WIDEN(ML_VER_STR)
 
 typedef uint8_t  u8;
 typedef uint16_t u16;
@@ -422,6 +429,7 @@ enum {
     WM_APP_KEYCAP,
     WM_APP_TASKBAR,
     WM_APP_MEDIA,
+    WM_APP_UPDATE,
 };
 
 static HWND g_hwnd;

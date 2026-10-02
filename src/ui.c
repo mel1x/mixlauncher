@@ -34,8 +34,9 @@ static struct {
     HWND prev_fg;
     bool app_mode;
     bool no_focus_restore;
-    int settings_btn[4];
-    bool settings_hover, press_settings;
+    int settings_btn[4], update_btn[4];
+    bool settings_hover, press_settings, update_hover, press_update;
+    f32 update_hover_t;
     f64 hide_time;
 
     WCHAR q[Q_MAX + 1];
@@ -1044,6 +1045,7 @@ static void ui_show(void)
     set_app_window_mode(taskbar_covered(MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST)));
     // Take the keyboard while still transparent, so keys typed right after Win land here.
     SetLayeredWindowAttributes(g_hwnd, 0, 0, LWA_ALPHA);
+    SendMessageW(g_hwnd, WM_NCACTIVATE, TRUE, -1);  // acrylic from the first frame, see WM_NCACTIVATE
     U.alpha = 0;
     set_click_through(false);
     if (g_pinned) {
@@ -1437,8 +1439,47 @@ static void draw_footer(f32 y0)
     static const WCHAR *k_copy[] = { L"Ctrl", L"C" };
     static const WCHAR *k_esc[] = { L"Esc" };
     if (LS()->footer_tint) r_rect(0, y0, (f32)U.W, U.footer_h, t->dark ? RGBA(255, 255, 255, 10) : RGBA(0, 0, 0, 8), 0);
-    Row *r = sel_row();
+    const WCHAR *label = TR("Настройки", "Settings");
+    f32 lfs = S(12.5f), lw = text_width(FONT_TEXT, lfs, label, -1);
+    f32 bx = SR(8), bh = SR(28), by = floorf(cy - bh * 0.5f);
+    f32 bw = floorf(SR(8) + SR(16) + SR(7) + lw + SR(10));
+    f32 hov = U.settings_hover_t;
+    r_rect(bx, by, bw, bh, color_alpha(t->sel, hov), SR(LS()->key_r + 1));
+    u32 col = color_mix(t->dim, t->text, hov);
+    text_draw_icon(0xE713, S(14), bx + SR(8) + SR(8), cy, col);
+    text_draw(FONT_TEXT, lfs, bx + SR(8) + SR(16) + SR(7), floorf(cy + font_cap_height(FONT_TEXT, lfs) * 0.5f + 0.5f), label, -1, col);
+    U.settings_btn[0] = (int)bx;
+    U.settings_btn[1] = (int)by;
+    U.settings_btn[2] = (int)(bx + bw);
+    U.settings_btn[3] = (int)(by + bh);
     f32 min_x = SR(150);
+    memset(U.update_btn, 0, sizeof U.update_btn);
+    if (upd_visible()) {
+        WCHAR ub[64];
+        const WCHAR *ul = upd_label(ub, countof(ub));
+        int st = upd_state();
+        bool busy = st == UPD_DOWNLOADING || st == UPD_INSTALLING;
+        f32 ulw = text_width(FONT_TEXT, lfs, ul, -1), ux = bx + bw + SR(6);
+        f32 uw = floorf(SR(8) + SR(16) + SR(7) + ulw + SR(10)), uh = U.update_hover_t * (busy ? 0.f : 1.f), rad = SR(LS()->key_r + 1);
+        r_rect(ux, by, uw, bh, color_alpha(t->accent, 0.16f + 0.10f * uh), rad);
+        if (st == UPD_DOWNLOADING) {
+            f32 pw = floorf(uw * (f32)UPD.progress / 1000.f);
+            if (pw > 0) {
+                r_set_clip(ux, by, ux + pw, by + bh);
+                r_rect(ux, by, uw, bh, color_alpha(t->accent, 0.22f), rad);
+                r_set_clip(0, 0, (f32)U.W, (f32)U.H);
+            }
+        }
+        u32 ucol = st == UPD_ERROR ? t->danger : t->text;
+        text_draw_icon(st == UPD_ERROR ? 0xE72C : 0xE896, S(14), ux + SR(8) + SR(8), cy, ucol);
+        text_draw(FONT_TEXT, lfs, ux + SR(8) + SR(16) + SR(7), floorf(cy + font_cap_height(FONT_TEXT, lfs) * 0.5f + 0.5f), ul, -1, ucol);
+        U.update_btn[0] = (int)ux;
+        U.update_btn[1] = (int)by;
+        U.update_btn[2] = (int)(ux + uw);
+        U.update_btn[3] = (int)(by + bh);
+        min_x = MAX(min_x, ux + uw + SR(18));
+    }
+    Row *r = sel_row();
     if (!r) {
         draw_hint(xr, cy, TR("Закрыть", "Close"), k_esc, 1, t->dim);
     } else if (r->kind == ROW_APP && r->app->kind == APP_CMD) {
@@ -1457,19 +1498,6 @@ static void draw_footer(f32 y0)
             if (xr - SR(200) > min_x) xr = draw_hint(xr, cy, TR("Копировать путь", "Copy path"), k_copy, 2, t->dim);
         }
     }
-    const WCHAR *label = TR("Настройки", "Settings");
-    f32 lfs = S(12.5f), lw = text_width(FONT_TEXT, lfs, label, -1);
-    f32 bx = SR(8), bh = SR(28), by = floorf(cy - bh * 0.5f);
-    f32 bw = floorf(SR(8) + SR(16) + SR(7) + lw + SR(10));
-    f32 hov = U.settings_hover_t;
-    r_rect(bx, by, bw, bh, color_alpha(t->sel, hov), SR(LS()->key_r + 1));
-    u32 col = color_mix(t->dim, t->text, hov);
-    text_draw_icon(0xE713, S(14), bx + SR(8) + SR(8), cy, col);
-    text_draw(FONT_TEXT, lfs, bx + SR(8) + SR(16) + SR(7), floorf(cy + font_cap_height(FONT_TEXT, lfs) * 0.5f + 0.5f), label, -1, col);
-    U.settings_btn[0] = (int)bx;
-    U.settings_btn[1] = (int)by;
-    U.settings_btn[2] = (int)(bx + bw);
-    U.settings_btn[3] = (int)(by + bh);
 }
 
 static void draw_search(void)
@@ -1607,6 +1635,7 @@ static void animate(f32 dt)
         anim |= spring_step(&U.hl_h, &U.hl_vh, th, anim_omega(g_cfg.anim_select_ms), dt);
     }
     anim |= approach(&U.settings_hover_t, U.settings_hover ? 1.f : 0.f, 22.f, dt);
+    anim |= approach(&U.update_hover_t, U.update_hover ? 1.f : 0.f, 22.f, dt);
     f64 now = time_now();
     if (U.scroll != U.sb_prev) U.sb_seen = now;
     U.sb_prev = U.scroll;
@@ -1966,6 +1995,11 @@ static void ui_char(WCHAR c)
     edit_replace(U.anchor, U.caret, &c, 1);
 }
 
+static bool in_update_button(int x, int y)
+{
+    return U.update_btn[2] > U.update_btn[0] && x >= U.update_btn[0] && x < U.update_btn[2] && y >= U.update_btn[1] && y < U.update_btn[3];
+}
+
 static bool in_settings_button(int x, int y)
 {
     return x >= U.settings_btn[0] && x < U.settings_btn[2] && y >= U.settings_btn[1] && y < U.settings_btn[3];
@@ -2004,6 +2038,12 @@ static void ui_mouse_move(int x, int y)
         U.animating = true;
         ui_invalidate();
     }
+    hover = in_update_button(x, y);
+    if (hover != U.update_hover) {
+        U.update_hover = hover;
+        U.animating = true;
+        ui_invalidate();
+    }
     if (U.text_drag) {
         edit_move(text_index_at(x), true);
         return;
@@ -2037,6 +2077,8 @@ static void ui_mouse_down(int x, int y, bool dbl)
     }
     U.press_settings = in_settings_button(x, y);
     if (U.press_settings) return;
+    U.press_update = in_update_button(x, y);
+    if (U.press_update) return;
     int r = row_at(y);
     U.press_row = row_selectable(r) ? r : -1;
     if (U.press_row >= 0) {
@@ -2062,6 +2104,12 @@ static void ui_mouse_up(int x, int y)
     if (U.press_settings) {
         U.press_settings = false;
         if (in_settings_button(x, y)) open_settings_from_launcher();
+        return;
+    }
+    if (U.press_update) {
+        U.press_update = false;
+        if (in_update_button(x, y)) upd_download();
+        ui_invalidate();
         return;
     }
     int r = row_at(y);

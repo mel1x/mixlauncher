@@ -1,6 +1,6 @@
 @echo off
 rem MixLauncher release: build\mixlauncher.exe + built-in Everything -> build\MixLauncher-Setup.exe
-rem Needs Inno Setup 7 (https://jrsoftware.org/isdl.php). The version is ProductVersion in res\mixlauncher.rc.
+rem Needs Inno Setup 7 (https://jrsoftware.org/isdl.php). The version is in res\version.h.
 rem Building closes a running build\mixlauncher.exe (see build.bat).
 setlocal
 cd /d "%~dp0"

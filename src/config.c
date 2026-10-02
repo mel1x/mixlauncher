@@ -26,6 +26,7 @@ typedef struct Config {
     WCHAR everything_filter[512];
     bool  hide_uninstallers;
     int   keep_query_seconds;
+    bool  update_check;
     bool  animations;
     bool  taskbar_button;
     int   taskbar_icon;
@@ -87,6 +88,9 @@ static const char k_default_config_ru[] =
     "\r\n"
     "; Через сколько секунд после закрытия окна сбрасывать введённый запрос\r\n"
     "keep_query_seconds = 60\r\n"
+    "\r\n"
+    "; Проверять обновления на GitHub раз в несколько часов (1/0)\r\n"
+    "update_check = 1\r\n"
     "\r\n"
     "; Кнопка Пуск на панели задач Windows 11 с нашим значком открывает лаунчер (1/0)\r\n"
     "taskbar_button = 1\r\n"
@@ -160,6 +164,9 @@ static const char k_default_config_en[] =
     "\r\n"
     "; Seconds after closing before the typed query is cleared\r\n"
     "keep_query_seconds = 60\r\n"
+    "\r\n"
+    "; Check GitHub for updates every few hours (1/0)\r\n"
+    "update_check = 1\r\n"
     "\r\n"
     "; Our icon on the Windows 11 taskbar Start button, which then opens the launcher (1/0)\r\n"
     "taskbar_button = 1\r\n"
@@ -364,6 +371,7 @@ static void config_defaults(Config *c)
     c->file_min_chars = 2;
     c->hide_uninstallers = true;
     c->keep_query_seconds = 60;
+    c->update_check = true;
     c->animations = true;
     c->taskbar_button = true;
     c->taskbar_icon = 0;
@@ -399,6 +407,7 @@ static bool config_value(const char *k, char *out, size_t cap)
     else if (!strcmp(k, "everything_filter")) w_to_utf8(g_cfg.everything_filter, -1, out, (int)cap);
     else if (!strcmp(k, "hide_uninstallers")) snprintf(out, cap, "%d", g_cfg.hide_uninstallers ? 1 : 0);
     else if (!strcmp(k, "keep_query_seconds")) snprintf(out, cap, "%d", g_cfg.keep_query_seconds);
+    else if (!strcmp(k, "update_check")) snprintf(out, cap, "%d", g_cfg.update_check ? 1 : 0);
     else if (!strcmp(k, "animations")) snprintf(out, cap, "%d", g_cfg.animations ? 1 : 0);
     else if (!strcmp(k, "taskbar_button")) snprintf(out, cap, "%d", g_cfg.taskbar_button ? 1 : 0);
     else if (!strcmp(k, "taskbar_icon")) snprintf(out, cap, "%s", k_tbi_names[CLAMP(g_cfg.taskbar_icon, 0, TBI__COUNT - 1)]);
@@ -502,6 +511,7 @@ static void config_load(void)
         else if (!_stricmp(k, "everything_filter")) utf8_to_w(v, -1, g_cfg.everything_filter, countof(g_cfg.everything_filter));
         else if (!_stricmp(k, "hide_uninstallers")) g_cfg.hide_uninstallers = parse_bool(v);
         else if (!_stricmp(k, "keep_query_seconds")) g_cfg.keep_query_seconds = CLAMP(atoi(v), 0, 24 * 3600);
+        else if (!_stricmp(k, "update_check")) g_cfg.update_check = parse_bool(v);
         else if (!_stricmp(k, "animations")) g_cfg.animations = parse_bool(v);
         else if (!_stricmp(k, "taskbar_button")) g_cfg.taskbar_button = parse_bool(v);
         else if (!_stricmp(k, "taskbar_icon")) {

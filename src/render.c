@@ -126,14 +126,17 @@ static const char k_shader_src[] =
     "V vs(I i) {\n"
     "  V o;\n"
     "  float2 t = float2(i.vid & 1, i.vid >> 1);\n"
-    "  float pad = (i.p.w < 0.5) ? (i.p.z + 1.0) : 0.0;\n"
+    "  bool sdf = i.p.w < 0.5 || i.p.w > 2.5;\n"
+    "  float pad = sdf ? (i.p.z + 1.0) : 0.0;\n"
     "  float2 p = lerp(i.r.xy - pad, i.r.zw + pad, t);\n"
+    "  float2 mid = (i.r.xy + i.r.zw) * 0.5;\n"
+    "  o.local = p - mid;\n"
+    "  if (i.p.w > 2.5) { float2 d = o.local * float2(i.uv.z, 1.0); p = mid + float2(d.x * i.uv.x - d.y * i.uv.y, d.x * i.uv.y + d.y * i.uv.x); }\n"
     "  o.cpos = p;\n"
     "  float2 ctr = 0.5 / vp.xy;\n"
     "  float2 q = ctr + (p - ctr) * vp.z;\n"
     "  o.pos = float4(q.x * vp.x * 2.0 - 1.0, 1.0 - q.y * vp.y * 2.0, 0.0, 1.0);\n"
     "  o.uv = lerp(i.uv.xy, i.uv.zw, t);\n"
-    "  o.local = p - (i.r.xy + i.r.zw) * 0.5;\n"
     "  o.hs = (i.r.zw - i.r.xy) * 0.5;\n"
     "  o.c = i.c; o.clip = i.clip; o.p = i.p;\n"
     "  return o;\n"
@@ -148,7 +151,7 @@ static const char k_shader_src[] =
     "  if (fp.x < i.clip.x || fp.y < i.clip.y || fp.x > i.clip.z || fp.y > i.clip.w) discard;\n"
     "  float4 c = i.c;\n"
     "  float a;\n"
-    "  if (i.p.w < 0.5) {\n"
+    "  if (i.p.w < 0.5 || i.p.w > 2.5) {\n"
     "    float r = min(i.p.x, min(i.hs.x, i.hs.y));\n"
     "    float d = sdrr(i.local, i.hs, r);\n"
     "    if (i.p.z > 0.0) a = 1.0 - smoothstep(-i.p.z, i.p.z, d);\n"
@@ -498,6 +501,28 @@ static void r_rect_ex(f32 x, f32 y, f32 w, f32 h, u32 color, f32 radius, f32 bor
 }
 
 static void r_rect(f32 x, f32 y, f32 w, f32 h, u32 color, f32 radius) { r_rect_ex(x, y, w, h, color, radius, 0, 0); }
+
+// A rounded rect centered at (cx, cy), squashed horizontally by sx (a tumble in depth) and then rotated by angle.
+static void r_rect_rot(f32 cx, f32 cy, f32 w, f32 h, f32 angle, f32 sx, u32 color, f32 radius)
+{
+    color = r_fade(color);
+    if ((color >> 24) == 0) return;
+    RInst *q = r_push();
+    if (!q) return;
+    q->x0 = cx - w * 0.5f;
+    q->y0 = cy - h * 0.5f;
+    q->x1 = cx + w * 0.5f;
+    q->y1 = cy + h * 0.5f;
+    q->u0 = cosf(angle);
+    q->v0 = sinf(angle);
+    q->u1 = sx;
+    q->v1 = 0;
+    q->color = color;
+    q->radius = radius;
+    q->border = 0;
+    q->soft = 0;
+    q->mode = 3;
+}
 
 static void r_glyph(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u32 color)
 {

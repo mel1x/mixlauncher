@@ -164,8 +164,11 @@ static GlyphMap *glyph_map(int font, u32 cp)
     return glyph_map(font, cp);
 }
 
+static u32 g_atlas_gen;  // bumped on every reset, so cached atlas regions know they are gone
+
 static void font_reset_atlas(void)
 {
+    g_atlas_gen++;
     memset(g_grast, 0, sizeof g_grast);
     g_grast_count = 0;
     F.shelf_x = F.shelf_y = F.shelf_h = 0;

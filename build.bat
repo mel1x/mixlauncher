@@ -72,7 +72,7 @@ set CFLAGS=-std=c11 -O2 -s -DNDEBUG
 if "%MODE%"=="debug" set CFLAGS=-std=c11 -O0 -g
 %CC% %CFLAGS% -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wno-missing-field-initializers -Wno-cast-function-type -mwindows ^
     src\main.c build\%OUT%.res.o -o build\%OUT%.exe -static ^
-    -ld3d11 -ldxgi -ldwmapi -lole32 -loleaut32 -luuid -lshell32 -lshlwapi -luser32 -lgdi32 -ladvapi32 || exit /b 1
+    -ld3d11 -ldxgi -ldwmapi -lole32 -loleaut32 -luuid -lshell32 -lshlwapi -luser32 -lgdi32 -ladvapi32 -lwinhttp || exit /b 1
 
 :done
 for %%f in (build\%OUT%.exe) do echo build\%OUT%.exe  %%~zf bytes
