@@ -10,7 +10,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0b0b0d?style=flat-square" alt="Windows 10 | 11">
-  <img src="https://img.shields.io/badge/размер-~550%20КБ-0b0b0d?style=flat-square" alt="~550 КБ">
+  <img src="https://img.shields.io/badge/размер-~600%20КБ-0b0b0d?style=flat-square" alt="~600 КБ">
   <img src="https://img.shields.io/badge/без%20телеметрии-0b0b0d?style=flat-square" alt="Без телеметрии">
 </p>
 
