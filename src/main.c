@@ -11,6 +11,7 @@
 #include "hotkey.c"
 #include "elevation.c"
 #include "launch.c"
+#include "update.c"
 #include "tray.c"
 #include "ui.c"
 #include "settings.c"
@@ -60,6 +61,10 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         break;
     case WM_NCHITTEST:
         return HTCLIENT;
+    case WM_NCACTIVATE:
+        // DWM draws the acrylic backdrop only for an active frame; an inactive one gets a flat gray fallback and
+        // a crossfade on activation. The launcher always reports an active frame (-1: no non-client repaint).
+        return DefWindowProcW(h, msg, TRUE, -1);
     case WM_ERASEBKGND:
         return 1;
     case WM_PAINT: {
@@ -152,6 +157,10 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             if (U.app_mode) taskbar_button_remove();
             return 0;
         }
+        if (wp == TIMER_UPDATE) {
+            upd_on_timer();
+            return 0;
+        }
         if (wp == TIMER_CARET) {
             U.caret_on = !U.caret_on;
             ui_invalidate();
@@ -201,6 +210,11 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_APP_MEDIA:
         media_sync();
+        return 0;
+    case WM_APP_UPDATE:
+        upd_on_message();
+        ui_invalidate();
+        settings_invalidate();
         return 0;
     case WM_APP_CLICK_OUTSIDE:
         if (U.visible && !U.closing && !U.menu_open && !g_pinned) {
@@ -373,7 +387,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     int argc = 0;
     WCHAR **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     bool opt_show = false, opt_settings = false;
-    const WCHAR *opt_query = NULL;
+    const WCHAR *opt_query = NULL, *opt_update_as = NULL;
+    DWORD opt_after_update = 0;
     int opt_backdrop = -1, opt_theme = -1, opt_lang = -1, opt_style = -1;
     for (int i = 1; i < argc; i++) {
         if (!wcscmp(argv[i], L"--exit")) {
@@ -425,6 +440,12 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
         } else if (!wcscmp(argv[i], L"--other-monitor")) {
             g_other_monitor = true;
             g_ktrace_on = true;
+        } else if (!wcscmp(argv[i], L"--after-update") && i + 1 < argc) {
+            opt_after_update = (DWORD)_wtoi(argv[++i]);
+        } else if (!wcscmp(argv[i], L"--update-as") && i + 1 < argc) {
+            opt_update_as = argv[++i];  // testing: pretend to be this version
+        } else if (!wcscmp(argv[i], L"--update-dry")) {
+            UPD.dry_run = true;  // testing: download the update but do not install it
         } else if (!wcscmp(argv[i], L"--pin")) {
             g_pinned = true;
         } else if (!wcscmp(argv[i], L"--settings")) {
@@ -437,6 +458,14 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
         }
     }
 
+    if (opt_after_update) {
+        // A portable update: the old instance is exiting and still holds the single-instance mutex.
+        HANDLE old = OpenProcess(SYNCHRONIZE, FALSE, opt_after_update);
+        if (old) {
+            WaitForSingleObject(old, 15000);
+            CloseHandle(old);
+        }
+    }
     HANDLE mutex = g_pinned ? INVALID_HANDLE_VALUE : CreateMutexW(NULL, TRUE, L"MixLauncher.SingleInstance.7f3c1e2a");
     if (!g_pinned && (GetLastError() == ERROR_ALREADY_EXISTS || !mutex)) {  // no mutex: owned by an elevated instance
         HWND other = FindWindowW(WINDOW_CLASS, NULL);
@@ -520,6 +549,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     if (g_cfg.taskbar_button && !g_pinned) tb_set_enabled(true);
     if (g_cfg.media_widget && !g_pinned) media_set_enabled(true);
     elevation_housekeeping_start();
+    upd_init(opt_update_as);
+    upd_schedule(15000);
+    if (opt_update_as) upd_check();
 
     if (opt_settings) settings_open();
     if (opt_show) {

@@ -1,6 +1,6 @@
 ﻿; MixLauncher installer (Inno Setup 7). release.bat builds it:
 ;   build\mixlauncher.exe + third_party\everything  ->  build\MixLauncher-Setup.exe
-; The version comes from the exe (res\mixlauncher.rc, ProductVersion).
+; The version comes from the exe (res\version.h, ProductVersion).
 
 #ifndef SourceExe
   #define SourceExe "..\build\mixlauncher.exe"
@@ -63,9 +63,12 @@ Name: "{autoprograms}\MixLauncher"; Filename: "{app}\mixlauncher.exe"
 Name: "{autoprograms}\{cm:SettingsIcon}"; Filename: "{app}\mixlauncher.exe"; Parameters: "--settings"
 
 [Run]
-Filename: "{app}\mixlauncher.exe"; Parameters: "--autostart on"; Flags: waituntilterminated; Tasks: autostart
-Filename: "{app}\mixlauncher.exe"; Parameters: "--autostart off"; Flags: waituntilterminated; Tasks: not autostart
-Filename: "{app}\mixlauncher.exe"; Description: "{cm:LaunchNow}"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\mixlauncher.exe"; Parameters: "--autostart on"; Flags: waituntilterminated; Tasks: autostart; Check: not IsUpdate
+Filename: "{app}\mixlauncher.exe"; Parameters: "--autostart off"; Flags: waituntilterminated; Tasks: not autostart; Check: not IsUpdate
+; postinstall entries run as the original, non-elevated user by default; the launcher needs administrator rights.
+Filename: "{app}\mixlauncher.exe"; Description: "{cm:LaunchNow}"; Flags: postinstall nowait skipifsilent runascurrentuser
+; An update from the launcher (/VERYSILENT /update=1): start the new version again.
+Filename: "{app}\mixlauncher.exe"; Flags: nowait runascurrentuser; Check: IsUpdate
 
 [UninstallRun]
 ; Closes the launcher and our Everything, removes the autostart task.
@@ -76,6 +79,11 @@ Filename: "{app}\mixlauncher.exe"; Parameters: "--uninstall"; Flags: waituntilte
 Type: filesandordirs; Name: "{localappdata}\MixLauncher\Everything"
 
 [Code]
+function IsUpdate: Boolean;
+begin
+  Result := ExpandConstant('{param:update|0}') = '1';
+end;
+
 // An update: close the running launcher and its Everything so their files can be replaced.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var

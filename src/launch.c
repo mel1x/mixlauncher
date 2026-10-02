@@ -125,6 +125,8 @@ static void launch_exec(LaunchJob *j)
         if (j->is_app) {
             const WCHAR *what = wcsstr(j->target, L"://") ? j->target : app_uri;
             if (!g_elevated || !shell_exec_unelevated(what, NULL, NULL, NULL)) app_exec(NULL, app_uri, j->path);
+        } else if (wcsstr(j->target, L"://")) {
+            if (!g_elevated || !shell_exec_unelevated(j->target, NULL, NULL, NULL)) shell_exec(NULL, j->target, NULL, &err);
         } else if (GetFileAttributesW(j->target) == INVALID_FILE_ATTRIBUTES) {
             DWORD e = GetLastError();
             if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) {

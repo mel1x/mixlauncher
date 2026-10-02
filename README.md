@@ -11,7 +11,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0b0b0d?style=flat-square" alt="Windows 10 | 11">
   <img src="https://img.shields.io/badge/размер-~550%20КБ-0b0b0d?style=flat-square" alt="~550 КБ">
-  <img src="https://img.shields.io/badge/без%20сети%20и%20телеметрии-0b0b0d?style=flat-square" alt="Без сети и телеметрии">
+  <img src="https://img.shields.io/badge/без%20телеметрии-0b0b0d?style=flat-square" alt="Без телеметрии">
 </p>
 
 ## Возможности
@@ -25,7 +25,8 @@
 - **Кнопка Пуск.** Свой значок на кнопке Пуск Windows 11, клик открывает лаунчер.
 - **Сейчас играет.** Обложка, название и кнопки управления любым плеером на панели задач.
 - **Стили.** Четыре вида лаунчера: Стандарт, Raycast, Windows 11 и Компактный. Совпадения с запросом выделяются жирным.
-- **Без ИИ, без сети, без телеметрии.**
+- **Обновления.** Когда на GitHub выходит новая версия, в лаунчере появляется кнопка «Обновить». Проверку можно выключить.
+- **Без ИИ и телеметрии.**
 
 ## Установка
 
@@ -58,4 +59,4 @@
 Нужен MinGW-w64 (MSYS2) или Visual Studio Build Tools, для установщика - [Inno Setup 7](https://jrsoftware.org/isdl.php).
 
 - `build.bat` - `build\mixlauncher.exe`; `build.bat dev` - без запроса прав администратора.
-- `release.bat` - лаунчер и `build\MixLauncher-Setup.exe`. Версия берётся из `res\mixlauncher.rc`.
+- `release.bat` - лаунчер и `build\MixLauncher-Setup.exe`. Версия берётся из `res\version.h`.
