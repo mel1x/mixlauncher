@@ -170,3 +170,68 @@ static bool layout_convert(const WCHAR *q, int m, WCHAR *out)
     out[m] = 0;
     return true;
 }
+
+// Marks the characters of s that a query token matched, in the same order of tries as score_token.
+static void match_token_mask(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int m, u8 *mask)
+{
+    if (m <= 0 || m > n) return;
+    int at = wmem_eq(s, q, m) ? 0 : -1;
+    for (int i = at < 0 ? find_sub(s, n, q, m, 1) : -1; i >= 0; i = find_sub(s, n, q, m, i + 1))
+        if (ws[i]) {
+            at = i;
+            break;
+        }
+    if (at < 0 && m >= 2) {
+        int j = 0;
+        for (int i = 0; i < n && j < m; i++)
+            if (ws[i] && s[i] == q[j]) j++;
+        if (j == m) {
+            j = 0;
+            for (int i = 0; i < n && j < m; i++)
+                if (ws[i] && s[i] == q[j]) {
+                    mask[i] = 1;
+                    j++;
+                }
+            return;
+        }
+    }
+    if (at < 0) at = find_sub(s, n, q, m, 0);
+    if (at >= 0) {
+        memset(mask + at, 1, (size_t)m);
+        return;
+    }
+    u8 tmp[512];
+    int j = 0;
+    memset(tmp, 0, (size_t)MIN(n, (int)sizeof tmp));
+    for (int i = 0; i < n && i < (int)sizeof tmp && j < m; i++)
+        if (s[i] == q[j] && (j || ws[i])) {
+            tmp[i] = 1;
+            j++;
+        }
+    if (j == m)
+        for (int i = 0; i < n && i < (int)sizeof tmp; i++) mask[i] |= tmp[i];
+}
+
+static int match_mask(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int m, u8 *mask)
+{
+    while (m > 0 && q[m - 1] == ' ') m--;
+    while (m > 0 && q[0] == ' ') {
+        q++;
+        m--;
+    }
+    memset(mask, 0, (size_t)n);
+    if (m <= 0) return 0;
+    if (score_token(s, n, ws, q, m) > 0) {
+        match_token_mask(s, n, ws, q, m, mask);
+    } else {
+        for (int i = 0; i < m;) {
+            while (i < m && q[i] == ' ') i++;
+            int b = i;
+            while (i < m && q[i] != ' ') i++;
+            if (i > b) match_token_mask(s, n, ws, q + b, i - b, mask);
+        }
+    }
+    int k = 0;
+    for (int i = 0; i < n; i++) k += mask[i];
+    return k;
+}
