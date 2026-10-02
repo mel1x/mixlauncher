@@ -4,7 +4,8 @@ enum {
     SID_MAXAPPS, SID_HIDENOISE, SID_REINDEX, SID_MINCHARS, SID_FILTER, SID_CLEARHIST, SID_CONFIG,
     SID_DATADIR, SID_ADMIN, SID_EVERYTHING, SID_ABOUT,
     SID_ASPEED, SID_AOPEN, SID_ACLOSE, SID_ASCALE, SID_ACASCADE, SID_AROW, SID_ASTAGGER, SID_ASELECT, SID_ASCROLL, SID_AMENU,
-    SID_APAGE, SID_APREVIEW, SID_ARESET, SID_TASKBAR, SID_TBICON, SID_TBFILE, SID_MEDIA, SID_MEDIAPOS, SID_MEDIACTL, SID_MEDIAHIDE, SID_LANG
+    SID_APAGE, SID_APREVIEW, SID_ARESET, SID_TASKBAR, SID_TBICON, SID_TBFILE, SID_MEDIA, SID_MEDIAPOS, SID_MEDIACTL, SID_MEDIAHIDE, SID_LANG,
+    SID_STYLE, SID_MATCHHL
 };
 enum { PG_GENERAL, PG_APPEARANCE, PG_ANIM, PG_SEARCH, PG_ADVANCED, PG_ABOUT, PG__COUNT };
 
@@ -80,6 +81,19 @@ static const SItem k_sitems[] = {
       .desc = { L"Стекло - полупрозрачное размытие, акрил - как у системных меню Windows 11",
                 L"Glass is a translucent blur, acrylic looks like Windows 11 system menus" },
       .opt = { { L"Стекло", L"Glass" }, { L"Акрил", L"Acrylic" }, { L"Сплошной", L"Solid" } } },
+    { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_STYLE, .group = { L"Лаунчер", L"Launcher" },
+      .title = { L"Стиль", L"Style" },
+      .desc = { L"Стандарт - мягкая подложка с контуром. Raycast - мелкие значки и плотная подложка. "
+                L"Windows 11 - полоска акцента у выбранной строки. Компактный - больше строк на экране",
+                L"Standard has a soft outlined highlight. Raycast uses small icons and a solid highlight. "
+                L"Windows 11 marks the selected row with an accent bar. Compact fits more rows on screen" },
+      .opt = { { L"Стандарт", L"Standard" }, { L"Raycast", L"Raycast" }, { L"Windows 11", L"Windows 11" }, { L"Компактный", L"Compact" } } },
+    { .page = PG_APPEARANCE, .kind = SK_TOGGLE, .id = SID_MATCHHL, .title = { L"Подсветка совпадений", L"Highlight matches" },
+      .desc = { L"Буквы, по которым нашлись приложение или файл, выделяются жирным",
+                L"The letters that matched the query are drawn in bold" } },
+    { .page = PG_APPEARANCE, .kind = SK_BUTTON, .id = SID_APREVIEW, .title = { L"Проверить", L"Try it" },
+      .desc = { L"Открыть лаунчер с текущими настройками. Esc вернёт сюда", L"Open the launcher with the current settings. Esc comes back here" },
+      .opt = { { L"Открыть лаунчер", L"Open launcher" } }, .glyph = 0xE768 },
     { .page = PG_APPEARANCE, .kind = SK_STEPPER, .id = SID_WIDTH, .group = { L"Размер", L"Size" },
       .title = { L"Ширина окна", L"Window width" }, .lo = 480, .hi = 1600, .step = 20, .unit = { L"px", L"px" } },
     { .page = PG_APPEARANCE, .kind = SK_STEPPER, .id = SID_ROWS, .title = { L"Строк в списке", L"Visible rows" },
@@ -244,7 +258,13 @@ static struct {
     f32 win_hov[2];
     f32 tog[SITEMS];
     f32 page_t, pop_t, rec_t;
-} SW = { .focus = -1, .editing = -1, .pop_row = -1, .flash_id = -1, .page_t = 1, .pop_t = 1, .rec_t = 1 };
+    f32 sb_t, sb_prev, row_hov;
+    int row_hov_idx;
+    f32 seg[SITEMS];
+    int seg_click;
+    f64 sb_seen;
+    int mx, my;
+} SW = { .focus = -1, .editing = -1, .pop_row = -1, .flash_id = -1, .page_t = 1, .pop_t = 1, .rec_t = 1, .seg_click = -1 };
 
 static f32 SSC(f32 v) { return v * SW.s; }
 static f32 SSR(f32 v) { return floorf(v * SW.s + 0.5f); }
@@ -284,6 +304,8 @@ static int sval(int id)
     switch (id) {
     case SID_AUTOSTART: return SW.autostart;
     case SID_THEME: return g_cfg.theme;
+    case SID_STYLE: return g_cfg.style;
+    case SID_MATCHHL: return g_cfg.match_highlight;
     case SID_LANG: return g_cfg.language;
     case SID_BACKDROP: return g_cfg.backdrop == BACKDROP_BLUR ? 0 : g_cfg.backdrop == BACKDROP_ACRYLIC ? 1 : 2;
     case SID_ANIM: return g_cfg.animations;
@@ -339,6 +361,29 @@ static int choice_count(const SItem *it)
     int n = 0;
     while (n < (int)countof(it->opt) && it->opt[n].ru) n++;
     return MAX(n, 1);
+}
+
+// Short option lists (up to three) are shown as a segmented control instead of a dropdown.
+static bool is_seg(const SItem *it) { return it->kind == SK_CHOICE && choice_count(it) <= 3; }
+
+static f32 seg_layout(const SItem *it, f32 x, f32 *xs, f32 *ws)
+{
+    f32 fs = SSC(13.5f), x0 = x;
+    for (int k = 0; k < choice_count(it); k++) {
+        xs[k] = x;
+        ws[k] = floorf(text_width(FONT_TEXT, fs, ss(it->opt[k]), -1) + SSR(28));
+        x += ws[k];
+    }
+    return x - x0;
+}
+
+static int seg_index_at(const SItem *it, f32 cx, f32 mx)
+{
+    f32 xs[4], ws[4];
+    seg_layout(it, cx + SSR(2), xs, ws);
+    for (int k = choice_count(it) - 1; k >= 0; k--)
+        if (mx >= xs[k]) return k;
+    return 0;
 }
 
 static bool pick_taskbar_icon(void)
@@ -424,6 +469,17 @@ static void sset(const SItem *it, int v)
         theme_update();
         U.backdrop_ok = backdrop_apply(g_hwnd);
         settings_apply_theme();
+        break;
+    case SID_STYLE:
+        g_cfg.style = v;
+        config_set("style", k_style_names[v]);
+        U.dpi = 0;
+        U.backdrop_ok = backdrop_apply(g_hwnd);
+        break;
+    case SID_MATCHHL:
+        g_cfg.match_highlight = v;
+        config_set("match_highlight", v ? "1" : "0");
+        if (U.visible) ui_invalidate();
         break;
     case SID_BACKDROP:
         g_cfg.backdrop = v == 0 ? BACKDROP_BLUR : v == 1 ? BACKDROP_ACRYLIC : BACKDROP_SOLID;
@@ -837,11 +893,17 @@ static void control_size(const SItem *it, f32 *w, f32 *h)
     switch (it->kind) {
     case SK_TOGGLE:
         *w = toggle_w();
-        *h = SSR(24);
+        *h = SSR(22);
         break;
     case SK_CHOICE: {
-        f32 tw = text_width(FONT_TEXT, fs, ss(it->opt[sval(it->id)]), -1);
-        *w = floorf(tw + SSR(12) + SSR(8) + SSR(12) + SSR(10));
+        if (is_seg(it)) {
+            f32 xs[4], ws[4];
+            *w = seg_layout(it, 0, xs, ws) + SSR(4);
+            break;
+        }
+        f32 tw = 0;
+        for (int k = 0; k < choice_count(it); k++) tw = MAX(tw, text_width(FONT_TEXT, fs, ss(it->opt[k]), -1));
+        *w = MAX(SSR(130), floorf(tw + SSR(14) + SSR(10) + SSR(12) + SSR(14)));
         break;
     }
     case SK_STEPPER:
@@ -853,7 +915,7 @@ static void control_size(const SItem *it, f32 *w, f32 *h)
     case SK_HOTKEY: {
         KeyTok t[5];
         int n = hk_tokens(g_cfg.hk, t);
-        *w = MAX(SSR(150), keycaps_width(t, n, FONT_TEXT, SSC(12.5f), SSR(22), SSR(7), SSR(4)) + SSR(24));
+        *w = MAX(SSR(130), floorf(SSR(6) + keycaps_width(t, n, FONT_TEXT, SSC(12.5f), SSR(22), SSR(7), SSR(4)) + SSR(12) + SSR(14) + SSR(12)));
         break;
     }
     case SK_BUTTON: {
@@ -931,7 +993,8 @@ static bool row_focusable(int r)
 
 typedef struct SColors {
     u32 bg, panel, panel_border, card, card_border, sep, nav_sel, nav_sel_border, nav_hover, ctl, ctl_hover, field, field_border;
-    u32 pop, pop_border, pop_hover, shadow, overlay, toggle_off, knob, cap, cap_border;
+    u32 seg, seg_border;
+    u32 pop, pop_border, pop_hover, shadow, overlay, knob, cap, cap_border;
 } SColors;
 
 static SColors scolors(bool dark)
@@ -951,14 +1014,15 @@ static SColors scolors(bool dark)
         c.ctl_hover = RGBA(255, 255, 255, 28);
         c.field = RGBA(0, 0, 0, 56);
         c.field_border = RGBA(255, 255, 255, 26);
+        c.seg = RGBA(255, 255, 255, 30);
+        c.seg_border = RGBA(255, 255, 255, 14);
         c.pop = RGBA(44, 44, 47, 252);
         c.pop_border = RGBA(255, 255, 255, 22);
         c.pop_hover = RGBA(255, 255, 255, 20);
         c.shadow = RGBA(0, 0, 0, 120);
         c.overlay = RGBA(0, 0, 0, 120);
-        c.toggle_off = RGBA(255, 255, 255, 50);
         c.knob = RGBA(255, 255, 255, 255);
-        c.cap = RGBA(255, 255, 255, 20);
+        c.cap = RGBA(255, 255, 255, 24);
         c.cap_border = RGBA(255, 255, 255, 22);
     } else {
         c.bg = RGBA(243, 243, 245, 255);
@@ -974,14 +1038,15 @@ static SColors scolors(bool dark)
         c.ctl_hover = RGBA(0, 0, 0, 18);
         c.field = RGBA(255, 255, 255, 230);
         c.field_border = RGBA(0, 0, 0, 30);
+        c.seg = RGBA(255, 255, 255, 255);
+        c.seg_border = RGBA(0, 0, 0, 16);
         c.pop = RGBA(251, 251, 252, 252);
         c.pop_border = RGBA(0, 0, 0, 22);
         c.pop_hover = RGBA(0, 0, 0, 10);
         c.shadow = RGBA(0, 0, 0, 60);
         c.overlay = RGBA(0, 0, 0, 60);
-        c.toggle_off = RGBA(0, 0, 0, 45);
         c.knob = RGBA(255, 255, 255, 255);
-        c.cap = RGBA(0, 0, 0, 8);
+        c.cap = RGBA(255, 255, 255, 230);
         c.cap_border = RGBA(0, 0, 0, 24);
     }
     return c;
@@ -1039,6 +1104,8 @@ static void draw_sidebar(const Theme *t, const SColors *c)
         f32 py = floorf(SW.nav_y + 0.5f), ph = r[3] - r[1];
         r_rect(r[0], py, r[2] - r[0], ph, c->nav_sel, SSR(8));
         r_rect_ex(r[0], py, r[2] - r[0], ph, c->nav_sel_border, SSR(8), 1.f, 0);
+        f32 bh = floorf(MIN(SSR(16) + fabsf(SW.nav_v) * 0.02f, ph - SSR(8)) + 0.5f), bw = SSR(3);
+        r_rect(r[0] + SSR(4), floorf(py + (ph - bh) * 0.5f + 0.5f), bw, bh, t->accent, bw * 0.5f);
     }
     for (int i = 0; i < PG__COUNT; i++) {
         f32 r[4];
@@ -1057,16 +1124,16 @@ static void draw_sidebar(const Theme *t, const SColors *c)
 
 static void draw_toggle(f32 x, f32 cy, f32 on, bool hov, const Theme *t, const SColors *c)
 {
-    f32 w = toggle_w(), h = SSR(24), y = floorf(cy - h * 0.5f);
-    u32 off = hov ? color_alpha(c->toggle_off, 1.4f) : c->toggle_off;
-    u32 track = color_mix(off, t->accent, on);
-    r_rect(x, y, w, h, track, h * 0.5f);
-    f32 k = h - SSR(4), kx = floorf(x + SSR(2) + (w - SSR(4) - k) * on + 0.5f);
+    f32 w = toggle_w(), h = SSR(22), y = floorf(cy - h * 0.5f);
+    u32 off_bg = hov ? c->ctl_hover : c->ctl;
+    r_rect(x, y, w, h, color_mix(off_bg, t->accent, on), h * 0.5f);
+    if (on < 1.f) r_rect_ex(x, y, w, h, color_alpha(hov ? t->dim : t->faint, 1.f - on), h * 0.5f, 1.f, 0);
+    f32 k = floorf(h - SSR(10) + SSR(4) * on + 0.5f);
+    f32 kcx = x + h * 0.5f + (w - h) * on, ky = cy - k * 0.5f;
     u32 knob = c->knob;
     f32 lum = (0.299f * (f32)(t->accent & 255) + 0.587f * (f32)((t->accent >> 8) & 255) + 0.114f * (f32)((t->accent >> 16) & 255)) / 255.f;
-    if (lum > 0.62f) knob = color_mix(knob, RGBA(24, 24, 26, 255), on);
-    r_rect_ex(kx, y + SSR(2) + SSR(1), k, k, RGBA(0, 0, 0, 50), k * 0.5f, 0, SSR(1.5f));
-    r_rect(kx, y + SSR(2), k, k, knob, k * 0.5f);
+    if (lum > 0.62f) knob = RGBA(24, 24, 26, 255);
+    r_rect(floorf(kcx - k * 0.5f + 0.5f), ky, k, k, color_mix(hov ? t->text : t->dim, knob, on), k * 0.5f);
 }
 
 static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
@@ -1082,7 +1149,7 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
         draw_app_tile(r->x, y + SSR(2), tile);
         f32 nx = r->x + tile + SSR(18);
         text_draw(FONT_TEXT_SEMIBOLD, SSC(22), nx, floorf(y + SSR(32)), L"MixLauncher", -1, t->text);
-        text_draw(FONT_TEXT, SSC(13), nx, floorf(y + SSR(54)), ss((Str){ L"Версия 1.0.0", L"Version 1.0.0" }), -1, t->dim);
+        text_draw(FONT_TEXT, SSC(13), nx, floorf(y + SSR(54)), ss((Str){ L"Версия 1.1.0", L"Version 1.1.0" }), -1, t->dim);
         const WCHAR *d = ss(it->desc);
         int n = wlen(d);
         for (int k = 0; k < r->ndesc; k++) {
@@ -1095,6 +1162,10 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
     }
 
     if (!r->first) r_rect(r->x + SSR(18), y, r->w - SSR(36), 1, c->sep, 0);
+    if (SW.row_hov_idx == ri && SW.row_hov > 0.f) {
+        f32 g = SSR(4);
+        r_rect(r->x + g, y + g, r->w - g * 2, r->h - g * 2, color_alpha(c->nav_hover, SW.row_hov), SSR(7));
+    }
     f32 tx = r->x + SSR(18), tmax = r->cx - SSR(28) - tx;
     text_draw_fit(FONT_TEXT, fs, tx, baseline_for(FONT_TEXT, fs, ty), tmax, ss(it->title), -1, t->text, false);
     if (r->ndesc) {
@@ -1115,12 +1186,31 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
         draw_toggle(cx, mid, SW.tog[r->item], hov, t, c);
         break;
     case SK_CHOICE: {
+        if (is_seg(it)) {
+            f32 xs[4], ws[4];
+            int n = choice_count(it), cur = sval(it->id);
+            seg_layout(it, cx + SSR(2), xs, ws);
+            r_rect(cx, cy, cw, ch, c->ctl, SSR(8));
+            f32 p = CLAMP(SW.seg[r->item], 0.f, (f32)(n - 1));
+            int k0 = (int)floorf(p), k1 = MIN(k0 + 1, n - 1);
+            f32 fr = p - (f32)k0, px = floorf(xs[k0] + (xs[k1] - xs[k0]) * fr + 0.5f), pw = floorf(ws[k0] + (ws[k1] - ws[k0]) * fr + 0.5f);
+            if (!t->dark) r_rect_ex(px, cy + SSR(3), pw, ch - SSR(4), RGBA(0, 0, 0, 22), SSR(6), 0, SSR(2));
+            r_rect(px, cy + SSR(2), pw, ch - SSR(4), c->seg, SSR(6));
+            r_rect_ex(px, cy + SSR(2), pw, ch - SSR(4), c->seg_border, SSR(6), 1.f, 0);
+            int hk = chov ? seg_index_at(it, cx, (f32)SW.mx) : -1;
+            for (int k = 0; k < n; k++) {
+                const WCHAR *lbl = ss(it->opt[k]);
+                f32 lw = text_width(FONT_TEXT, cfs, lbl, -1);
+                u32 col = k == cur ? t->text : k == hk ? color_mix(t->dim, t->text, 0.6f) : t->dim;
+                text_draw(FONT_TEXT, cfs, floorf(xs[k] + (ws[k] - lw) * 0.5f + 0.5f), baseline_for(FONT_TEXT, cfs, mid), lbl, -1, col);
+            }
+            break;
+        }
         bool open = SW.pop_open && SW.pop_row == ri;
-        if (chov || open) r_rect(cx, cy, cw, ch, c->ctl, SSR(7));
+        r_rect(cx, cy, cw, ch, chov || open ? c->ctl_hover : c->ctl, SSR(7));
         const WCHAR *lbl = ss(it->opt[sval(it->id)]);
-        f32 lw = text_width(FONT_TEXT, cfs, lbl, -1);
-        f32 gx = cx + cw - SSR(10) - SSR(6);
-        text_draw(FONT_TEXT, cfs, floorf(gx - SSR(14) - lw), baseline_for(FONT_TEXT, cfs, mid), lbl, -1, t->text);
+        f32 gx = cx + cw - SSR(14) - SSR(5);
+        text_draw_fit(FONT_TEXT, cfs, cx + SSR(14), baseline_for(FONT_TEXT, cfs, mid), gx - SSR(10) - cx - SSR(14), lbl, -1, t->text, false);
         text_draw_icon(0xE70D, SSC(10), gx, mid, t->dim);
         break;
     }
@@ -1172,9 +1262,9 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
         r_rect(cx, cy, cw, ch, chov ? c->ctl_hover : c->ctl, SSR(7));
         KeyTok tk[5];
         int n = hk_tokens(g_cfg.hk, tk);
-        f32 kfs = SSC(12.5f), kh = SSR(22), kw = keycaps_width(tk, n, FONT_TEXT, kfs, kh, SSR(7), SSR(4));
-        draw_skeycaps(floorf(cx + (cw - kw) * 0.5f), mid, tk, n, FONT_TEXT, kfs, kh, SSR(7), SSR(4), SSR(5), c->cap, c->cap_border, t->text,
-                     t->faint);
+        f32 kfs = SSC(12.5f), kh = SSR(22);
+        draw_skeycaps(cx + SSR(6), mid, tk, n, FONT_TEXT, kfs, kh, SSR(7), SSR(4), SSR(5), c->cap, 0, t->text, t->faint);
+        text_draw_icon(0xE70F, SSC(12), cx + cw - SSR(12) - SSR(7), mid, chov ? t->text : t->dim);
         break;
     }
     case SK_BUTTON: {
@@ -1308,6 +1398,17 @@ static void draw_recorder(const Theme *t, const SColors *c)
     }
 }
 
+static bool sb_hot(void)
+{
+    return SW.hover.type != HT_WINCLOSE && SW.hover.type != HT_WINMIN && SW.mx >= SW.W - (int)SSR(16) && SW.my >= (int)top_h() && SW.my < SW.H;
+}
+
+static int row_hover_target(void)
+{
+    if (SW.hover.type != HT_ROW || SW.pop_open || SW.rec.open || SW.hover.idx < 0 || SW.hover.idx >= SW.nrows) return -1;
+    return k_sitems[SW.rows[SW.hover.idx].item].kind == SK_TOGGLE ? SW.hover.idx : -1;
+}
+
 static void settings_draw(void)
 {
     const Theme *t = &U.th;
@@ -1332,7 +1433,7 @@ static void settings_draw(void)
         r_rect_ex(b->x, b->y + off, b->w, b->h, c.card_border, SSR(10), 1.f, 0);
     }
     for (int i = 0; i < SW.nheads; i++)
-        text_draw(FONT_TEXT_SEMIBOLD, SSC(14), SW.heads[i].x, SW.heads[i].y + off + SSR(5), ss(SW.head_text[i]), -1, t->text);
+        text_draw(FONT_TEXT_SEMIBOLD, SSC(13), SW.heads[i].x, SW.heads[i].y + off + SSR(5), ss(SW.head_text[i]), -1, color_mix(t->dim, t->text, 0.35f));
     for (int i = 0; i < SW.nrows; i++) {
         SRow *r = &SW.rows[i];
         if (r->y + off + r->h < top_h() || r->y + off > SW.H) continue;
@@ -1341,11 +1442,15 @@ static void settings_draw(void)
     r_set_clip(0, 0, (f32)SW.W, (f32)SW.H);
     R.opacity = 1.f;
 
+    f32 sep_k = CLAMP(SW.scroll / SSR(16), 0.f, 1.f);
+    if (sep_k > 0.f) r_rect(x0, top_h() - 1, content_x1() - x0, 1, color_alpha(t->sep, sep_k), 0);
+
     f32 ms = max_scroll_s();
-    if (ms > 0) {
-        f32 vh = (f32)SW.H - top_h(), bar_h = MAX(SSR(32), vh * vh / SW.content_h);
-        f32 by = top_h() + (vh - bar_h) * (SW.scroll / ms);
-        r_rect((f32)SW.W - SSR(7), floorf(by), SSR(3), floorf(bar_h), t->faint, SSR(1.5f));
+    if (ms > 0 && SW.sb_t > 0.f) {
+        bool hot = sb_hot();
+        f32 vh = (f32)SW.H - top_h() - SSR(8), bar_h = MAX(SSR(32), vh * vh / SW.content_h);
+        f32 by = top_h() + (vh - bar_h) * CLAMP(SW.scroll / ms, 0.f, 1.f), bw = hot ? SSR(5) : SSR(3);
+        r_rect((f32)SW.W - SSR(4) - bw, floorf(by), bw, floorf(bar_h), color_alpha(hot ? t->dim : t->faint, SW.sb_t), bw * 0.5f);
     }
 
     for (int i = 0; i < 2; i++) {
@@ -1382,12 +1487,19 @@ static void settings_snap_motion(void)
     nav_rect(SW.page, r);
     SW.nav_y = r[1];
     SW.nav_v = 0;
-    for (int i = 0; i < (int)SITEMS; i++) SW.tog[i] = k_sitems[i].kind == SK_TOGGLE && sval(k_sitems[i].id) ? 1.f : 0.f;
+    for (int i = 0; i < (int)SITEMS; i++) {
+        SW.tog[i] = k_sitems[i].kind == SK_TOGGLE && sval(k_sitems[i].id) ? 1.f : 0.f;
+        SW.seg[i] = is_seg(&k_sitems[i]) ? (f32)sval(k_sitems[i].id) : 0.f;
+    }
     memset(SW.nav_hov, 0, sizeof SW.nav_hov);
     memset(SW.win_hov, 0, sizeof SW.win_hov);
     SW.scroll_target = SW.scroll;
     SW.scroll_v = 0;
     SW.page_t = SW.pop_t = SW.rec_t = 1.f;
+    SW.sb_t = 0;
+    SW.sb_prev = SW.scroll;
+    SW.row_hov = 0;
+    SW.row_hov_idx = -1;
 }
 
 static bool settings_animate(f32 dt)
@@ -1395,6 +1507,9 @@ static bool settings_animate(f32 dt)
     if (!anims_enabled()) {
         SW.scroll = SW.scroll_target = CLAMP(SW.scroll_target, 0.f, max_scroll_s());
         settings_snap_motion();
+        SW.sb_t = max_scroll_s() > 0 ? 1.f : 0.f;
+        SW.row_hov_idx = row_hover_target();
+        SW.row_hov = SW.row_hov_idx >= 0 ? 1.f : 0.f;
         return false;
     }
     bool anim = false;
@@ -1404,10 +1519,25 @@ static bool settings_animate(f32 dt)
     for (int i = 0; i < PG__COUNT; i++)
         anim |= approach(&SW.nav_hov[i], SW.hover.type == HT_NAV && SW.hover.idx == i && i != SW.page ? 1.f : 0.f, 20.f, dt);
     for (int i = 0; i < 2; i++) anim |= approach(&SW.win_hov[i], SW.hover.type == (i ? HT_WINCLOSE : HT_WINMIN) ? 1.f : 0.f, 24.f, dt);
-    for (int i = 0; i < (int)SITEMS; i++)
+    for (int i = 0; i < (int)SITEMS; i++) {
         if (k_sitems[i].kind == SK_TOGGLE) anim |= approach(&SW.tog[i], sval(k_sitems[i].id) ? 1.f : 0.f, 20.f, dt);
+        if (is_seg(&k_sitems[i])) anim |= approach(&SW.seg[i], (f32)sval(k_sitems[i].id), 18.f, dt);
+    }
     SW.scroll_target = CLAMP(SW.scroll_target, 0.f, max_scroll_s());
     anim |= spring_step(&SW.scroll, &SW.scroll_v, SW.scroll_target, anim_omega(g_cfg.anim_scroll_ms), dt);
+    f64 now = time_now();
+    if (SW.scroll != SW.sb_prev) SW.sb_seen = now;
+    SW.sb_prev = SW.scroll;
+    bool recent = now - SW.sb_seen < 0.9, hot = sb_hot();
+    bool sb_on = max_scroll_s() > 0 && (hot || recent);
+    anim |= approach(&SW.sb_t, sb_on ? 1.f : 0.f, sb_on ? 20.f : 7.f, dt);
+    if (recent && !hot && max_scroll_s() > 0) anim = true;
+    int rh = row_hover_target();
+    if (rh >= 0 && rh != SW.row_hov_idx) {
+        SW.row_hov_idx = rh;
+        SW.row_hov = 0;
+    }
+    anim |= approach(&SW.row_hov, rh >= 0 ? 1.f : 0.f, 22.f, dt);
     f32 *entr[3] = { &SW.page_t, &SW.pop_t, &SW.rec_t };
     f32 dur[3] = { anim_sec(g_cfg.anim_page_ms), anim_sec(g_cfg.anim_menu_ms) * 0.85f, anim_sec(160) };
     for (int i = 0; i < 3; i++)
@@ -1517,7 +1647,7 @@ static void pop_open(int row)
     f32 fs = SSC(13.5f), w = 0;
     int nopt = choice_count(it);
     for (int k = 0; k < nopt; k++) w = MAX(w, text_width(FONT_TEXT, fs, ss(it->opt[k]), -1));
-    SW.pop_w = floorf(w + SSR(5) + SSR(32) + SSR(24));
+    SW.pop_w = MAX(r->cw, floorf(w + SSR(5) + SSR(32) + SSR(24)));
     SW.pop_h = SSR(32) * (f32)nopt + SSR(10);
     f32 off = top_h() - floorf(SW.scroll + 0.5f);
     SW.pop_x = floorf(r->cx + r->cw - SW.pop_w);
@@ -1558,7 +1688,11 @@ static void activate_row(int ri, int part)
     if (it->id != SID_CLEARHIST) SW.armed = false;
     switch (it->kind) {
     case SK_TOGGLE: sset(it, !sval(it->id)); break;
-    case SK_CHOICE: pop_open(ri); break;
+    case SK_CHOICE:
+        if (is_seg(it)) sset(it, SW.seg_click >= 0 ? SW.seg_click : (sval(it->id) + 1) % choice_count(it));
+        else pop_open(ri);
+        SW.seg_click = -1;
+        break;
     case SK_STEPPER:
         if (part == PART_MINUS) sset(it, sval(it->id) - it->step);
         else if (part == PART_PLUS) sset(it, sval(it->id) + it->step);
@@ -1678,6 +1812,7 @@ static void settings_mouse_down(int mx, int my)
     } else if (h.type == HT_ROW) {
         SW.focus = h.idx;
         const SItem *it = &k_sitems[SW.rows[h.idx].item];
+        if (is_seg(it) && h.part == PART_CONTROL) SW.seg_click = seg_index_at(it, SW.rows[h.idx].cx, (f32)mx);
         if ((it->kind == SK_TOGGLE || h.part != PART_ROW) && !(it->kind == SK_TEXT && SW.editing == h.idx)) activate_row(h.idx, h.part);
         else if (SW.armed) SW.armed = false;
     } else if (SW.armed) {
@@ -1790,7 +1925,11 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         }
         break;
     case WM_MOUSEMOVE: {
-        SHit hit = settings_hit(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+        bool was_hot = sb_hot();
+        SW.mx = GET_X_LPARAM(lp);
+        SW.my = GET_Y_LPARAM(lp);
+        if (sb_hot() != was_hot || (SW.hover.type == HT_ROW && SW.hover.part == PART_CONTROL)) settings_invalidate();
+        SHit hit = settings_hit(SW.mx, SW.my);
         if (hit.type != SW.hover.type || hit.idx != SW.hover.idx || hit.part != SW.hover.part) {
             SW.hover = hit;
             if (SW.pop_open && hit.type == HT_POPITEM) SW.pop_hover = hit.idx;
@@ -1802,6 +1941,7 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_MOUSELEAVE:
         SW.hover.type = HT_NONE;
+        SW.mx = SW.my = -1;
         settings_invalidate();
         return 0;
     case WM_LBUTTONDOWN:

@@ -1,5 +1,8 @@
 enum { BACKDROP_SOLID, BACKDROP_ACRYLIC, BACKDROP_BLUR };
 
+enum { STYLE_STANDARD, STYLE_RAYCAST, STYLE_WIN11, STYLE_COMPACT, STYLE__COUNT };
+static const char *const k_style_names[STYLE__COUNT] = { "standard", "raycast", "windows", "compact" };
+
 enum { TBI_DIAMOND, TBI_GRID, TBI_LINES, TBI_CUSTOM, TBI__COUNT };
 static const char *const k_tbi_names[TBI__COUNT] = { "diamond", "grid", "lines", "custom" };
 
@@ -14,6 +17,8 @@ typedef struct Config {
     int   language;
     int   theme;
     int   backdrop;
+    int   style;
+    bool  match_highlight;
     int   width;
     int   rows;
     int   max_apps;
@@ -58,6 +63,11 @@ static const char k_default_config_ru[] =
     "\r\n"
     "; Фон окна: blur (полупрозрачное стекло, как в macOS) | acrylic (системный акрил Windows 11) | solid\r\n"
     "backdrop = blur\r\n"
+    "\r\n"
+    "; Стиль лаунчера: standard | raycast | windows | compact\r\n"
+    "style = standard\r\n"
+    "; Подсвечивать совпадения с запросом в названиях (1/0)\r\n"
+    "match_highlight = 1\r\n"
     "\r\n"
     "; Ширина окна в логических пикселях и количество видимых строк списка\r\n"
     "width = 720\r\n"
@@ -126,6 +136,11 @@ static const char k_default_config_en[] =
     "\r\n"
     "; Window background: blur (translucent glass, macOS-like) | acrylic (Windows 11 system acrylic) | solid\r\n"
     "backdrop = blur\r\n"
+    "\r\n"
+    "; Launcher style: standard | raycast | windows | compact\r\n"
+    "style = standard\r\n"
+    "; Highlight the query matches in names (1/0)\r\n"
+    "match_highlight = 1\r\n"
     "\r\n"
     "; Window width in logical pixels and number of visible list rows\r\n"
     "width = 720\r\n"
@@ -342,6 +357,7 @@ static void config_defaults(Config *c)
     c->hk.vk = VK_ANYWIN;
     c->theme = 0;
     c->backdrop = BACKDROP_BLUR;
+    c->match_highlight = true;
     c->width = 720;
     c->rows = 9;
     c->max_apps = 8;
@@ -374,6 +390,8 @@ static bool config_value(const char *k, char *out, size_t cap)
     else if (!strcmp(k, "language")) snprintf(out, cap, "%s", g_cfg.language == 1 ? "ru" : g_cfg.language == 2 ? "en" : "auto");
     else if (!strcmp(k, "theme")) snprintf(out, cap, "%s", g_cfg.theme == 1 ? "dark" : g_cfg.theme == 2 ? "light" : "auto");
     else if (!strcmp(k, "backdrop")) snprintf(out, cap, "%s", g_cfg.backdrop == BACKDROP_SOLID ? "solid" : g_cfg.backdrop == BACKDROP_ACRYLIC ? "acrylic" : "blur");
+    else if (!strcmp(k, "style")) snprintf(out, cap, "%s", k_style_names[CLAMP(g_cfg.style, 0, STYLE__COUNT - 1)]);
+    else if (!strcmp(k, "match_highlight")) snprintf(out, cap, "%d", g_cfg.match_highlight ? 1 : 0);
     else if (!strcmp(k, "width")) snprintf(out, cap, "%d", g_cfg.width);
     else if (!strcmp(k, "rows")) snprintf(out, cap, "%d", g_cfg.rows);
     else if (!strcmp(k, "max_apps")) snprintf(out, cap, "%d", g_cfg.max_apps);
@@ -473,6 +491,10 @@ static void config_load(void)
         else if (!_stricmp(k, "language")) g_cfg.language = !_stricmp(v, "ru") ? 1 : !_stricmp(v, "en") ? 2 : 0;
         else if (!_stricmp(k, "theme")) g_cfg.theme = !_stricmp(v, "dark") ? 1 : !_stricmp(v, "light") ? 2 : 0;
         else if (!_stricmp(k, "backdrop")) g_cfg.backdrop = !_stricmp(v, "solid") ? BACKDROP_SOLID : !_stricmp(v, "acrylic") ? BACKDROP_ACRYLIC : BACKDROP_BLUR;
+        else if (!_stricmp(k, "style")) {
+            for (int i = 0; i < STYLE__COUNT; i++)
+                if (!_stricmp(v, k_style_names[i])) g_cfg.style = i;
+        } else if (!_stricmp(k, "match_highlight")) g_cfg.match_highlight = parse_bool(v);
         else if (!_stricmp(k, "width")) g_cfg.width = CLAMP(atoi(v), 480, 1600);
         else if (!_stricmp(k, "rows")) g_cfg.rows = CLAMP(atoi(v), 4, 20);
         else if (!_stricmp(k, "max_apps")) g_cfg.max_apps = CLAMP(atoi(v), 1, 50);

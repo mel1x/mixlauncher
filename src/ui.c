@@ -76,6 +76,12 @@ static struct {
     f32 hl_y, hl_h, hl_vy, hl_vh;
     f64 open_time;
     f32 settings_hover_t;
+    f32 sb_t, sb_prev;
+    WCHAR hq[Q_MAX + 1], hq_alt[Q_MAX + 1];
+    int hq_len;
+    bool hq_has_alt;
+    f64 sb_seen;
+    bool sb_hot;
     const WCHAR *sub_text;
     u32 sub_col;
     f32 sub_t;
@@ -156,7 +162,7 @@ static void theme_update(void)
         t->sel = RGBA(255, 255, 255, 20);
         t->sel_border = RGBA(255, 255, 255, 12);
         t->sep = RGBA(255, 255, 255, 22);
-        t->key_bg = RGBA(255, 255, 255, 18);
+        t->key_bg = RGBA(255, 255, 255, 24);
         t->key_border = RGBA(255, 255, 255, 26);
         t->danger = RGBA(255, 107, 107, 255);
         t->tile = RGBA(255, 255, 255, 30);
@@ -169,7 +175,7 @@ static void theme_update(void)
         t->sel = RGBA(0, 0, 0, 13);
         t->sel_border = RGBA(0, 0, 0, 8);
         t->sep = RGBA(0, 0, 0, 20);
-        t->key_bg = RGBA(0, 0, 0, 10);
+        t->key_bg = RGBA(0, 0, 0, 14);
         t->key_border = RGBA(0, 0, 0, 22);
         t->danger = RGBA(196, 43, 28, 255);
         t->tile = RGBA(0, 0, 0, 22);
@@ -181,9 +187,29 @@ static void theme_update(void)
     }
 }
 
+enum { SEL_PILL, SEL_FILL, SEL_BAR };
+
+typedef struct LStyle {
+    f32 row_h, header_h, icon, icon_gap;
+    f32 search_h, search_fs, search_icon, name_fs, footer_h;
+    f32 inset, sel_r, tile_r, key_r;
+    int corner;  // DWMWA_WINDOW_CORNER_PREFERENCE
+    u8 sel;
+    bool footer_tint, all_notes;
+} LStyle;
+
+static const LStyle k_lstyles[STYLE__COUNT] = {
+    [STYLE_STANDARD] = { 42, 30, 28, 12, 60, 20, 17, 14, 40, 8, 8, 7, 5, 2, SEL_PILL, false, false },
+    [STYLE_RAYCAST] = { 40, 30, 20, 12, 56, 18, 16, 14, 40, 8, 8, 5, 5, 2, SEL_FILL, true, true },
+    [STYLE_WIN11] = { 40, 32, 24, 14, 56, 18, 16, 14, 42, 6, 4, 4, 4, 2, SEL_BAR, false, false },
+    [STYLE_COMPACT] = { 32, 26, 20, 10, 48, 16, 15, 13, 36, 6, 6, 5, 4, 3, SEL_PILL, false, false },
+};
+
+static const LStyle *LS(void) { return &k_lstyles[CLAMP(g_cfg.style, 0, STYLE__COUNT - 1)]; }
+
 static bool backdrop_apply(HWND h)
 {
-    int corner = 2;
+    int corner = LS()->corner;
     DwmSetWindowAttribute(h, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/, &corner, sizeof corner);
     PFN_SetWindowCompositionAttribute swca = (PFN_SetWindowCompositionAttribute)(void *)GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetWindowCompositionAttribute");
     int mode = g_cfg.backdrop;
@@ -209,10 +235,10 @@ static bool backdrop_apply(HWND h)
     return mode == BACKDROP_BLUR && ok;
 }
 
-#define ROW_H 42.f
-#define HEADER_H 30.f
+#define ROW_H (LS()->row_h)
+#define HEADER_H (LS()->header_h)
 #define LIST_PAD 6.f
-#define ICON_LOGICAL 28.f
+#define ICON_LOGICAL (LS()->icon)
 
 static int ui_icon_px(void) { return (int)(ICON_LOGICAL * U.s + 0.5f); }
 
@@ -220,8 +246,8 @@ static void ui_metrics(u32 dpi)
 {
     U.dpi = dpi ? dpi : 96;
     U.s = (f32)U.dpi / 96.f;
-    U.search_h = SR(60);
-    U.footer_h = SR(40);
+    U.search_h = SR(LS()->search_h);
+    U.footer_h = SR(LS()->footer_h);
     f32 list_h = SR(g_cfg.rows * ROW_H + 2 * LIST_PAD);
     U.W = (int)SR((f32)g_cfg.width);
     U.H = (int)(U.search_h + 1 + list_h + 1 + U.footer_h);
@@ -1059,6 +1085,9 @@ static void ui_show(void)
     U.vis = anims_enabled() ? 0.f : 1.f;
     U.open_time = anims_enabled() ? now : 0;
     U.settings_hover_t = 0;
+    U.sb_t = U.sb_prev = 0;
+    U.sb_seen = 0;
+    U.sb_hot = false;
     U.vis_target = 1;
     U.press_row = -1;
     POINT cur;
@@ -1219,7 +1248,7 @@ static void jump_section(int dir)
 
 static void draw_placeholder_icon(f32 x, f32 y, f32 sz, const WCHAR *name)
 {
-    r_rect(x, y, sz, sz, U.th.tile, SR(7));
+    r_rect(x, y, sz, sz, U.th.tile, SR(LS()->tile_r));
     if (name && name[0]) {
         WCHAR c[2] = { (WCHAR)towupper(name[0]), 0 };
         f32 fs = sz * 0.5f;
@@ -1240,17 +1269,64 @@ static const WCHAR *row_note(Row *r, u32 *col)
     return TR("Команда", "Command");
 }
 
+static void hl_prepare(void)
+{
+    U.hq_len = g_cfg.match_highlight ? query_norm(U.hq) : 0;
+    U.hq_has_alt = U.hq_len && layout_convert(U.hq, U.hq_len, U.hq_alt);
+}
+
+// The name with the query matches in bold and the rest a little dimmer; plain (and elided) when it does not fit.
+static f32 draw_name(f32 fs, f32 x, f32 base, f32 max_w, const WCHAR *s, int len, const WCHAR *norm, const u8 *ws, u32 col)
+{
+    static u8 mask[512], wsb[512];
+    static WCHAR nb[512];
+    if (len < 0) len = wlen(s);
+    bool hl = U.hq_len && len > 0 && len < (int)countof(mask);
+    if (hl) {
+        if (!norm || !ws) {
+            norm_str(nb, s, len);
+            word_starts(s, len, wsb);
+            norm = nb;
+            ws = wsb;
+        }
+        int k = match_mask(norm, len, ws, U.hq, U.hq_len, mask);
+        if (!k && U.hq_has_alt) k = match_mask(norm, len, ws, U.hq_alt, U.hq_len, mask);
+        hl = k > 0;
+    }
+    if (hl) {
+        f32 w = 0;
+        for (int i = 0; i < len;) {
+            int j = i;
+            while (j < len && mask[j] == mask[i]) j++;
+            w += text_width(mask[i] ? FONT_TEXT_SEMIBOLD : FONT_TEXT, fs, s + i, j - i);
+            i = j;
+        }
+        hl = w <= max_w;
+    }
+    if (!hl) return text_draw_fit(FONT_TEXT, fs, x, base, max_w, s, len, col, false);
+    u32 rest = color_mix(U.th.dim, col, 0.6f);
+    f32 pen = x;
+    for (int i = 0; i < len;) {
+        int j = i;
+        while (j < len && mask[j] == mask[i]) j++;
+        pen = text_draw(mask[i] ? FONT_TEXT_SEMIBOLD : FONT_TEXT, fs, pen, base, s + i, j - i, mask[i] ? col : rest);
+        i = j;
+    }
+    return pen - x;
+}
+
 static void draw_row(Row *r, f32 y, bool selected)
 {
     Theme *t = &U.th;
-    f32 x0 = SR(8), x1 = (f32)U.W - SR(8);
+    const LStyle *ls = LS();
+    f32 x0 = SR(ls->inset), x1 = (f32)U.W - SR(ls->inset);
     if (r->kind == ROW_HEADER) {
-        f32 fs = S(12);
-        text_draw(FONT_TEXT_SEMIBOLD, fs, SR(20), y + r->h - SR(9), r->text, -1, t->dim);
+        f32 fs = S(11.5f);
+        text_draw(FONT_TEXT_SEMIBOLD, fs, x0 + SR(12), y + r->h - SR(10), r->text, -1, color_mix(t->faint, t->dim, 0.6f));
         return;
     }
     f32 cy = y + r->h * 0.5f;
-    f32 fs = S(14);
+    f32 fs = S(ls->name_fs);
     f32 base = floorf(cy + font_cap_height(FONT_TEXT, fs) * 0.5f + 0.5f);
     if (r->kind == ROW_VIRTUAL) {
         f32 rh = SR(ROW_H), isz = (f32)ui_icon_px();
@@ -1261,7 +1337,7 @@ static void draw_row(Row *r, f32 y, bool selected)
             f32 ry = y + rh * (f32)k, rcy = ry + rh * 0.5f;
             f32 ix = x0 + SR(12), iy = floorf(rcy - isz * 0.5f + 0.5f);
             u32 c = color_alpha(t->tile, pulse);
-            r_rect(ix, iy, isz, isz, c, SR(7));
+            r_rect(ix, iy, isz, isz, c, SR(ls->tile_r));
             u32 hsh = (u32)(k + (int)(r->y / rh)) * 2654435761u;
             f32 w1 = SR(120) + (f32)(hsh % 160u) * U.s, w2 = SR(90) + (f32)((hsh >> 8) % 120u) * U.s;
             r_rect(ix + isz + SR(12), floorf(rcy - SR(5)), w1, SR(10), c, SR(5));
@@ -1270,12 +1346,19 @@ static void draw_row(Row *r, f32 y, bool selected)
         return;
     }
     if (r->kind == ROW_INFO) {
-        text_draw_fit(FONT_TEXT, fs, SR(20), base, x1 - SR(20), r->text, -1, t->dim, false);
+        if (U.row_count == 1) {
+            f32 lcy = U.list_y0 + list_height() * 0.5f - SR(6), tw = text_width(FONT_TEXT, fs, r->text, -1);
+            text_draw_icon(0xE721, S(26), (f32)U.W * 0.5f, lcy - SR(20), t->faint);
+            text_draw_fit(FONT_TEXT, fs, floorf(MAX(SR(20), ((f32)U.W - tw) * 0.5f)), floorf(lcy + SR(22) + 0.5f), x1 - SR(20), r->text, -1,
+                          t->dim, false);
+            return;
+        }
+        text_draw_fit(FONT_TEXT, fs, x0 + SR(12), base, x1 - x0 - SR(24), r->text, -1, t->dim, false);
         return;
     }
     f32 isz = (f32)ui_icon_px();
     f32 ix = x0 + SR(12), iy = floorf(cy - isz * 0.5f + 0.5f);
-    f32 tx = ix + isz + SR(12);
+    f32 tx = ix + isz + SR(ls->icon_gap);
     f32 right = x1 - SR(12);
     f32 sub_fs = S(12.5f);
     f32 sub_base = floorf(cy + font_cap_height(FONT_TEXT, sub_fs) * 0.5f + 0.5f);
@@ -1287,18 +1370,22 @@ static void draw_row(Row *r, f32 y, bool selected)
         const WCHAR *sub = row_note(r, &sub_col);
         if (a->kind == APP_CMD) {
             bool armed = U.armed == a;
-            r_rect(ix, iy, isz, isz, armed ? color_alpha(t->danger, 0.16f) : t->tile, SR(7));
-            r_rect_ex(ix, iy, isz, isz, t->key_border, SR(7), 1.f, 0);
-            text_draw_icon(a->glyph, S(14), ix + isz * 0.5f, iy + isz * 0.5f, armed ? t->danger : t->text);
+            r_rect(ix, iy, isz, isz, armed ? color_alpha(t->danger, 0.16f) : t->tile, SR(ls->tile_r));
+            r_rect_ex(ix, iy, isz, isz, t->key_border, SR(ls->tile_r), 1.f, 0);
+            text_draw_icon(a->glyph, MIN(S(14), isz * 0.52f), ix + isz * 0.5f, iy + isz * 0.5f, armed ? t->danger : t->text);
         } else {
             if (icon_get(a->id_hash ^ 0xA11, ICON_KIND_APP, a->id, uv)) r_icon(ix, iy, isz, isz, uv[0], uv[1], uv[2], uv[3], 1.f);
             else draw_placeholder_icon(ix, iy, isz, icon_failed(a->id_hash ^ 0xA11) ? a->name : NULL);
         }
         f32 sw = text_width(FONT_TEXT, sub_fs, sub, -1);
         f32 avail = right - tx;
-        bool show_sub = selected || a->kind == APP_CMD;
-        text_draw_fit(FONT_TEXT, fs, tx, base, show_sub ? avail - sw - SR(16) : avail, a->name, a->len, t->text, false);
-        if (a->kind == APP_CMD) {
+        bool show_sub = selected || a->kind == APP_CMD || ls->all_notes;
+        draw_name(fs, tx, base, show_sub ? avail - sw - SR(16) : avail, a->name, a->len, a->norm, a->ws, t->text);
+        if (ls->all_notes && a->kind != APP_CMD) {
+            f32 away = CLAMP(fabsf(U.list_y0 - floorf(U.scroll + 0.5f) + U.hl_y - y) / r->h, 0.f, 1.f);
+            if (!row_selectable(U.sel)) away = 1.f;
+            text_draw(FONT_TEXT, sub_fs, right - sw, sub_base, sub, -1, color_alpha(t->faint, away));
+        } else if (a->kind == APP_CMD) {
             f32 away = CLAMP(fabsf(U.list_y0 - floorf(U.scroll + 0.5f) + U.hl_y - y) / r->h, 0.f, 1.f);
             if (!row_selectable(U.sel)) away = 1.f;
             text_draw(FONT_TEXT, sub_fs, right - sw, sub_base, sub, -1, color_alpha(sub_col, away));
@@ -1311,7 +1398,7 @@ static void draw_row(Row *r, f32 y, bool selected)
         f32 nw = text_width(FONT_TEXT, fs, f->name, -1);
         f32 dw = text_width(FONT_TEXT, sub_fs, f->dir, -1);
         f32 name_max = nw + gap + dw <= avail ? nw : MAX(avail * 0.55f, avail - dw - gap);
-        f32 drawn = text_draw_fit(FONT_TEXT, fs, tx, base, name_max, f->name, -1, t->text, false);
+        f32 drawn = draw_name(fs, tx, base, name_max, f->name, -1, NULL, NULL, t->text);
         f32 dir_max = avail - drawn - gap;
         if (dir_max > SR(40) && f->dir[0]) {
             f32 dwn = MIN(dw, dir_max);
@@ -1328,8 +1415,7 @@ static f32 draw_hint(f32 xr, f32 cy, const WCHAR *label, const WCHAR *const *key
     for (int i = nkeys - 1; i >= 0; i--) {
         f32 w = MAX(text_width(FONT_TEXT, kfs, keys[i], -1) + kpad * 2, kh);
         f32 kx = floorf(xr - w), ky = floorf(cy - kh * 0.5f);
-        r_rect(kx, ky, w, kh, t->key_bg, SR(5));
-        r_rect_ex(kx, ky, w, kh, t->key_border, SR(5), 1.f, 0);
+        r_rect(kx, ky, w, kh, t->key_bg, SR(LS()->key_r));
         f32 tw = text_width(FONT_TEXT, kfs, keys[i], -1);
         text_draw(FONT_TEXT, kfs, floorf(kx + (w - tw) * 0.5f + 0.5f), floorf(cy + font_cap_height(FONT_TEXT, kfs) * 0.5f + 0.5f), keys[i], -1, t->dim);
         xr = kx - SR(4);
@@ -1350,6 +1436,7 @@ static void draw_footer(f32 y0)
     static const WCHAR *k_admin[] = { L"Ctrl", L"Shift", L"Enter" };
     static const WCHAR *k_copy[] = { L"Ctrl", L"C" };
     static const WCHAR *k_esc[] = { L"Esc" };
+    if (LS()->footer_tint) r_rect(0, y0, (f32)U.W, U.footer_h, t->dark ? RGBA(255, 255, 255, 10) : RGBA(0, 0, 0, 8), 0);
     Row *r = sel_row();
     f32 min_x = SR(150);
     if (!r) {
@@ -1375,7 +1462,7 @@ static void draw_footer(f32 y0)
     f32 bx = SR(8), bh = SR(28), by = floorf(cy - bh * 0.5f);
     f32 bw = floorf(SR(8) + SR(16) + SR(7) + lw + SR(10));
     f32 hov = U.settings_hover_t;
-    r_rect(bx, by, bw, bh, color_alpha(t->sel, hov), SR(6));
+    r_rect(bx, by, bw, bh, color_alpha(t->sel, hov), SR(LS()->key_r + 1));
     u32 col = color_mix(t->dim, t->text, hov);
     text_draw_icon(0xE713, S(14), bx + SR(8) + SR(8), cy, col);
     text_draw(FONT_TEXT, lfs, bx + SR(8) + SR(16) + SR(7), floorf(cy + font_cap_height(FONT_TEXT, lfs) * 0.5f + 0.5f), label, -1, col);
@@ -1389,14 +1476,15 @@ static void draw_search(void)
 {
     Theme *t = &U.th;
     f32 cy = U.search_h * 0.5f;
-    text_draw_icon(0xE721, S(17), SR(27), cy, t->dim);
-    f32 fx0 = SR(50), fx1 = (f32)U.W - SR(20);
-    f32 fs = S(20);
+    const LStyle *ls = LS();
+    text_draw_icon(0xE721, S(ls->search_icon), SR(ls->inset + 19), cy, U.qlen ? t->text : t->dim);
+    f32 fx0 = SR(ls->inset + 42), fx1 = (f32)U.W - SR(20);
+    f32 fs = S(ls->search_fs);
     f32 base = floorf(cy + font_cap_height(FONT_DISPLAY, fs) * 0.5f + 0.5f);
     f32 sel_top = floorf(cy - fs * 0.62f), sel_h = floorf(fs * 1.24f);
     if (!U.qlen) {
         text_draw_fit(FONT_DISPLAY, fs, fx0, base, fx1 - fx0, TR("Поиск приложений и файлов", "Search apps and files"), -1, t->faint, false);
-        if (U.caret_on) r_rect(fx0, sel_top, MAX(1.f, floorf(S(1.25f))), sel_h, t->text, 0);
+        if (U.caret_on) r_rect(fx0, sel_top, MAX(1.f, floorf(S(1.5f))), sel_h, t->accent, SR(1));
         return;
     }
     static f32 offs[Q_MAX + 2];
@@ -1413,7 +1501,7 @@ static void draw_search(void)
         r_rect(floorf(ox + offs[a]), sel_top, floorf(offs[b] - offs[a] + 0.5f), sel_h, t->text_sel, SR(3));
     }
     text_draw(FONT_DISPLAY, fs, ox, base, U.q, U.qlen, t->text);
-    if (U.caret_on) r_rect(floorf(ox + cx), sel_top, MAX(1.f, floorf(S(1.25f))), sel_h, t->text, 0);
+    if (U.caret_on) r_rect(floorf(ox + cx), sel_top, MAX(1.f, floorf(S(1.5f))), sel_h, t->accent, SR(1));
     r_set_clip(0, 0, (f32)U.W, (f32)U.H);
 }
 
@@ -1421,6 +1509,7 @@ static void ui_draw(void)
 {
     Theme *t = &U.th;
     icons_begin_frame();
+    hl_prepare();
     r_begin();
     r_rect(0, 0, (f32)U.W, (f32)U.H, U.backdrop_ok ? t->bg : t->bg_solid, 0);
     draw_search();
@@ -1436,9 +1525,19 @@ static void ui_draw(void)
         for (int i = 0; cascade && i < U.sel; i++)
             if (U.rows[i].y + U.rows[i].h >= U.scroll) k++;
         hl_op = R.opacity = cascade ? row_in(k, now) : 1.f;
+        const LStyle *ls = LS();
         f32 hy = floorf(off + U.hl_y + 0.5f), hh = floorf(U.hl_h + 0.5f);
-        r_rect(SR(8), hy, (f32)U.W - SR(16), hh, t->sel, SR(8));
-        r_rect_ex(SR(8), hy, (f32)U.W - SR(16), hh, t->sel_border, SR(8), 1.f, 0);
+        f32 hx = SR(ls->inset), hw = (f32)U.W - hx * 2, hr = SR(ls->sel_r);
+        if (ls->sel == SEL_PILL) {
+            r_rect(hx, hy, hw, hh, t->sel, hr);
+            r_rect_ex(hx, hy, hw, hh, t->sel_border, hr, 1.f, 0);
+        } else if (ls->sel == SEL_FILL) {
+            r_rect(hx, hy, hw, hh, t->dark ? RGBA(255, 255, 255, 32) : RGBA(0, 0, 0, 20), hr);
+        } else {
+            r_rect(hx, hy, hw, hh, t->sel, hr);
+            f32 bh = floorf(MIN(hh * 0.4f + fabsf(U.hl_vy) * 0.012f, hh * 0.75f) + 0.5f), bw = SR(3);
+            r_rect(hx + SR(2), floorf(hy + (hh - bh) * 0.5f + 0.5f), bw, bh, t->accent, bw * 0.5f);
+        }
         R.opacity = 1.f;
     }
     f32 top = U.scroll, bottom = U.scroll + list_height();
@@ -1470,10 +1569,10 @@ static void ui_draw(void)
     r_set_clip(0, 0, (f32)U.W, (f32)U.H);
 
     f32 ms = max_scroll();
-    if (ms > 0) {
-        f32 lh = list_height(), bar_h = MAX(SR(24), lh * lh / U.content_h);
-        f32 by = U.list_y0 + (lh - bar_h) * (U.scroll / ms);
-        r_rect((f32)U.W - SR(5), floorf(by), SR(3), floorf(bar_h), t->faint, SR(1.5f));
+    if (ms > 0 && U.sb_t > 0.f) {
+        f32 lh = list_height() - SR(8), bar_h = MAX(SR(24), lh * lh / U.content_h);
+        f32 by = U.list_y0 + SR(4) + (lh - bar_h) * CLAMP(U.scroll / ms, 0.f, 1.f), bw = U.sb_hot ? SR(5) : SR(3);
+        r_rect((f32)U.W - SR(3) - bw, floorf(by), bw, floorf(bar_h), color_alpha(U.sb_hot ? t->dim : t->faint, U.sb_t), bw * 0.5f);
     }
 
     f32 fy = U.list_y1;
@@ -1508,6 +1607,13 @@ static void animate(f32 dt)
         anim |= spring_step(&U.hl_h, &U.hl_vh, th, anim_omega(g_cfg.anim_select_ms), dt);
     }
     anim |= approach(&U.settings_hover_t, U.settings_hover ? 1.f : 0.f, 22.f, dt);
+    f64 now = time_now();
+    if (U.scroll != U.sb_prev) U.sb_seen = now;
+    U.sb_prev = U.scroll;
+    bool recent = now - U.sb_seen < 0.9;
+    bool sb_on = max_scroll() > 0 && (U.sb_hot || recent);
+    anim |= approach(&U.sb_t, sb_on ? 1.f : 0.f, sb_on ? 20.f : 7.f, dt);
+    if (recent && !U.sb_hot && max_scroll() > 0) anim = true;
     anim |= approach(&U.sub_t, row_selectable(U.sel) && U.rows[U.sel].kind == ROW_APP ? 1.f : 0.f, 24.f, dt);
     anim |= cm_animate(dt);
     if (U.vis != U.vis_target) {
@@ -1516,7 +1622,7 @@ static void animate(f32 dt)
         else U.vis = close > 0.f ? MAX(U.vis - dt / close, U.vis_target) : U.vis_target;
         anim |= U.vis != U.vis_target;
     }
-    if (!U.closing && rows_cascading(time_now())) anim = true;
+    if (!U.closing && rows_cascading(now)) anim = true;
     if (U.files_end_y >= 0 && U.files_end_y < U.scroll + list_height() && files_virtual_total() > U.files_shown) anim = true;
     U.animating = anim;
 }
@@ -1563,9 +1669,9 @@ static int text_index_at(int x)
 {
     if (!U.qlen) return 0;
     static f32 offs[Q_MAX + 2];
-    f32 fs = S(20);
+    f32 fs = S(LS()->search_fs);
     text_offsets(FONT_DISPLAY, fs, U.q, U.qlen, offs);
-    f32 lx = (f32)x - SR(50) + floorf(U.q_scroll);
+    f32 lx = (f32)x - SR(LS()->inset + 42) + floorf(U.q_scroll);
     int best = 0;
     for (int i = 0; i <= U.qlen; i++)
         if (fabsf(offs[i] - lx) < fabsf(offs[best] - lx)) best = i;
@@ -1885,6 +1991,12 @@ static void ui_mouse_move(int x, int y)
             ui_invalidate();
         }
         return;
+    }
+    bool sb_hot = x >= U.W - (int)SR(14) && y >= U.list_y0 && y < U.list_y1;
+    if (sb_hot != U.sb_hot) {
+        U.sb_hot = sb_hot;
+        U.animating = true;
+        ui_invalidate();
     }
     bool hover = in_settings_button(x, y);
     if (hover != U.settings_hover) {
