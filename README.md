@@ -21,6 +21,7 @@
 - **Files.** Searches the whole disk through a bundled [Everything](https://www.voidtools.com/). If you already run your own Everything, that one is used.
 - **Wrong keyboard layout.** `rfkr` finds Калькулятор, `сщву` finds VS Code.
 - **English names.** `notepad`, `cmd`, `calc` find Notepad, Command Prompt and Calculator on a localized Windows.
+- **Tags.** Right-click anything and add your own tags; typing a tag finds it, even by the first letters or in the wrong layout.
 - **Commands.** Lock, sleep, restart, shut down, sign out, empty recycle bin.
 - **Start button.** Custom icon on the Windows 11 Start button; clicking it opens the launcher.
 - **Now playing.** Cover art, title and playback controls for any player, right on the taskbar.
