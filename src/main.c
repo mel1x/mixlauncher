@@ -8,6 +8,7 @@
 #include "apps.c"
 #include "icons.c"
 #include "everything.c"
+#include "tags.c"
 #include "hotkey.c"
 #include "elevation.c"
 #include "launch.c"
@@ -136,7 +137,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_RBUTTONUP: {
         int x = GET_X_LPARAM(lp), y = GET_Y_LPARAM(lp);
-        if (cm_inside(x, y)) return 0;
+        if (U.tg.open || cm_inside(x, y)) return 0;
         int r = row_at(y);
         if (row_selectable(r)) {
             U.sel = r;
@@ -485,6 +486,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
         lang_apply();
     }
     history_load();
+    tags_load();
     arena_init(&U.recent_arena, 1ull << 20);
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     theme_update();

@@ -1798,9 +1798,11 @@ static void draw_donate(const Theme *t, const SColors *c)
     r_set_clip(px, py + 1, px + pw, py + ph - 1);
     f32 x0 = px + SSR(20), x1 = px + pw - SSR(20), y = py + SSR(20) - floorf(SW.don.scroll + 0.5f);
     int k = 0;
-#define DON_BLOCK(dy_var)                                   \
-    f32 ek_ = SW.don.closing ? 1.f : don_item(k++);         \
-    R.opacity = e * ek_;                                    \
+    // Closing, the content goes first and only the empty panel fades out: a half-transparent white QR
+    // over the window reads as a gray flash.
+#define DON_BLOCK(dy_var)                                                  \
+    f32 ek_ = SW.don.closing ? 1.f : don_item(k++);                        \
+    R.opacity = SW.don.closing ? CLAMP(e * 2.f - 1.f, 0.f, 1.f) : e * ek_; \
     f32 dy_var = floorf((1.f - ek_) * SSR(10) + 0.5f)
 
     // header
