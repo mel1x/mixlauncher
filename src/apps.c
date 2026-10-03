@@ -99,6 +99,55 @@ static WCHAR *resolve_known_folder_path(Arena *a, const WCHAR *id)
     return r;
 }
 
+// Explorer sometimes hands out a packaged app's name unresolved ("ms-resource:AppName"), e.g. while the
+// package is being updated. Resolve it against the package ourselves; NULL if that fails too.
+static WCHAR *resolve_ms_resource(Arena *a, const WCHAR *res, const WCHAR *aumid)
+{
+    typedef LONG(WINAPI * PFN_GetPackagesByPackageFamily)(PCWSTR, UINT32 *, PWSTR *, UINT32 *, WCHAR *);
+    static PFN_GetPackagesByPackageFamily get_packages;
+    static bool loaded;
+    if (!loaded) {
+        loaded = true;
+        get_packages = (PFN_GetPackagesByPackageFamily)(void *)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetPackagesByPackageFamily");
+    }
+    const WCHAR *bang = wcschr(aumid, '!');
+    if (!get_packages || !bang || bang - aumid >= 256) return NULL;
+    WCHAR family[256];
+    memcpy(family, aumid, (size_t)(bang - aumid) * sizeof(WCHAR));
+    family[bang - aumid] = 0;
+    WCHAR *us = wcsrchr(family, '_');
+    if (!us) return NULL;
+
+    UINT32 count = 0, len = 0;
+    if (get_packages(family, &count, NULL, &len, NULL) != ERROR_INSUFFICIENT_BUFFER || !count || !len) return NULL;
+    PWSTR *names = (PWSTR *)malloc(count * sizeof(PWSTR));
+    WCHAR *buf = (WCHAR *)malloc(len * sizeof(WCHAR));
+    WCHAR *r = NULL;
+    if (names && buf && get_packages(family, &count, names, &len, buf) == ERROR_SUCCESS && count) {
+        *us = 0;  // family -> package name
+        const WCHAR *key = res + 12;  // after "ms-resource:"
+        WCHAR src[1024], out[512];
+        for (int v = 0; v < 3 && !r; v++) {
+            int k;
+            if (v == 0) {
+                if (key[0] == '/' || wcschr(key, '/')) continue;
+                k = _snwprintf(src, countof(src), L"@{%s?ms-resource://%s/resources/%s}", names[0], family, key);
+            } else if (v == 1) {
+                if (key[0] == '/') continue;
+                k = _snwprintf(src, countof(src), L"@{%s?ms-resource://%s/%s}", names[0], family, key);
+            } else {
+                k = _snwprintf(src, countof(src), L"@{%s?%s}", names[0], res);
+            }
+            if (k <= 0 || k >= countof(src)) continue;
+            out[0] = 0;
+            if (SUCCEEDED(SHLoadIndirectString(src, out, countof(out), NULL)) && out[0] && !wstarts_with_i(out, L"ms-resource:")) r = wdup(a, out, -1);
+        }
+    }
+    free(names);
+    free(buf);
+    return r;
+}
+
 static const struct {
     u8 cmd;
     const WCHAR *ru, *en;
@@ -276,7 +325,7 @@ static AppList *apps_cache_load(void)
         r->id = wdup(&tmp, w, -1);
         utf8_to_w(t2 + 1, -1, w, countof(w));
         r->path = w[0] ? wdup(&tmp, w, -1) : NULL;
-        if (r->name[0] && r->id[0]) n++;
+        if (r->name[0] && r->id[0] && !wstarts_with_i(r->name, L"ms-resource:")) n++;
     }
     free(text);
     AppList *l = (raw && n) ? applist_build(raw, n) : NULL;
@@ -285,8 +334,11 @@ static AppList *apps_cache_load(void)
     return l;
 }
 
+static int g_apps_unresolved;
+
 static AppList *apps_enumerate(void)
 {
+    g_apps_unresolved = 0;
     IShellItem *folder = NULL;
     IEnumShellItems *en = NULL;
     if (FAILED(SHGetKnownFolderItem(&ML_FOLDERID_AppsFolder, KF_FLAG_DEFAULT, NULL, &ML_IID_IShellItem, (void **)&folder)) || !folder) {
@@ -314,12 +366,17 @@ static AppList *apps_enumerate(void)
             IShellItem2_GetString(it2, &ML_PKEY_Link_TargetParsingPath, &target);
             IShellItem2_Release(it2);
         }
-        if (name && parse && name[0] && parse[0]) {
+        const WCHAR *disp = name;
+        if (name && parse && wstarts_with_i(name, L"ms-resource:")) {
+            disp = resolve_ms_resource(&tmp, name, parse);
+            if (!disp) g_apps_unresolved++;
+        }
+        if (disp && parse && disp[0] && parse[0]) {
             WCHAR *path = target && target[0] ? wdup(&tmp, target, -1) : resolve_known_folder_path(&tmp, parse);
             if (path && path[0] == ':' && path[1] == ':') path = NULL;
             WCHAR norm[512];
-            int nl = MIN(wlen(name), 511);
-            norm_str(norm, name, nl);
+            int nl = MIN(wlen(disp), 511);
+            norm_str(norm, disp, nl);
             if (!(g_cfg.hide_uninstallers && looks_like_noise(norm, path))) {
                 if (n == cap) {
                     cap *= 2;
@@ -327,7 +384,7 @@ static AppList *apps_enumerate(void)
                     if (!nr) break;
                     raw = nr;
                 }
-                raw[n].name = wdup(&tmp, name, -1);
+                raw[n].name = wdup(&tmp, disp, -1);
                 raw[n].id = wdup(&tmp, parse, -1);
                 raw[n].path = path;
                 n++;
@@ -360,6 +417,7 @@ static DWORD WINAPI indexer_thread(void *param)
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 
+    int retries = 0;
     HANDLE waits[3];
     int nw = 0;
     waits[nw++] = g_index_event;
@@ -388,7 +446,11 @@ static DWORD WINAPI indexer_thread(void *param)
                 applist_free(l);
             }
         }
-        DWORD r = WaitForMultipleObjects((DWORD)nw, waits, FALSE, 20 * 60 * 1000);
+        // Unresolved names usually sort themselves out once the package update finishes.
+        if (g_apps_unresolved) log_msg("apps: %d unresolved names skipped", g_apps_unresolved);
+        retries = g_apps_unresolved ? retries + 1 : 0;
+        DWORD wait = g_apps_unresolved && retries <= 10 ? 30 * 1000 : 20 * 60 * 1000;
+        DWORD r = WaitForMultipleObjects((DWORD)nw, waits, FALSE, wait);
         if (r >= WAIT_OBJECT_0 + 1 && r < WAIT_OBJECT_0 + (DWORD)nw) {
             FindNextChangeNotification(waits[r - WAIT_OBJECT_0]);
             for (;;) {

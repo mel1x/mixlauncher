@@ -13,8 +13,9 @@ typedef struct TbButton {
     bool hover, press;
     f32 hover_t, press_t;
     f64 last_anim;
-    COLORREF plate;
-    bool plate_ok;
+    COLORREF plate, pending;
+    bool plate_ok, pending_ok;
+    f64 pending_at;
     HDC dc;
     HBITMAP bmp;
     u32 *bits;
@@ -221,21 +222,66 @@ static void tb_free_bitmap(TbButton *b)
     b->bmp_w = b->bmp_h = 0;
 }
 
+static int tb_color_dist(COLORREF a, COLORREF b)
+{
+    return MAX(abs(GetRValue(a) - GetRValue(b)), MAX(abs(GetGValue(a) - GetGValue(b)), abs(GetBValue(a) - GetBValue(b))));
+}
+
+// Reads the taskbar color around the button. A single pixel can catch a window covering the bar
+// (a fullscreen game), a neighbor icon sliding by or a hover highlight, so the bar itself must be
+// under every point, the points must agree, and a new color only replaces the old one once a later sample confirms it.
+// Returns true when the plate color changed.
 static bool tb_sample(TbButton *b)
 {
     b->sampled = time_now();
+    RECT tr;
+    if (!GetWindowRect(b->taskbar, &tr)) return false;
+    int h = b->screen.bottom - b->screen.top;
+    int xs[2] = { b->screen.left - 3, b->screen.right + 3 };
+    int ys[2] = { b->screen.top + h / 10 + 1, b->screen.bottom - h / 10 - 2 };
+    COLORREF cs[4];
+    int n = 0;
     HDC sdc = GetDC(NULL);
     if (!sdc) return false;
-    int x = b->screen.right + 3, h = b->screen.bottom - b->screen.top;
-    COLORREF c0 = GetPixel(sdc, x, b->screen.top + h / 10 + 1), c1 = GetPixel(sdc, x, b->screen.bottom - h / 10 - 2);
+    for (int i = 0; i < 2; i++)
+        for (int j = 0; j < 2; j++) {
+            POINT p = { xs[i], ys[j] };
+            if (!PtInRect(&tr, p)) continue;
+            // A fullscreen game (or anything else) on top of the taskbar: the screen shows it, not the bar.
+            if (GetAncestor(WindowFromPoint(p), GA_ROOT) != b->taskbar) {
+                ReleaseDC(NULL, sdc);
+                return false;
+            }
+            COLORREF c = GetPixel(sdc, p.x, p.y);
+            if (c != CLR_INVALID) cs[n++] = c;
+        }
     ReleaseDC(NULL, sdc);
-    if (c0 == CLR_INVALID || c1 == CLR_INVALID) return false;
-    COLORREF c = RGB((GetRValue(c0) + GetRValue(c1)) / 2, (GetGValue(c0) + GetGValue(c1)) / 2, (GetBValue(c0) + GetBValue(c1)) / 2);
-    bool same = b->plate_ok && abs(GetRValue(c) - GetRValue(b->plate)) <= 2 && abs(GetGValue(c) - GetGValue(b->plate)) <= 2 &&
-                abs(GetBValue(c) - GetBValue(b->plate)) <= 2;
+    if (!n) return false;
+    int r = 0, g = 0, bl = 0;
+    for (int i = 0; i < n; i++) {
+        for (int k = i + 1; k < n; k++)
+            if (tb_color_dist(cs[i], cs[k]) > 12) return false;
+        r += GetRValue(cs[i]);
+        g += GetGValue(cs[i]);
+        bl += GetBValue(cs[i]);
+    }
+    COLORREF c = RGB(r / n, g / n, bl / n);
+    if (b->plate_ok && tb_color_dist(c, b->plate) <= 2) {
+        b->pending_ok = false;
+        return false;
+    }
+    // The first color is taken as is: without it the plate falls back to a generic gray anyway.
+    bool confirmed = !b->plate_ok || (b->pending_ok && tb_color_dist(c, b->pending) <= 4 && b->sampled - b->pending_at >= 0.3);
+    if (!confirmed) {
+        if (!b->pending_ok || tb_color_dist(c, b->pending) > 4) b->pending_at = b->sampled;
+        b->pending = c;
+        b->pending_ok = true;
+        return false;
+    }
+    b->pending_ok = false;
     b->plate = c;
     b->plate_ok = true;
-    return !same;
+    return true;
 }
 
 static u32 *tb_load_image(const WCHAR *path, int n)
@@ -589,7 +635,8 @@ static void tb_sync(void)
         RECT cur;
         GetWindowRect(b->wnd, &cur);
         bool moved = memcmp(&cur, &b->screen, sizeof cur) != 0;
-        bool resample = moved || time_now() - b->sampled > 5.0;
+        f64 since = time_now() - b->sampled;
+        bool resample = moved || since > 5.0 || ((b->pending_ok || !b->plate_ok) && since > 0.3);
         if ((resample && tb_sample(b)) || resized) tb_render(b);
         bool covered = GetWindow(b->wnd, GW_HWNDPREV) != NULL;
         if (moved || covered || !IsWindowVisible(b->wnd)) SetWindowPos(b->wnd, HWND_TOP, p.x, p.y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
@@ -610,6 +657,7 @@ static void tb_theme_changed(void)
     TB.light = l;
     for (int i = 0; i < TB.n; i++) {
         TB.b[i].plate_ok = false;
+        TB.b[i].pending_ok = false;
         tb_render(&TB.b[i]);
     }
 }
