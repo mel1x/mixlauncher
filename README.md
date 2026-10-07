@@ -22,7 +22,7 @@
 - **Wrong keyboard layout.** `rfkr` finds Калькулятор, `сщву` finds VS Code.
 - **English names.** `notepad`, `cmd`, `calc` find Notepad, Command Prompt and Calculator on a localized Windows.
 - **Tags.** Right-click anything and add your own tags; typing a tag finds it, even by the first letters or in the wrong layout.
-- **Commands.** Lock, sleep, restart, shut down, sign out, empty recycle bin.
+- **Commands.** Lock, sleep, restart, shut down, sign out, recycle bin, installed apps (uninstall programs). Sleep, restart, shut down and sign out ask to press Enter again.
 - **Start button.** Custom icon on the Windows 11 Start button; clicking it opens the launcher.
 - **Now playing.** Cover art, title and playback controls for any player, right on the taskbar.
 - **Styles.** Four launcher looks: Standard, Raycast, Windows 11 and Compact. Matches are highlighted in bold.

@@ -2,7 +2,7 @@ typedef struct Theme {
     bool dark;
     u32 bg, bg_solid;
     u32 text, dim, faint;
-    u32 sel, sel_border, sep, accent, text_sel;
+    u32 sel, sep, accent, text_sel;
     u32 key_bg, key_border, danger, tile;
 } Theme;
 
@@ -186,7 +186,6 @@ static void theme_update(void)
         t->dim = RGBA(255, 255, 255, 150);
         t->faint = RGBA(255, 255, 255, 92);
         t->sel = RGBA(255, 255, 255, 20);
-        t->sel_border = RGBA(255, 255, 255, 12);
         t->sep = RGBA(255, 255, 255, 22);
         t->key_bg = RGBA(255, 255, 255, 24);
         t->key_border = RGBA(255, 255, 255, 26);
@@ -199,7 +198,6 @@ static void theme_update(void)
         t->dim = RGBA(0, 0, 0, 140);
         t->faint = RGBA(0, 0, 0, 90);
         t->sel = RGBA(0, 0, 0, 13);
-        t->sel_border = RGBA(0, 0, 0, 8);
         t->sep = RGBA(0, 0, 0, 20);
         t->key_bg = RGBA(0, 0, 0, 14);
         t->key_border = RGBA(0, 0, 0, 22);
@@ -1648,7 +1646,6 @@ static void ui_draw(void)
         f32 hx = SR(ls->inset), hw = (f32)U.W - hx * 2, hr = SR(ls->sel_r);
         if (ls->sel == SEL_PILL) {
             r_rect(hx, hy, hw, hh, t->sel, hr);
-            r_rect_ex(hx, hy, hw, hh, t->sel_border, hr, 1.f, 0);
         } else if (ls->sel == SEL_FILL) {
             r_rect(hx, hy, hw, hh, t->dark ? RGBA(255, 255, 255, 32) : RGBA(0, 0, 0, 20), hr);
         } else {

@@ -1,7 +1,7 @@
 enum { APP_SHELL, APP_CMD };
-enum { CMD_NONE, CMD_LOCK, CMD_SLEEP, CMD_RESTART, CMD_SHUTDOWN, CMD_SIGNOUT, CMD_RECYCLE };
+enum { CMD_NONE, CMD_LOCK, CMD_SLEEP, CMD_RESTART, CMD_SHUTDOWN, CMD_SIGNOUT, CMD_RECYCLE, CMD_UNINSTALL };
 
-#define APP_MAX_KW 6
+#define APP_MAX_KW 12
 
 typedef struct App {
     WCHAR *name;
@@ -156,11 +156,15 @@ static const struct {
     bool danger;
 } k_commands[] = {
     { CMD_LOCK,     L"Заблокировать",      L"Lock",        L"lock|lock screen|блокировка|заблокировать компьютер", 0xE72E, false },
-    { CMD_SLEEP,    L"Спящий режим",       L"Sleep",       L"sleep|suspend|сон|спящий режим", 0xE708, false },
+    { CMD_SLEEP,    L"Спящий режим",       L"Sleep",       L"sleep|suspend|сон|спящий режим", 0xE708, true },
     { CMD_RESTART,  L"Перезагрузка",       L"Restart",     L"restart|reboot|перезагрузить|перезагрузка|рестарт", 0xE777, true },
     { CMD_SHUTDOWN, L"Завершение работы",  L"Shut down",   L"shutdown|shut down|power off|выключить|выключение|завершение работы", 0xE7E8, true },
     { CMD_SIGNOUT,  L"Выйти из системы",   L"Sign out",    L"sign out|log off|logout|выйти|выход из системы", 0xF3B1, true },
     { CMD_RECYCLE,  L"Корзина",            L"Recycle Bin", L"recycle bin|trash|корзина", 0xE74D, false },
+    { CMD_UNINSTALL, L"Установленные приложения", L"Installed apps",
+      L"uninstall|remove program|add or remove programs|programs and features|apps and features|appwiz|"
+      L"удаление программ|удалить программу|установка и удаление программ|программы и компоненты|приложения и возможности|деинсталляция",
+      0xE71D, false },
 };
 
 static void app_add_kw(Arena *a, App *app, const WCHAR *s, int len)

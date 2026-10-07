@@ -3,6 +3,7 @@ enum {
     SCORE_PREFIX = 9000,
     SCORE_WORD_PREFIX = 8000,
     SCORE_ACRONYM = 7000,
+    SCORE_STEM = 6400,
     SCORE_SUBSTRING = 6000,
     SCORE_FUZZY_MAX = 5000,
 };
@@ -85,10 +86,27 @@ static int score_fuzzy(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int 
     return CLAMP(sc, 1000, SCORE_FUZZY_MAX);
 }
 
+// Another form of the same word: "удалить" finds "удаление", "программу" finds "программ", "uninstalling" finds
+// "uninstall". The token without its ending (up to 3 letters, at least 4 left) must start a word.
+static int stem_at(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int m)
+{
+    if (m < 5) return -1;
+    int k = MAX(4, m - 3);
+    for (int i = find_sub(s, n, q, k, 0); i >= 0; i = find_sub(s, n, q, k, i + 1))
+        if (ws[i]) return i;
+    return -1;
+}
+
+static int score_stem(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int m)
+{
+    int i = stem_at(s, n, ws, q, m);
+    return i < 0 ? 0 : SCORE_STEM - MIN(i, 100) * 2 - MIN(abs(n - m), 200) / 2;
+}
+
 static int score_token(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int m)
 {
     if (m <= 0) return 1;
-    if (m > n) return 0;
+    if (m > n) return score_stem(s, n, ws, q, m);
     int len_pen = MIN(n - m, 200);
     if (m == n && wmem_eq(s, q, n)) return SCORE_EXACT;
     if (wmem_eq(s, q, m)) return SCORE_PREFIX - len_pen;
@@ -101,6 +119,8 @@ static int score_token(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int 
         if (j == m) return SCORE_ACRONYM - MIN(n, 200);
     }
     int at = find_sub(s, n, q, m, 0);
+    int st = score_stem(s, n, ws, q, m);
+    if (st) return st;
     if (at >= 0) return SCORE_SUBSTRING - MIN(at, 200) * 2 - len_pen;
     return score_fuzzy(s, n, ws, q, m);
 }
@@ -174,7 +194,12 @@ static bool layout_convert(const WCHAR *q, int m, WCHAR *out)
 // Marks the characters of s that a query token matched, in the same order of tries as score_token.
 static void match_token_mask(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int m, u8 *mask)
 {
-    if (m <= 0 || m > n) return;
+    if (m <= 0) return;
+    if (m > n) {
+        int st = stem_at(s, n, ws, q, m);
+        if (st >= 0) memset(mask + st, 1, (size_t)MAX(4, m - 3));
+        return;
+    }
     int at = wmem_eq(s, q, m) ? 0 : -1;
     for (int i = at < 0 ? find_sub(s, n, q, m, 1) : -1; i >= 0; i = find_sub(s, n, q, m, i + 1))
         if (ws[i]) {
@@ -194,6 +219,11 @@ static void match_token_mask(const WCHAR *s, int n, const u8 *ws, const WCHAR *q
                 }
             return;
         }
+    }
+    int st = at < 0 ? stem_at(s, n, ws, q, m) : -1;
+    if (st >= 0) {
+        memset(mask + st, 1, (size_t)MAX(4, m - 3));
+        return;
     }
     if (at < 0) at = find_sub(s, n, q, m, 0);
     if (at >= 0) {
