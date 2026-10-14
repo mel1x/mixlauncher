@@ -426,7 +426,6 @@ static void move_focus(int dir)
             break;
         }
     }
-    SW.focus_visible = true;
     ensure_focus_visible();
     settings_invalidate();
 }
@@ -490,7 +489,6 @@ static void settings_key(UINT vk)
     }
     if (!row_focusable(SW.focus)) return;
     const SItem *it = &k_sitems[SW.rows[SW.focus].item];
-    SW.focus_visible = true;
     switch (vk) {
     case VK_LEFT:
     case VK_RIGHT: {
@@ -512,7 +510,6 @@ static void settings_mouse_down(int mx, int my)
 {
     SHit h = settings_hit(mx, my);
     SW.press = h;
-    SW.focus_visible = false;
     tip_hide();
     if (SW.rec.open) {
         if (h.type == HT_RECSAVE) rec_close(true);

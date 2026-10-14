@@ -268,7 +268,6 @@ static struct {
     f32 head_a[12];
     int nheads;
     int focus;
-    bool focus_visible;
     SHit hover, press;
     int editing;
     WCHAR edit[512];
@@ -1529,10 +1528,6 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
         text_draw(FONT_TEXT, cfs, cx + dot + SSR(8), baseline_for(FONT_TEXT, cfs, mid), s, -1, t->text);
         break;
     }
-    }
-    if (SW.focus == ri && SW.focus_visible && row_focusable(ri)) {
-        f32 g = SSR(3);
-        r_rect_ex(cx - g, cy - g, cw + g * 2, ch + g * 2, t->accent, SSR(9), SSR(2), 0);
     }
     R.opacity = opacity;
 }
