@@ -1354,16 +1354,18 @@ static void draw_sidebar(const Theme *t, const SColors *c)
 
 static void draw_toggle(f32 x, f32 cy, f32 on, bool hov, const Theme *t, const SColors *c)
 {
+    // Flat: a plain grey track when off, the accent when on; the knob keeps its size and only travels.
     f32 w = toggle_w(), h = SSR(22), y = floorf(cy - h * 0.5f);
-    u32 off_bg = hov ? c->ctl_hover : c->ctl;
+    u32 off_bg = t->dark ? RGBA(255, 255, 255, hov ? 50 : 36) : RGBA(0, 0, 0, hov ? 44 : 32);
     r_rect(x, y, w, h, color_mix(off_bg, t->accent, on), h * 0.5f);
-    if (on < 1.f) r_rect_ex(x, y, w, h, color_alpha(hov ? t->dim : t->faint, 1.f - on), h * 0.5f, 1.f, 0);
-    f32 k = floorf(h - SSR(10) + SSR(4) * on + 0.5f);
-    f32 kcx = x + h * 0.5f + (w - h) * on, ky = cy - k * 0.5f;
+    f32 k = h - SSR(6);
+    f32 kx = floorf(x + h * 0.5f + (w - h) * on - k * 0.5f + 0.5f), ky = floorf(cy - k * 0.5f + 0.5f);
     u32 knob = c->knob;
     f32 lum = (0.299f * (f32)(t->accent & 255) + 0.587f * (f32)((t->accent >> 8) & 255) + 0.114f * (f32)((t->accent >> 16) & 255)) / 255.f;
     if (lum > 0.62f) knob = RGBA(24, 24, 26, 255);
-    r_rect(floorf(kcx - k * 0.5f + 0.5f), ky, k, k, color_mix(hov ? t->text : t->dim, knob, on), k * 0.5f);
+    u32 off_knob = t->dark ? RGBA(235, 235, 237, 255) : RGBA(255, 255, 255, 255);
+    if (!t->dark) r_rect_ex(kx, ky + SSR(1), k, k, RGBA(0, 0, 0, 36), k * 0.5f, 0, SSR(2));  // lifts the white knob off the light track
+    r_rect(kx, ky, k, k, color_mix(off_knob, knob, on), k * 0.5f);
 }
 
 static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)

@@ -507,8 +507,9 @@ static void st_draw_chrome(void)
 {
     Theme *t = &U.th;
     memset(U.st.title_btn, 0, sizeof U.st.title_btn);  // set again when the title is drawn, so not once it scrolls away
-    // the page between the search box and the footer is a shade lighter, as in Start
-    r_rect(0, U.list_y0, (f32)U.W, U.list_y1 - U.list_y0, t->dark ? RGBA(255, 255, 255, 7) : RGBA(255, 255, 255, 70), 0);
+    // a dense acrylic close to the taskbar's color, as Start has; the page a shade lighter
+    r_rect(0, 0, (f32)U.W, (f32)U.H, t->dark ? RGBA(38, 38, 39, 236) : RGBA(243, 243, 243, 236), 0);
+    r_rect(0, U.list_y0, (f32)U.W, U.list_y1 - U.list_y0, t->dark ? RGBA(255, 255, 255, 6) : RGBA(255, 255, 255, 60), 0);
     f32 fx0, fx1, cy;
     search_field(&fx0, &fx1, &cy);
     f32 bx = SR(32), bh = SR(34), by = floorf(cy - bh * 0.5f), bw = (f32)U.W - bx * 2;
@@ -631,7 +632,7 @@ static void st_draw_footer(void)
     Theme *t = &U.th;
     st_user_init();
     f32 fy = U.list_y1, cy = floorf(fy + U.footer_h * 0.5f);
-    r_rect(0, fy, (f32)U.W, (f32)U.H - fy, t->dark ? RGBA(0, 0, 0, 40) : RGBA(0, 0, 0, 10), 0);
+    r_rect(0, fy, (f32)U.W, (f32)U.H - fy, t->dark ? RGBA(0, 0, 0, 26) : RGBA(0, 0, 0, 8), 0);
     r_rect(0, fy, (f32)U.W, 1, t->sep, 0);
     memset(U.settings_btn, 0, sizeof U.settings_btn);
 
