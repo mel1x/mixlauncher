@@ -3,6 +3,7 @@ enum { ACT_OPEN, ACT_REVEAL, ACT_RUNAS, ACT_PROPERTIES };
 typedef struct LaunchJob {
     int act;
     bool is_app;
+    bool uri;  // target goes to the shell as is: ms-settings:, shell:Downloads, explorer.exe
     u8 cmd;
     WCHAR *target;
     WCHAR *path;
@@ -81,12 +82,13 @@ static void run_command(u8 cmd)
     case CMD_LOCK:
         LockWorkStation();
         break;
-    case CMD_SLEEP: {
+    case CMD_SLEEP:
+    case CMD_HIBERNATE: {
         enable_shutdown_privilege();
         typedef BOOLEAN (WINAPI *PFN_SetSuspendState)(BOOLEAN, BOOLEAN, BOOLEAN);
         HMODULE m = LoadLibraryW(L"powrprof.dll");
         PFN_SetSuspendState sss = m ? (PFN_SetSuspendState)(void *)GetProcAddress(m, "SetSuspendState") : NULL;
-        if (sss) sss(FALSE, FALSE, FALSE);
+        if (sss) sss(cmd == CMD_HIBERNATE, FALSE, FALSE);
         break;
     }
     case CMD_RESTART:
@@ -128,7 +130,7 @@ static void launch_exec(LaunchJob *j)
         if (j->is_app) {
             const WCHAR *what = wcsstr(j->target, L"://") ? j->target : app_uri;
             if (!g_elevated || !shell_exec_unelevated(what, NULL, NULL, NULL)) app_exec(NULL, app_uri, j->path);
-        } else if (wcsstr(j->target, L"://")) {
+        } else if (j->uri || wcsstr(j->target, L"://")) {
             if (!g_elevated || !shell_exec_unelevated(j->target, NULL, NULL, NULL)) shell_exec(NULL, j->target, NULL, &err);
         } else if (GetFileAttributesW(j->target) == INVALID_FILE_ATTRIBUTES) {
             DWORD e = GetLastError();

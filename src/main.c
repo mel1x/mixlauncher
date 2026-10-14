@@ -17,6 +17,7 @@
 #include "ui.c"
 #include "ctxmenu.c"
 #include "tagdlg.c"
+#include "start.c"
 #include "ui_input.c"
 #include "popmenu.c"
 #include "tray.c"
@@ -112,7 +113,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_RBUTTONUP: {
         int x = GET_X_LPARAM(lp), y = GET_Y_LPARAM(lp);
         if (U.tg.open || cm_inside(x, y)) return 0;
-        int r = row_at(y);
+        int r = row_at(x, y);
         if (row_selectable(r)) {
             U.sel = r;
             U.armed = NULL;
@@ -406,9 +407,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
             opt_theme = !wcscmp(argv[i], L"dark") ? 1 : !wcscmp(argv[i], L"light") ? 2 : 0;
         } else if (!wcscmp(argv[i], L"--style") && i + 1 < argc) {
             i++;
+            char name[32];
+            w_to_utf8(argv[i], -1, name, sizeof name);
             for (int k = 0; k < STYLE__COUNT; k++)
-                if (!_wcsicmp(argv[i], k == STYLE_RAYCAST ? L"raycast" : k == STYLE_WIN11 ? L"windows" : k == STYLE_COMPACT ? L"compact" : L"standard"))
-                    opt_style = k;
+                if (!_stricmp(name, k_style_names[k])) opt_style = k;
         } else if (!wcscmp(argv[i], L"--position") && i + 1 < argc) {
             i++;
             opt_position = !wcscmp(argv[i], L"bottom-left") ? POS_BOTTOM_LEFT : !wcscmp(argv[i], L"bottom-center") ? POS_BOTTOM_CENTER : POS_CENTER;

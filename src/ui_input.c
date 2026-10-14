@@ -15,6 +15,7 @@ static bool ui_keydown(WPARAM vk)
 {
     if (tg_key(vk)) return true;
     if (cm_key(vk)) return true;
+    if (st_on() && st_key(vk)) return true;
     bool ctrl = GetKeyState(VK_CONTROL) < 0, shift = GetKeyState(VK_SHIFT) < 0, alt = GetKeyState(VK_MENU) < 0;
     int page = MAX(1, g_cfg.rows - 1);
     switch (vk) {
@@ -70,7 +71,7 @@ static bool ui_keydown(WPARAM vk)
         Row *r = sel_row();
         if (r) {
             f32 off = U.list_y0 - U.scroll;
-            ui_context_menu((int)SR(56), (int)(off + r->y + r->h), true);
+            ui_context_menu(r->cell ? (int)(r->x + SR(8)) : (int)SR(56), (int)(off + r->y + r->h), true);
         }
         return true;
     }
@@ -144,6 +145,7 @@ static void ui_mouse_move(int x, int y)
         }
         return;
     }
+    if (st_on()) st_mouse_move(x, y);
     bool sb_hot = x >= U.W - (int)SR(14) && y >= U.list_y0 && y < U.list_y1;
     if (sb_hot != U.sb_hot) {
         U.sb_hot = sb_hot;
@@ -166,7 +168,7 @@ static void ui_mouse_move(int x, int y)
         edit_move(text_index_at(x), true);
         return;
     }
-    int r = row_at(y);
+    int r = row_at(x, y);
     if (row_selectable(r) && r != U.sel) {
         U.sel = r;
         U.armed = NULL;
@@ -206,11 +208,12 @@ static void ui_mouse_down(int x, int y, bool dbl)
         SetCapture(g_hwnd);
         return;
     }
+    if (st_on() && st_mouse_down(x, y)) return;
     U.press_settings = in_settings_button(x, y);
     if (U.press_settings) return;
     U.press_update = in_update_button(x, y);
     if (U.press_update) return;
-    int r = row_at(y);
+    int r = row_at(x, y);
     U.press_row = row_selectable(r) ? r : -1;
     if (U.press_row >= 0) {
         U.sel = r;
@@ -242,6 +245,7 @@ static void ui_mouse_up(int x, int y)
         ReleaseCapture();
         return;
     }
+    if (st_on() && st_mouse_up(x, y)) return;
     if (U.press_settings) {
         U.press_settings = false;
         if (in_settings_button(x, y)) open_settings_from_launcher();
@@ -253,7 +257,7 @@ static void ui_mouse_up(int x, int y)
         ui_invalidate();
         return;
     }
-    int r = row_at(y);
+    int r = row_at(x, y);
     if (r >= 0 && r == U.press_row) {
         U.sel = r;
         ui_activate(ACT_OPEN);

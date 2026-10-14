@@ -1,6 +1,10 @@
 // The launcher's context menu on a result row.
 
-enum { CM_OPEN = 1, CM_REVEAL, CM_RUNAS, CM_COPY, CM_PROPS, CM_TAG_ADD, CM_TAG_CLEAR, CM_TAG_INFO };
+enum {
+    CM_OPEN = 1, CM_REVEAL, CM_RUNAS, CM_COPY, CM_PROPS, CM_TAG_ADD, CM_TAG_CLEAR, CM_TAG_INFO, CM_PIN, CM_UNPIN, CM_PIN_TOP,
+    // the Start style's account and power menus
+    CM_ST_ACCOUNT, CM_ST_LOCK, CM_ST_SIGNOUT, CM_ST_MLSET, CM_ST_SLEEP, CM_ST_HIBERNATE, CM_ST_SHUTDOWN, CM_ST_RESTART
+};
 #define CM_ITEM_H 32.f
 #define CM_PAD 5.f
 #define CM_SEP_H 9.f
@@ -54,13 +58,14 @@ static void tags_changed(void)
     ui_invalidate();
 }
 
+static void cm_show(int x, int y, bool keyboard);
+
 static void ui_context_menu(int x, int y, bool keyboard)
 {
     Row *r = sel_row();
     if (!r) return;
     bool is_cmd = r->kind == ROW_APP && r->app->kind == APP_CMD;
     const WCHAR *path = row_path(r);
-    bool reopen = U.cm.open && !U.cm.closing;
     U.cm.n = 0;
     cm_add(CM_OPEN, is_cmd ? 0xE768 : 0xE8A7, is_cmd ? TR("Выполнить", "Run") : TR("Открыть", "Open"), L"Enter", false);
     if (!is_cmd) {
@@ -68,6 +73,15 @@ static void ui_context_menu(int x, int y, bool keyboard)
         cm_add(CM_RUNAS, 0xE7EF, TR("Запустить от имени администратора", "Run as administrator"), L"Ctrl+Shift+Enter", false);
         cm_add(CM_COPY, 0xE8C8, path ? TR("Копировать путь", "Copy path") : TR("Копировать имя", "Copy name"), L"Ctrl+C", true);
         if (path) cm_add(CM_PROPS, 0xE946, TR("Свойства", "Properties"), L"Alt+Enter", false);
+    }
+    if (st_on() && r->kind == ROW_APP) {
+        int pi = pin_index(r->app->id);
+        if (pi < 0) {
+            cm_add(CM_PIN, 0xE718, TR("Закрепить на начальном экране", "Pin to Start"), L"", true);
+        } else {
+            cm_add(CM_UNPIN, 0xE77A, TR("Открепить от начального экрана", "Unpin from Start"), L"", true);
+            if (pi > 0) cm_add(CM_PIN_TOP, 0xE74A, TR("Переместить в начало", "Move to front"), L"", false);
+        }
     }
     u8 ttype;
     const WCHAR *tkey = row_tag_key(r, &ttype);
@@ -91,6 +105,13 @@ static void ui_context_menu(int x, int y, bool keyboard)
             U.cm.it[U.cm.n - 1].disabled = true;
         }
     }
+    cm_show(x, y, keyboard);
+}
+
+// Lays out the items added since U.cm.n = 0 and opens the menu at x, y (above it when there is no room below).
+static void cm_show(int x, int y, bool keyboard)
+{
+    bool reopen = U.cm.open && !U.cm.closing;
     f32 fs = S(13.5f), kfs = S(12);
     f32 lw = 0, kw = 0;
     for (int i = 0; i < U.cm.n; i++) {
@@ -161,6 +182,17 @@ static void cm_run(int i)
         }
         break;
     }
+    case CM_PIN:
+    case CM_UNPIN:
+    case CM_PIN_TOP: {
+        Row *r = sel_row();
+        if (!r || r->kind != ROW_APP) break;
+        if (cmd == CM_PIN_TOP) pin_to_top(r->app->id);
+        else pin_set(r->app->id, cmd == CM_PIN);
+        st_pins_changed();
+        break;
+    }
+    default: st_menu_pick(cmd); break;
     }
 }
 

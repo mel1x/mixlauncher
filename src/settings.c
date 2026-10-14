@@ -5,7 +5,7 @@ enum {
     SID_DATADIR, SID_ADMIN, SID_EVERYTHING, SID_ABOUT,
     SID_ASPEED, SID_AOPEN, SID_ACLOSE, SID_ASCALE, SID_ACASCADE, SID_AROW, SID_ASTAGGER, SID_ASELECT, SID_ASCROLL, SID_AMENU,
     SID_APAGE, SID_APREVIEW, SID_ARESET, SID_TASKBAR, SID_TBREPLACE, SID_TBICON, SID_TBFILE, SID_MEDIA, SID_MEDIAPOS, SID_MEDIACTL, SID_MEDIAHIDE, SID_MEDIASCROLL, SID_LANG,
-    SID_STYLE, SID_MATCHHL, SID_UPDCHECK, SID_UPDNOW, SID_REDUCED, SID_RMGOTO, SID_POSITION, SID__COUNT
+    SID_STYLE, SID_MATCHHL, SID_UPDCHECK, SID_UPDNOW, SID_REDUCED, SID_RMGOTO, SID_POSITION, SID_STARTPOS, SID__COUNT
 };
 enum { PG_GENERAL, PG_TASKBAR, PG_APPEARANCE, PG_ANIM, PG_SEARCH, PG_ADVANCED, PG_ABOUT, PG__COUNT };
 
@@ -28,9 +28,10 @@ typedef struct SItem {
     Str title, desc;
     int lo, hi, step;
     Str unit;
-    Str opt[4];
+    Str opt[5];
     u32 glyph;
     u8 dep, dep_val;  // shown only while setting `dep` has the value `dep_val` (and is shown itself)
+    bool dep_not;     // ...or, with this, any other value
 } SItem;
 
 static const SItem k_sitems[] = {
@@ -92,20 +93,27 @@ static const SItem k_sitems[] = {
     { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_STYLE, .group = { L"Лаунчер", L"Launcher" },
       .title = { L"Стиль", L"Style" },
       .desc = { L"Стандарт - мягкая подложка с контуром. Raycast - мелкие значки и плотная подложка. "
-                L"Windows 11 - полоска акцента у выбранной строки. Компактный - больше строк на экране",
+                L"Fluent - полоска акцента у выбранной строки. Компактный - больше строк на экране. "
+                L"Windows 11 - как меню Пуск: закреплённые приложения сеткой, учётная запись и питание внизу",
                 L"Standard has a soft outlined highlight. Raycast uses small icons and a solid highlight. "
-                L"Windows 11 marks the selected row with an accent bar. Compact fits more rows on screen" },
-      .opt = { { L"Стандарт", L"Standard" }, { L"Raycast", L"Raycast" }, { L"Windows 11", L"Windows 11" }, { L"Компактный", L"Compact" } } },
-    { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_POSITION, .title = { L"Положение", L"Position" },
+                L"Fluent marks the selected row with an accent bar. Compact fits more rows on screen. "
+                L"Windows 11 looks like Start: a grid of pinned apps, account and power at the bottom" },
+      .opt = { { L"Стандарт", L"Standard" }, { L"Raycast", L"Raycast" }, { L"Fluent", L"Fluent" }, { L"Компактный", L"Compact" },
+               { L"Windows 11", L"Windows 11" } } },
+    { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_STARTPOS, .dep = SID_STYLE, .dep_val = STYLE_START, .title = { L"Положение", L"Position" },
+      .desc = { L"Как меню Пуск: окно выезжает из-под панели задач", L"Like Start: the window slides up from under the taskbar" },
+      .opt = { { L"Слева снизу", L"Bottom left" }, { L"Снизу по центру", L"Bottom center" } } },
+    { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_POSITION, .dep = SID_STYLE, .dep_val = STYLE_START, .dep_not = true,
+      .title = { L"Положение", L"Position" },
       .desc = { L"Снизу - как меню Пуск: окно выезжает из-под панели задач",
                 L"Bottom works like Start: the window slides up from under the taskbar" },
       .opt = { { L"По центру", L"Center" }, { L"Слева снизу", L"Bottom left" }, { L"Снизу по центру", L"Bottom center" } } },
     { .page = PG_APPEARANCE, .kind = SK_TOGGLE, .id = SID_MATCHHL, .title = { L"Подсветка совпадений", L"Highlight matches" },
       .desc = { L"Буквы, по которым нашлись приложение или файл, выделяются жирным",
                 L"The letters that matched the query are drawn in bold" } },
-    { .page = PG_APPEARANCE, .kind = SK_STEPPER, .id = SID_WIDTH, .group = { L"Размер", L"Size" },
+    { .page = PG_APPEARANCE, .kind = SK_STEPPER, .id = SID_WIDTH, .dep = SID_STYLE, .dep_val = STYLE_START, .dep_not = true, .group = { L"Размер", L"Size" },
       .title = { L"Ширина окна", L"Window width" }, .lo = 480, .hi = 1600, .step = 20, .unit = { L"px", L"px" } },
-    { .page = PG_APPEARANCE, .kind = SK_STEPPER, .id = SID_ROWS, .title = { L"Строк в списке", L"Visible rows" },
+    { .page = PG_APPEARANCE, .kind = SK_STEPPER, .id = SID_ROWS, .dep = SID_STYLE, .dep_val = STYLE_START, .dep_not = true, .title = { L"Строк в списке", L"Visible rows" },
       .lo = 4, .hi = 20, .step = 1 },
     { .page = PG_APPEARANCE, .kind = SK_BUTTON, .id = SID_APREVIEW, .title = { L"Проверить", L"Try it" },
       .desc = { L"Открыть лаунчер с текущими настройками. Esc вернёт сюда", L"Open the launcher with the current settings. Esc comes back here" },
@@ -353,6 +361,7 @@ static int sval_applied(int id)
     case SID_THEME: return g_cfg.theme;
     case SID_STYLE: return g_cfg.style;
     case SID_POSITION: return g_cfg.position;
+    case SID_STARTPOS: return launcher_position() == POS_BOTTOM_LEFT ? 0 : 1;
     case SID_UPDCHECK: return g_cfg.update_check;
     case SID_MATCHHL: return g_cfg.match_highlight;
     case SID_LANG: return g_cfg.language;
@@ -409,7 +418,7 @@ static bool item_shown(int i)
     const SItem *it = &k_sitems[i];
     if (!it->dep) return true;
     const SItem *p = sitem(it->dep);
-    return sval(it->dep) == it->dep_val && (!p || item_shown((int)(p - k_sitems)));
+    return (sval(it->dep) == it->dep_val) != it->dep_not && (!p || item_shown((int)(p - k_sitems)));
 }
 
 static void save_int(const char *key, int v)
@@ -583,6 +592,10 @@ static void sapply(const SItem *it, int v)
     case SID_POSITION:
         g_cfg.position = v;
         config_set("position", k_pos_names[v]);
+        break;
+    case SID_STARTPOS:
+        g_cfg.position = v ? POS_BOTTOM_CENTER : POS_BOTTOM_LEFT;
+        config_set("position", k_pos_names[g_cfg.position]);
         break;
     case SID_UPDCHECK:
         g_cfg.update_check = v;

@@ -1,7 +1,8 @@
 enum { BACKDROP_SOLID, BACKDROP_ACRYLIC, BACKDROP_BLUR };
 
-enum { STYLE_STANDARD, STYLE_RAYCAST, STYLE_WIN11, STYLE_COMPACT, STYLE__COUNT };
-static const char *const k_style_names[STYLE__COUNT] = { "standard", "raycast", "windows", "compact" };
+// STYLE_START lays the launcher out like the Windows 11 Start menu; STYLE_FLUENT is the list with an accent bar.
+enum { STYLE_STANDARD, STYLE_RAYCAST, STYLE_FLUENT, STYLE_COMPACT, STYLE_START, STYLE__COUNT };
+static const char *const k_style_names[STYLE__COUNT] = { "standard", "raycast", "fluent", "compact", "windows" };
 
 enum { POS_CENTER, POS_BOTTOM_LEFT, POS_BOTTOM_CENTER, POS__COUNT };
 static const char *const k_pos_names[POS__COUNT] = { "center", "bottom-left", "bottom-center" };
@@ -55,6 +56,13 @@ typedef struct Config {
 
 static Config g_cfg;
 
+// The Start layout always sits at the taskbar: center falls back to bottom center.
+static int launcher_position(void)
+{
+    int p = CLAMP(g_cfg.position, 0, POS__COUNT - 1);
+    return g_cfg.style == STYLE_START && p == POS_CENTER ? POS_BOTTOM_CENTER : p;
+}
+
 static const char k_default_config_ru[] =
     "; MixLauncher - настройки. Удобнее менять в окне настроек (кнопка «Настройки» в лаунчере или Ctrl+,).\r\n"
     "\r\n"
@@ -72,9 +80,10 @@ static const char k_default_config_ru[] =
     "; Фон окна: blur (полупрозрачное стекло, как в macOS) | acrylic (системный акрил Windows 11) | solid\r\n"
     "backdrop = blur\r\n"
     "\r\n"
-    "; Стиль лаунчера: standard | raycast | windows | compact\r\n"
+    "; Стиль лаунчера: standard | raycast | fluent | compact | windows (как меню Пуск Windows 11)\r\n"
     "style = standard\r\n"
-    "; Положение: center (по центру экрана) | bottom-left (слева снизу, как Пуск) | bottom-center (снизу по центру)\r\n"
+    "; Положение: center (по центру экрана) | bottom-left (слева снизу, как Пуск) | bottom-center (снизу по центру).\r\n"
+    "; Стиль windows всегда снизу.\r\n"
     "position = center\r\n"
     "; Подсвечивать совпадения с запросом в названиях (1/0)\r\n"
     "match_highlight = 1\r\n"
@@ -157,9 +166,10 @@ static const char k_default_config_en[] =
     "; Window background: blur (translucent glass, macOS-like) | acrylic (Windows 11 system acrylic) | solid\r\n"
     "backdrop = blur\r\n"
     "\r\n"
-    "; Launcher style: standard | raycast | windows | compact\r\n"
+    "; Launcher style: standard | raycast | fluent | compact | windows (like the Windows 11 Start menu)\r\n"
     "style = standard\r\n"
-    "; Position: center (screen center) | bottom-left (like Start on the left) | bottom-center (like Start in the center)\r\n"
+    "; Position: center (screen center) | bottom-left (like Start on the left) | bottom-center (like Start in the center).\r\n"
+    "; The windows style is always at the bottom.\r\n"
     "position = center\r\n"
     "; Highlight the query matches in names (1/0)\r\n"
     "match_highlight = 1\r\n"

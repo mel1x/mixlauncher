@@ -25,7 +25,7 @@
 - **Commands.** Lock, sleep, restart, shut down, sign out, recycle bin, installed apps (uninstall programs). Sleep, restart, shut down and sign out ask to press Enter again.
 - **Start button.** Custom icon on the Windows 11 Start button; clicking it opens the launcher.
 - **Now playing.** Cover art, title and playback controls for any player, right on the taskbar.
-- **Styles.** Four launcher looks: Standard, Raycast, Windows 11 and Compact. Matches are highlighted in bold.
+- **Styles.** Standard, Raycast, Fluent and Compact lists, and Windows 11: the Start menu look with pinned apps, recommended (most launched) apps, all apps, and account and power buttons. Matches are highlighted in bold.
 - **Position.** In the center of the screen, or at the bottom like Start (left or center), sliding up from under the taskbar.
 - **Updates.** When a new version is released on GitHub, an "Update" button appears in the launcher. The check can be turned off.
 - **No AI, no telemetry.**

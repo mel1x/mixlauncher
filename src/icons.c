@@ -1,4 +1,4 @@
-enum { ICON_KIND_APP, ICON_KIND_FILE };
+enum { ICON_KIND_APP, ICON_KIND_FILE, ICON_KIND_AVATAR };  // avatar: a picture file, cut to a circle
 enum { ICON_EMPTY, ICON_PENDING, ICON_READY, ICON_FAILED };
 
 typedef struct IconEntry {
@@ -288,7 +288,7 @@ static u32 *icon_load(IconReq *r)
     if (SUCCEEDED(IShellItem_QueryInterface(item, &ML_IID_IShellItemImageFactory, (void **)&f)) && f) {
         SIZE sz = { r->px, r->px };
         HBITMAP bmp = NULL;
-        HRESULT hr = IShellItemImageFactory_GetImage(f, sz, SIIGBF_ICONONLY, &bmp);
+        HRESULT hr = r->kind == ICON_KIND_AVATAR ? E_FAIL : IShellItemImageFactory_GetImage(f, sz, SIIGBF_ICONONLY, &bmp);
         if (FAILED(hr)) hr = IShellItemImageFactory_GetImage(f, sz, SIIGBF_RESIZETOFIT, &bmp);
         if (SUCCEEDED(hr) && bmp) {
             px = hbitmap_to_pixels(bmp, r->px);
@@ -297,6 +297,17 @@ static u32 *icon_load(IconReq *r)
         IShellItemImageFactory_Release(f);
     }
     IShellItem_Release(item);
+    if (px && r->kind == ICON_KIND_AVATAR) {
+        f32 c = (f32)r->px * 0.5f;
+        for (int y = 0; y < r->px; y++)
+            for (int x = 0; x < r->px; x++) {
+                f32 dx = (f32)x + 0.5f - c, dy = (f32)y + 0.5f - c;
+                f32 cov = CLAMP(c - sqrtf(dx * dx + dy * dy) + 0.5f, 0.f, 1.f);
+                u32 p = px[y * r->px + x], o = 0;
+                for (int k = 0; k < 32; k += 8) o |= (u32)((f32)((p >> k) & 255) * cov + 0.5f) << k;  // premultiplied: all four scale
+                px[y * r->px + x] = o;
+            }
+    }
     return px;
 }
 

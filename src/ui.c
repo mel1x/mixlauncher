@@ -8,12 +8,14 @@ typedef struct Theme {
 
 enum { ROW_HEADER, ROW_APP, ROW_FILE, ROW_INFO, ROW_VIRTUAL };
 
+enum { CELL_ROW, CELL_TILE, CELL_TITLE, CELL_HINT };  // a full-width row, a Start grid tile, a Start section title, its hint
+
 typedef struct Row {
-    u8 kind;
+    u8 kind, cell;
     App *app;
     FileItem *file;
     const WCHAR *text;
-    f32 y, h;
+    f32 x, y, w, h;
 } Row;
 
 typedef struct AppHit {
@@ -88,6 +90,7 @@ static struct {
     f32 content_h;
     f32 scroll, scroll_target, scroll_v;
     f32 hl_y, hl_h, hl_vy, hl_vh;
+    f32 hl_x, hl_w, hl_vx, hl_vw;
     f64 open_time;
     f32 settings_hover_t;
     f32 sb_t, sb_prev;
@@ -129,6 +132,22 @@ static struct {
     bool menu_open;
     bool settings_after_hide;
 
+    struct {
+        bool all_view;      // "All apps" instead of the pinned grid
+        App *tiles[36];     // pinned
+        int tile_count;
+        App *recs[18];      // recommended: the most launched of the rest
+        int rec_count;
+        int title_btn[4];   // the section title's button, window coords
+        bool title_hover, title_press;
+        f32 title_hover_t;
+        int fb[5][4];       // footer: account, downloads, explorer, settings, power
+        int fb_hover, fb_press;
+        f32 fb_hover_t[5];
+        WCHAR letters[40][2];
+        int letter_count;
+    } st;
+
     u32 dpi;
     f32 s;
     int W, H;
@@ -142,6 +161,23 @@ static bool g_pinned;
 static bool g_other_monitor;
 
 static void ui_invalidate(void) { U.dirty = true; }
+
+// The Windows 11 (Start menu) style, start.c
+static bool st_on(void);
+static void st_build_home(void);
+static void st_refresh_tiles(void);
+static void st_metrics(void);
+static void st_draw_chrome(void);
+static void st_draw_footer(void);
+static void st_draw_cell(Row *r, f32 y, bool selected);
+static void st_draw_highlight(f32 off);
+static bool st_animate(f32 dt);
+static int pin_index(const WCHAR *id);
+static void pin_set(const WCHAR *id, bool on);
+static void pin_to_top(const WCHAR *id);
+static void st_pins_changed(void);
+static void st_menu_pick(int cmd);
+static void open_settings_from_launcher(void);
 
 static bool tag_hit_has(const WCHAR *full);
 
@@ -222,8 +258,9 @@ typedef struct LStyle {
 static const LStyle k_lstyles[STYLE__COUNT] = {
     [STYLE_STANDARD] = { 42, 30, 28, 12, 60, 20, 17, 14, 40, 8, 8, 7, 5, DWC_ROUND, SEL_PILL, false, false },
     [STYLE_RAYCAST] = { 40, 30, 20, 12, 56, 18, 16, 14, 40, 8, 8, 5, 5, DWC_ROUND, SEL_FILL, true, true },
-    [STYLE_WIN11] = { 40, 32, 24, 14, 56, 18, 16, 14, 42, 6, 4, 4, 4, DWC_ROUND, SEL_BAR, false, false },
+    [STYLE_FLUENT] = { 40, 32, 24, 14, 56, 18, 16, 14, 42, 6, 4, 4, 4, DWC_ROUND, SEL_BAR, false, false },
     [STYLE_COMPACT] = { 32, 26, 20, 10, 48, 16, 15, 13, 36, 6, 6, 5, 4, DWC_ROUND_SMALL, SEL_PILL, false, false },
+    [STYLE_START] = { 44, 34, 32, 14, 66, 14, 14, 14, 66, 39, 4, 4, 4, DWC_ROUND, SEL_PILL, false, false },
 };
 
 static const LStyle *LS(void) { return &k_lstyles[CLAMP(g_cfg.style, 0, STYLE__COUNT - 1)]; }
@@ -264,6 +301,10 @@ static void ui_metrics(u32 dpi)
     U.s = (f32)U.dpi / 96.f;
     U.search_h = SR(LS()->search_h);
     U.footer_h = SR(LS()->footer_h);
+    if (st_on()) {
+        st_metrics();
+        return;
+    }
     f32 list_h = SR(g_cfg.rows * ROW_H + 2 * LIST_PAD);
     U.W = (int)SR((f32)g_cfg.width);
     U.H = (int)(U.search_h + 1 + list_h + 1 + U.footer_h);
@@ -285,6 +326,8 @@ static Row *row_add(u8 kind, f32 h)
     Row *r = &U.rows[U.row_count++];
     memset(r, 0, sizeof *r);
     r->kind = kind;
+    r->x = SR(LS()->inset);
+    r->w = (f32)U.W - r->x * 2;
     r->y = U.content_h;
     r->h = h;
     U.content_h += h;
@@ -351,7 +394,9 @@ static void rebuild_rows(bool keep_sel)
     U.row_count = 0;
     U.files_end_y = -1;
     U.content_h = SR(LIST_PAD);
-    if (U.qlen == 0) {
+    if (U.qlen == 0 && st_on()) {
+        st_build_home();
+    } else if (U.qlen == 0) {
         if (!U.apps) row_info(TR("Индексирую приложения…", "Indexing applications…"));
         if (U.frequent_count) {
             row_header(TR("Часто используемые", "Frequently used"));
@@ -414,8 +459,10 @@ static void snap_highlight(void)
     if (row_selectable(U.sel)) {
         U.hl_y = U.rows[U.sel].y;
         U.hl_h = U.rows[U.sel].h;
+        U.hl_x = U.rows[U.sel].x;
+        U.hl_w = U.rows[U.sel].w;
     }
-    U.hl_vy = U.hl_vh = 0;
+    U.hl_vy = U.hl_vh = U.hl_vx = U.hl_vw = 0;
 }
 
 static void ensure_visible(int idx, bool animate)
@@ -499,6 +546,7 @@ static void refresh_empty_view(void)
         f->flags = rf[i].folder ? FI_FOLDER : 0;
         f->icon_key = icon_key_for_file(f->full, rf[i].folder);
     }
+    if (st_on()) st_refresh_tiles();
 }
 
 static void search_apps(void)
@@ -954,14 +1002,15 @@ static void ui_place_window(void)
     int x = wa.left + ((wa.right - wa.left) - U.W) / 2;
     int y = wa.top + (int)((f32)((wa.bottom - wa.top) - U.H) * 0.28f);
     U.mon = mon;
-    U.slide = g_cfg.position != POS_CENTER;
+    int pos = launcher_position();
+    U.slide = pos != POS_CENTER;
     U.slide_dy = 0;
     if (U.slide) {
         int m = (int)SR(12);
         HWND tray = taskbar_on_monitor(mon);
         RECT tr;
         bool top = tray && GetWindowRect(tray, &tr) && tr.bottom - mr.top < mr.bottom - tr.top;  // taskbar at the top: slide down from it
-        if (g_cfg.position == POS_BOTTOM_LEFT) x = wa.left + m;
+        if (pos == POS_BOTTOM_LEFT) x = wa.left + m;
         y = top ? wa.top + m : wa.bottom - U.H - m;
         // Start fully behind the taskbar edge, but never reach into a monitor beyond this one.
         U.slide_dy = top ? wa.top - (y + U.H) : wa.bottom - y;
@@ -1196,6 +1245,10 @@ static void ui_show(void)
     slide_below_taskbar();
 
     bool keep = U.qlen && (now - U.hide_time) < (f64)g_cfg.keep_query_seconds;
+    U.st.all_view = false;
+    U.st.fb_hover = U.st.fb_press = -1;
+    U.st.title_press = false;
+    U.st.title_hover = false;
     if (!keep) {
         U.qlen = 0;
         U.q[0] = 0;
@@ -1217,6 +1270,7 @@ static void ui_show(void)
     U.armed = NULL;
     U.cm.open = U.cm.closing = false;
     U.cm.press = -1;
+    U.tg.press = -1;
     U.sub_text = NULL;
     U.sub_t = 0;
     U.caret_on = true;
@@ -1645,13 +1699,28 @@ static void draw_footer(f32 y0)
     }
 }
 
+// The query field: text from x0 to x1, centered on cy. The Start style puts it in a rounded box.
+static void search_field(f32 *x0, f32 *x1, f32 *cy)
+{
+    if (st_on()) {
+        f32 m = SR(32);
+        *x0 = m + SR(42);
+        *x1 = (f32)U.W - m - SR(16);
+        *cy = floorf(U.search_h * 0.5f + SR(4));
+        return;
+    }
+    *x0 = SR(LS()->inset + 42);
+    *x1 = (f32)U.W - SR(20);
+    *cy = U.search_h * 0.5f;
+}
+
 static void draw_search(void)
 {
     Theme *t = &U.th;
-    f32 cy = U.search_h * 0.5f;
     const LStyle *ls = LS();
-    text_draw_icon(0xE721, S(ls->search_icon), SR(ls->inset + 19), cy, U.qlen ? t->text : t->dim);
-    f32 fx0 = SR(ls->inset + 42), fx1 = (f32)U.W - SR(20);
+    f32 fx0, fx1, cy;
+    search_field(&fx0, &fx1, &cy);
+    text_draw_icon(0xE721, S(ls->search_icon), fx0 - SR(23), cy, U.qlen ? t->text : t->dim);
     f32 fs = S(ls->search_fs);
     f32 base = floorf(cy + font_cap_height(FONT_DISPLAY, fs) * 0.5f + 0.5f);
     f32 sel_top = floorf(cy - fs * 0.62f), sel_h = floorf(fs * 1.24f);
@@ -1685,8 +1754,12 @@ static void ui_draw(void)
     hl_prepare();
     r_begin();
     r_rect(0, 0, (f32)U.W, (f32)U.H, U.backdrop_ok ? t->bg : t->bg_solid, 0);
-    draw_search();
-    r_rect(0, U.search_h, (f32)U.W, 1, t->sep, 0);
+    if (st_on()) {
+        st_draw_chrome();
+    } else {
+        draw_search();
+        r_rect(0, U.search_h, (f32)U.W, 1, t->sep, 0);
+    }
 
     r_set_clip(0, U.list_y0, (f32)U.W, U.list_y1);
     f32 off = U.list_y0 - floorf(U.scroll + 0.5f);
@@ -1701,7 +1774,9 @@ static void ui_draw(void)
         const LStyle *ls = LS();
         f32 hy = floorf(off + U.hl_y + 0.5f), hh = floorf(U.hl_h + 0.5f);
         f32 hx = SR(ls->inset), hw = (f32)U.W - hx * 2, hr = SR(ls->sel_r);
-        if (ls->sel == SEL_PILL) {
+        if (st_on()) {
+            st_draw_highlight(off);
+        } else if (ls->sel == SEL_PILL) {
             r_rect(hx, hy, hw, hh, t->sel, hr);
         } else if (ls->sel == SEL_FILL) {
             r_rect(hx, hy, hw, hh, t->dark ? RGBA(255, 255, 255, 32) : RGBA(0, 0, 0, 20), hr);
@@ -1722,10 +1797,11 @@ static void ui_draw(void)
             R.opacity = e;
             dy = floorf((1.f - e) * S(8) + 0.5f);
         }
-        draw_row(r, off + r->y + dy, i == U.sel);
+        if (r->cell) st_draw_cell(r, off + r->y + dy, i == U.sel);
+        else draw_row(r, off + r->y + dy, i == U.sel);
     }
     u32 note_col;
-    const WCHAR *note = row_note(sel_row(), &note_col);
+    const WCHAR *note = sel_row() && sel_row()->cell ? NULL : row_note(sel_row(), &note_col);
     if (note) {
         U.sub_text = note;
         U.sub_col = note_col;
@@ -1734,7 +1810,8 @@ static void ui_draw(void)
         f32 nfs = S(12.5f), cy = off + U.hl_y + U.hl_h * 0.5f;
         f32 nw = text_width(FONT_TEXT, nfs, U.sub_text, -1);
         R.opacity = hl_op * U.sub_t;
-        text_draw(FONT_TEXT, nfs, floorf((f32)U.W - SR(20) - nw), floorf(cy + font_cap_height(FONT_TEXT, nfs) * 0.5f + 0.5f), U.sub_text, -1,
+        f32 nr = st_on() ? U.hl_x + U.hl_w - SR(12) : (f32)U.W - SR(20);
+        text_draw(FONT_TEXT, nfs, floorf(nr - nw), floorf(cy + font_cap_height(FONT_TEXT, nfs) * 0.5f + 0.5f), U.sub_text, -1,
                   U.sub_col);
     }
     R.opacity = 1.f;
@@ -1748,8 +1825,12 @@ static void ui_draw(void)
     }
 
     f32 fy = U.list_y1;
-    r_rect(0, fy, (f32)U.W, 1, t->sep, 0);
-    draw_footer(fy + 1);
+    if (st_on()) {
+        st_draw_footer();
+    } else {
+        r_rect(0, fy, (f32)U.W, 1, t->sep, 0);
+        draw_footer(fy + 1);
+    }
     cm_draw();
     tg_draw();
 }
@@ -1773,12 +1854,17 @@ static void animate(f32 dt)
     anim |= spring_step(&U.scroll, &U.scroll_v, U.scroll_target, anim_omega(g_cfg.anim_scroll_ms), dt);
     if (row_selectable(U.sel)) {
         f32 ty = U.rows[U.sel].y, th = U.rows[U.sel].h;
+        f32 tx = U.rows[U.sel].x, tw = U.rows[U.sel].w;
         if (fabsf(ty - U.hl_y) > list_height()) {
             U.hl_y = ty;
             U.hl_vy = 0;
+            U.hl_x = tx;
+            U.hl_vx = 0;
         }
         anim |= spring_step(&U.hl_y, &U.hl_vy, ty, anim_omega(g_cfg.anim_select_ms), dt);
         anim |= spring_step(&U.hl_h, &U.hl_vh, th, anim_omega(g_cfg.anim_select_ms), dt);
+        anim |= spring_step(&U.hl_x, &U.hl_vx, tx, anim_omega(g_cfg.anim_select_ms), dt);
+        anim |= spring_step(&U.hl_w, &U.hl_vw, tw, anim_omega(g_cfg.anim_select_ms), dt);
     }
     anim |= approach(&U.settings_hover_t, U.settings_hover ? 1.f : 0.f, 22.f, dt);
     anim |= approach(&U.update_hover_t, U.update_hover ? 1.f : 0.f, 22.f, dt);
@@ -1789,7 +1875,8 @@ static void animate(f32 dt)
     bool sb_on = max_scroll() > 0 && (U.sb_hot || recent);
     anim |= approach(&U.sb_t, sb_on ? 1.f : 0.f, sb_on ? 20.f : 7.f, dt);
     if (recent && !U.sb_hot && max_scroll() > 0) anim = true;
-    anim |= approach(&U.sub_t, row_selectable(U.sel) && U.rows[U.sel].kind == ROW_APP ? 1.f : 0.f, 24.f, dt);
+    anim |= approach(&U.sub_t, row_selectable(U.sel) && U.rows[U.sel].kind == ROW_APP && !U.rows[U.sel].cell ? 1.f : 0.f, 24.f, dt);
+    if (st_on()) anim |= st_animate(dt);
     anim |= cm_animate(dt);
     anim |= tg_animate(dt);
     if (slide_spring()) {
@@ -1843,12 +1930,15 @@ static void ui_render(void)
     if (U.closing && U.vis <= 0.f) ui_hide_finish();
 }
 
-static int row_at(int y)
+static int row_at(int x, int y)
 {
     if (y < U.list_y0 || y >= U.list_y1) return -1;
     f32 cy = (f32)y - U.list_y0 + U.scroll;
-    int i = row_first_below(cy);
-    return i < U.row_count && cy >= U.rows[i].y ? i : -1;
+    for (int i = row_first_below(cy); i < U.row_count && U.rows[i].y <= cy; i++) {
+        Row *r = &U.rows[i];
+        if (cy < r->y + r->h && (r->cell != CELL_TILE || ((f32)x >= r->x && (f32)x < r->x + r->w))) return i;
+    }
+    return -1;
 }
 
 static int text_index_at(int x)
@@ -1857,7 +1947,9 @@ static int text_index_at(int x)
     static f32 offs[Q_MAX + 2];
     f32 fs = S(LS()->search_fs);
     text_offsets(FONT_DISPLAY, fs, U.q, U.qlen, offs);
-    f32 lx = (f32)x - SR(LS()->inset + 42) + floorf(U.q_scroll);
+    f32 fx0, fx1, cy;
+    search_field(&fx0, &fx1, &cy);
+    f32 lx = (f32)x - fx0 + floorf(U.q_scroll);
     int best = 0;
     for (int i = 0; i <= U.qlen; i++)
         if (fabsf(offs[i] - lx) < fabsf(offs[best] - lx)) best = i;
