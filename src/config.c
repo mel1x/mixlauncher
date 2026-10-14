@@ -3,6 +3,9 @@ enum { BACKDROP_SOLID, BACKDROP_ACRYLIC, BACKDROP_BLUR };
 enum { STYLE_STANDARD, STYLE_RAYCAST, STYLE_WIN11, STYLE_COMPACT, STYLE__COUNT };
 static const char *const k_style_names[STYLE__COUNT] = { "standard", "raycast", "windows", "compact" };
 
+enum { POS_CENTER, POS_BOTTOM_LEFT, POS_BOTTOM_CENTER, POS__COUNT };
+static const char *const k_pos_names[POS__COUNT] = { "center", "bottom-left", "bottom-center" };
+
 enum { TBI_DIAMOND, TBI_GRID, TBI_LINES, TBI_CUSTOM, TBI__COUNT };
 static const char *const k_tbi_names[TBI__COUNT] = { "diamond", "grid", "lines", "custom" };
 
@@ -18,6 +21,7 @@ typedef struct Config {
     int   theme;
     int   backdrop;
     int   style;
+    int   position;
     bool  match_highlight;
     int   width;
     int   rows;
@@ -70,6 +74,8 @@ static const char k_default_config_ru[] =
     "\r\n"
     "; Стиль лаунчера: standard | raycast | windows | compact\r\n"
     "style = standard\r\n"
+    "; Положение: center (по центру экрана) | bottom-left (слева снизу, как Пуск) | bottom-center (снизу по центру)\r\n"
+    "position = center\r\n"
     "; Подсвечивать совпадения с запросом в названиях (1/0)\r\n"
     "match_highlight = 1\r\n"
     "\r\n"
@@ -153,6 +159,8 @@ static const char k_default_config_en[] =
     "\r\n"
     "; Launcher style: standard | raycast | windows | compact\r\n"
     "style = standard\r\n"
+    "; Position: center (screen center) | bottom-left (like Start on the left) | bottom-center (like Start in the center)\r\n"
+    "position = center\r\n"
     "; Highlight the query matches in names (1/0)\r\n"
     "match_highlight = 1\r\n"
     "\r\n"
@@ -415,6 +423,7 @@ static bool config_value(const char *k, char *out, size_t cap)
     else if (!strcmp(k, "theme")) snprintf(out, cap, "%s", g_cfg.theme == 1 ? "dark" : g_cfg.theme == 2 ? "light" : "auto");
     else if (!strcmp(k, "backdrop")) snprintf(out, cap, "%s", g_cfg.backdrop == BACKDROP_SOLID ? "solid" : g_cfg.backdrop == BACKDROP_ACRYLIC ? "acrylic" : "blur");
     else if (!strcmp(k, "style")) snprintf(out, cap, "%s", k_style_names[CLAMP(g_cfg.style, 0, STYLE__COUNT - 1)]);
+    else if (!strcmp(k, "position")) snprintf(out, cap, "%s", k_pos_names[CLAMP(g_cfg.position, 0, POS__COUNT - 1)]);
     else if (!strcmp(k, "match_highlight")) snprintf(out, cap, "%d", g_cfg.match_highlight ? 1 : 0);
     else if (!strcmp(k, "width")) snprintf(out, cap, "%d", g_cfg.width);
     else if (!strcmp(k, "rows")) snprintf(out, cap, "%d", g_cfg.rows);
@@ -521,6 +530,9 @@ static void config_load(void)
         else if (!_stricmp(k, "style")) {
             for (int i = 0; i < STYLE__COUNT; i++)
                 if (!_stricmp(v, k_style_names[i])) g_cfg.style = i;
+        } else if (!_stricmp(k, "position")) {
+            for (int i = 0; i < POS__COUNT; i++)
+                if (!_stricmp(v, k_pos_names[i])) g_cfg.position = i;
         } else if (!_stricmp(k, "match_highlight")) g_cfg.match_highlight = parse_bool(v);
         else if (!_stricmp(k, "width")) g_cfg.width = CLAMP(atoi(v), 480, 1600);
         else if (!_stricmp(k, "rows")) g_cfg.rows = CLAMP(atoi(v), 4, 20);

@@ -39,6 +39,10 @@ static struct {
     int alpha;
     HWND prev_fg;
     bool app_mode;
+    bool slide;  // bottom positions: the window slides out from under the taskbar like Start
+    HMONITOR mon;
+    int win_x, win_y, slide_dy, slide_y;
+    f32 slide_off, slide_v;  // offset from the resting place and its velocity, px
     bool no_focus_restore;
     int settings_btn[4], update_btn[4];
     bool settings_hover, press_settings, update_hover, press_update;
@@ -925,6 +929,9 @@ static BOOL CALLBACK find_other_monitor(HMONITOR m, HDC dc, LPRECT r, LPARAM lp)
     return TRUE;
 }
 
+static bool anims_enabled(void);
+static HWND taskbar_on_monitor(HMONITOR mon);
+
 static void ui_place_window(void)
 {
     POINT pt;
@@ -943,10 +950,30 @@ static void ui_place_window(void)
         ui_metrics(dpi);
         icons_reset(ui_icon_px());
     }
-    RECT wa = mi.rcWork;
+    RECT wa = mi.rcWork, mr = mi.rcMonitor;
     int x = wa.left + ((wa.right - wa.left) - U.W) / 2;
     int y = wa.top + (int)((f32)((wa.bottom - wa.top) - U.H) * 0.28f);
-    SetWindowPos(g_hwnd, U.app_mode ? HWND_NOTOPMOST : HWND_TOPMOST, x, y, U.W, U.H, SWP_NOACTIVATE);
+    U.mon = mon;
+    U.slide = g_cfg.position != POS_CENTER;
+    U.slide_dy = 0;
+    if (U.slide) {
+        int m = (int)SR(12);
+        HWND tray = taskbar_on_monitor(mon);
+        RECT tr;
+        bool top = tray && GetWindowRect(tray, &tr) && tr.bottom - mr.top < mr.bottom - tr.top;  // taskbar at the top: slide down from it
+        if (g_cfg.position == POS_BOTTOM_LEFT) x = wa.left + m;
+        y = top ? wa.top + m : wa.bottom - U.H - m;
+        // Start fully behind the taskbar edge, but never reach into a monitor beyond this one.
+        U.slide_dy = top ? wa.top - (y + U.H) : wa.bottom - y;
+        RECT past = top ? (RECT){ x, mr.top - U.H, x + U.W, mr.top } : (RECT){ x, mr.bottom, x + U.W, mr.bottom + U.H };
+        if (MonitorFromRect(&past, MONITOR_DEFAULTTONULL)) U.slide_dy = top ? mr.top - y : mr.bottom - (y + U.H);
+    }
+    U.win_x = x;
+    U.win_y = y;
+    U.slide_y = anims_enabled() ? U.slide_dy : 0;
+    U.slide_off = (f32)U.slide_y;
+    U.slide_v = 0;
+    SetWindowPos(g_hwnd, U.app_mode ? HWND_NOTOPMOST : HWND_TOPMOST, x, y + U.slide_y, U.W, U.H, SWP_NOACTIVATE);
     r_resize(U.W, U.H);
 }
 
@@ -968,6 +995,8 @@ static f32 anim_omega(int ms)
     return t > 0.001f ? 4.7f / t : 0.f;
 }
 
+static f32 slide_omega(void) { return anim_omega(MAX(g_cfg.anim_open_ms, g_cfg.anim_close_ms)); }
+
 static f32 vis_curve(f32 v, bool opening)
 {
     v = CLAMP(v, 0.f, 1.f);
@@ -975,10 +1004,17 @@ static f32 vis_curve(f32 v, bool opening)
     return v * v;
 }
 
-static f32 vis_eased(void) { return vis_curve(U.vis, U.vis_target > 0.5f); }
+// The slide is a spring: U.vis follows its position, so no curve on top.
+static bool slide_spring(void) { return U.slide && U.slide_dy; }
+
+static f32 vis_eased(void) { return slide_spring() ? CLAMP(U.vis, 0.f, 1.f) : vis_curve(U.vis, U.vis_target > 0.5f); }
 
 static void vis_set_direction(bool opening)
 {
+    if (slide_spring()) {  // keeps its position and velocity and just turns around
+        U.vis_target = opening ? 1.f : 0.f;
+        return;
+    }
     f32 a = vis_eased();
     U.vis_target = opening ? 1.f : 0.f;
     U.vis = opening ? 1.f - sqrtf(sqrtf(1.f - a)) : sqrtf(a);
@@ -999,11 +1035,22 @@ static bool rows_cascading(f64 now)
 
 static void apply_window_alpha(void)
 {
-    int a = (int)(vis_eased() * 255.f + 0.5f);
+    f32 v = vis_eased();
+    if (U.slide) v = MIN(v * 2.f, 1.f);  // the slide carries the motion, the fade only softens its start
+    int a = (int)(v * 255.f + 0.5f);
     if (a != U.alpha) {
         U.alpha = a;
         SetLayeredWindowAttributes(g_hwnd, 0, (BYTE)a, LWA_ALPHA);
     }
+}
+
+static void apply_window_slide(void)
+{
+    if (!U.slide) return;
+    int y = (int)lroundf(U.slide_off);
+    if (y == U.slide_y) return;
+    U.slide_y = y;
+    SetWindowPos(g_hwnd, NULL, U.win_x, U.win_y + y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 static void set_click_through(bool on)
@@ -1033,6 +1080,14 @@ static HWND taskbar_on_monitor(HMONITOR mon)
     for (h = NULL; (h = FindWindowExW(NULL, h, L"Shell_SecondaryTrayWnd", NULL)) != NULL;)
         if (MonitorFromWindow(h, MONITOR_DEFAULTTONULL) == mon) return h;
     return NULL;
+}
+
+// Right under the taskbar in z-order, so the slide comes out from beneath it.
+static void slide_below_taskbar(void)
+{
+    if (!U.slide || U.app_mode) return;
+    HWND tray = taskbar_on_monitor(U.mon);
+    if (tray) SetWindowPos(g_hwnd, tray, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
 // Fullscreen app over the taskbar: open as a regular window so the shell brings the taskbar back.
@@ -1108,6 +1163,7 @@ static void ui_show(void)
         hook_set_visible(true);
         set_click_through(false);
         if (!g_pinned) force_foreground(g_hwnd);
+        slide_below_taskbar();
         U.caret_on = true;
         SetTimer(g_hwnd, TIMER_CARET, GetCaretBlinkTime(), NULL);
         U.animating = true;
@@ -1137,6 +1193,7 @@ static void ui_show(void)
         if (GetForegroundWindow() != g_hwnd) log_msg("show: could not take foreground");
     }
     if (U.app_mode) taskbar_button_remove();
+    slide_below_taskbar();
 
     bool keep = U.qlen && (now - U.hide_time) < (f64)g_cfg.keep_query_seconds;
     if (!keep) {
@@ -1166,6 +1223,7 @@ static void ui_show(void)
     U.visible = true;
     U.closing = false;
     U.vis = anims_enabled() ? 0.f : 1.f;
+    U.slide_v = -slide_omega() * U.slide_off;  // starts fast and decelerates, like Start
     U.open_time = anims_enabled() ? now : 0;
     U.settings_hover_t = 0;
     U.sb_t = U.sb_prev = 0;
@@ -1734,7 +1792,16 @@ static void animate(f32 dt)
     anim |= approach(&U.sub_t, row_selectable(U.sel) && U.rows[U.sel].kind == ROW_APP ? 1.f : 0.f, 24.f, dt);
     anim |= cm_animate(dt);
     anim |= tg_animate(dt);
-    if (U.vis != U.vis_target) {
+    if (slide_spring()) {
+        // One speed both ways, so a reopen while it closes (or the other way) turns it around mid-flight.
+        f32 target = U.vis_target > 0.5f ? 0.f : (f32)U.slide_dy;
+        anim |= spring_step(&U.slide_off, &U.slide_v, target, slide_omega(), dt);
+        if (U.vis_target < 0.5f && fabsf(target - U.slide_off) < fabsf(target) * 0.04f) {  // faded out already, skip the spring's tail
+            U.slide_off = target;
+            U.slide_v = 0;
+        }
+        U.vis = U.slide_off == target ? U.vis_target : 1.f - U.slide_off / (f32)U.slide_dy;
+    } else if (U.vis != U.vis_target) {
         f32 open = anim_sec(g_cfg.anim_open_ms), close = anim_sec(g_cfg.anim_close_ms);
         if (U.vis_target > U.vis) U.vis = open > 0.f ? MIN(U.vis + dt / open, U.vis_target) : U.vis_target;
         else U.vis = close > 0.f ? MAX(U.vis - dt / close, U.vis_target) : U.vis_target;
@@ -1762,7 +1829,7 @@ static void ui_render(void)
     files_load_more();
     f32 v = vis_eased();
     f32 s0 = (f32)g_cfg.anim_open_scale / 100.f;
-    R.scale = (U.vis >= 1.f && U.vis_target >= 1.f) ? 1.f : U.closing ? 0.985f + 0.015f * v : s0 + (1.f - s0) * v;
+    R.scale = (U.slide || (U.vis >= 1.f && U.vis_target >= 1.f)) ? 1.f : U.closing ? 0.985f + 0.015f * v : s0 + (1.f - s0) * v;
     ui_draw();
     if (F.overflow) {
         font_reset_atlas();
@@ -1770,6 +1837,7 @@ static void ui_render(void)
         F.overflow = false;
     }
     apply_window_alpha();
+    apply_window_slide();
     r_end_and_present();
     U.dirty = false;
     if (U.closing && U.vis <= 0.f) ui_hide_finish();

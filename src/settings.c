@@ -5,7 +5,7 @@ enum {
     SID_DATADIR, SID_ADMIN, SID_EVERYTHING, SID_ABOUT,
     SID_ASPEED, SID_AOPEN, SID_ACLOSE, SID_ASCALE, SID_ACASCADE, SID_AROW, SID_ASTAGGER, SID_ASELECT, SID_ASCROLL, SID_AMENU,
     SID_APAGE, SID_APREVIEW, SID_ARESET, SID_TASKBAR, SID_TBREPLACE, SID_TBICON, SID_TBFILE, SID_MEDIA, SID_MEDIAPOS, SID_MEDIACTL, SID_MEDIAHIDE, SID_MEDIASCROLL, SID_LANG,
-    SID_STYLE, SID_MATCHHL, SID_UPDCHECK, SID_UPDNOW, SID_REDUCED, SID_RMGOTO, SID__COUNT
+    SID_STYLE, SID_MATCHHL, SID_UPDCHECK, SID_UPDNOW, SID_REDUCED, SID_RMGOTO, SID_POSITION, SID__COUNT
 };
 enum { PG_GENERAL, PG_TASKBAR, PG_APPEARANCE, PG_ANIM, PG_SEARCH, PG_ADVANCED, PG_ABOUT, PG__COUNT };
 
@@ -96,6 +96,10 @@ static const SItem k_sitems[] = {
                 L"Standard has a soft outlined highlight. Raycast uses small icons and a solid highlight. "
                 L"Windows 11 marks the selected row with an accent bar. Compact fits more rows on screen" },
       .opt = { { L"Стандарт", L"Standard" }, { L"Raycast", L"Raycast" }, { L"Windows 11", L"Windows 11" }, { L"Компактный", L"Compact" } } },
+    { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_POSITION, .title = { L"Положение", L"Position" },
+      .desc = { L"Снизу - как меню Пуск: окно выезжает из-под панели задач",
+                L"Bottom works like Start: the window slides up from under the taskbar" },
+      .opt = { { L"По центру", L"Center" }, { L"Слева снизу", L"Bottom left" }, { L"Снизу по центру", L"Bottom center" } } },
     { .page = PG_APPEARANCE, .kind = SK_TOGGLE, .id = SID_MATCHHL, .title = { L"Подсветка совпадений", L"Highlight matches" },
       .desc = { L"Буквы, по которым нашлись приложение или файл, выделяются жирным",
                 L"The letters that matched the query are drawn in bold" } },
@@ -348,6 +352,7 @@ static int sval_applied(int id)
     case SID_AUTOSTART: return SW.autostart;
     case SID_THEME: return g_cfg.theme;
     case SID_STYLE: return g_cfg.style;
+    case SID_POSITION: return g_cfg.position;
     case SID_UPDCHECK: return g_cfg.update_check;
     case SID_MATCHHL: return g_cfg.match_highlight;
     case SID_LANG: return g_cfg.language;
@@ -574,6 +579,10 @@ static void sapply(const SItem *it, int v)
         config_set("style", k_style_names[v]);
         U.dpi = 0;
         U.backdrop_ok = backdrop_apply(g_hwnd);
+        break;
+    case SID_POSITION:
+        g_cfg.position = v;
+        config_set("position", k_pos_names[v]);
         break;
     case SID_UPDCHECK:
         g_cfg.update_check = v;

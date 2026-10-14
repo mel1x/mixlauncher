@@ -365,7 +365,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     bool opt_show = false, opt_settings = false;
     const WCHAR *opt_query = NULL, *opt_update_as = NULL;
     DWORD opt_after_update = 0;
-    int opt_backdrop = -1, opt_theme = -1, opt_lang = -1, opt_style = -1;
+    int opt_backdrop = -1, opt_theme = -1, opt_lang = -1, opt_style = -1, opt_position = -1;
     for (int i = 1; i < argc; i++) {
         if (!wcscmp(argv[i], L"--exit")) {
             HWND other = FindWindowW(WINDOW_CLASS, NULL);
@@ -409,6 +409,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
             for (int k = 0; k < STYLE__COUNT; k++)
                 if (!_wcsicmp(argv[i], k == STYLE_RAYCAST ? L"raycast" : k == STYLE_WIN11 ? L"windows" : k == STYLE_COMPACT ? L"compact" : L"standard"))
                     opt_style = k;
+        } else if (!wcscmp(argv[i], L"--position") && i + 1 < argc) {
+            i++;
+            opt_position = !wcscmp(argv[i], L"bottom-left") ? POS_BOTTOM_LEFT : !wcscmp(argv[i], L"bottom-center") ? POS_BOTTOM_CENTER : POS_CENTER;
         } else if (!wcscmp(argv[i], L"--lang") && i + 1 < argc) {
             i++;
             opt_lang = !wcscmp(argv[i], L"ru") ? 1 : !wcscmp(argv[i], L"en") ? 2 : 0;
@@ -455,6 +458,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     if (opt_backdrop >= 0) g_cfg.backdrop = opt_backdrop;
     if (opt_theme >= 0) g_cfg.theme = opt_theme;
     if (opt_style >= 0) g_cfg.style = opt_style;
+    if (opt_position >= 0) g_cfg.position = opt_position;
     if (opt_lang >= 0) {
         g_cfg.language = opt_lang;
         lang_apply();
