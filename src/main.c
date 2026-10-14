@@ -15,6 +15,7 @@
 #include "update.c"
 #include "tray.c"
 #include "ui.c"
+#include "popmenu.c"
 #include "settings.c"
 #include "taskbar.c"
 #include "media.c"
@@ -23,24 +24,9 @@
 
 enum { TM_OPEN = 1, TM_SETTINGS, TM_EXIT };
 
-static void tray_menu(void)
+static void tray_pick(int id)
 {
-    HMENU m = CreatePopupMenu();
-    AppendMenuW(m, MF_STRING | MF_DEFAULT, TM_OPEN, TR("Открыть MixLauncher", "Open MixLauncher"));
-    AppendMenuW(m, MF_STRING, TM_SETTINGS, TR("Настройки…", "Settings…"));
-    AppendMenuW(m, MF_SEPARATOR, 0, NULL);
-    AppendMenuW(m, MF_STRING, TM_EXIT, TR("Выход", "Exit"));
-    theme_update();
-    menus_set_dark(U.th.dark);
-    POINT pt;
-    GetCursorPos(&pt);
-    U.menu_open = true;
-    SetForegroundWindow(g_hwnd);
-    int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, pt.x, pt.y, 0, g_hwnd, NULL);
-    PostMessageW(g_hwnd, WM_NULL, 0, 0);
-    U.menu_open = false;
-    DestroyMenu(m);
-    switch (cmd) {
+    switch (id) {
     case TM_OPEN:
         ui_show();
         break;
@@ -51,6 +37,19 @@ static void tray_menu(void)
         PostMessageW(g_hwnd, WM_APP_EXIT, 0, 0);
         break;
     }
+}
+
+static void tray_menu(void)
+{
+    PmItem items[] = {
+        { TM_OPEN, TR("Открыть MixLauncher", "Open MixLauncher"), 0xE721 },
+        { TM_SETTINGS, TR("Настройки", "Settings"), 0xE713 },
+        { 0 },
+        { TM_EXIT, TR("Выход", "Exit"), 0xE7E8 },
+    };
+    POINT pt;
+    GetCursorPos(&pt);
+    pm_open(items, countof(items), pt, tray_pick);
 }
 
 static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
@@ -211,6 +210,9 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_APP_MEDIA:
         media_sync();
+        return 0;
+    case WM_APP_AUTOSTART:
+        settings_autostart_done((int)wp, lp != 0);
         return 0;
     case WM_APP_UPDATE:
         upd_on_message();
@@ -574,6 +576,11 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
             settings_render();
             rendered = true;
             anim |= SW.animating;
+        }
+        if (pm_needs_render()) {
+            pm_render();
+            rendered = true;
+            anim |= PM.animating;
         }
         if (U.visible && (U.dirty || U.animating)) {
             ui_render();

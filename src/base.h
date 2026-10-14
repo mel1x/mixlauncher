@@ -430,6 +430,7 @@ enum {
     WM_APP_TASKBAR,
     WM_APP_MEDIA,
     WM_APP_UPDATE,
+    WM_APP_AUTOSTART,
 };
 
 static HWND g_hwnd;

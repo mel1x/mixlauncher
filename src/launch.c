@@ -104,6 +104,7 @@ static void run_command(u8 cmd)
         if (!g_elevated || !shell_exec_unelevated(L"shell:RecycleBinFolder", NULL, NULL, NULL)) shell_exec(NULL, L"shell:RecycleBinFolder", NULL, NULL);
         break;
     case CMD_UNINSTALL:
+    case CMD_ADDREMOVE:
         if (!g_elevated || !shell_exec_unelevated(L"ms-settings:appsfeatures", NULL, NULL, NULL)) shell_exec(NULL, L"ms-settings:appsfeatures", NULL, NULL);
         break;
     }

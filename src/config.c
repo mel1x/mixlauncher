@@ -29,12 +29,14 @@ typedef struct Config {
     bool  update_check;
     bool  animations;
     bool  taskbar_button;
+    bool  taskbar_replace_icon;
     int   taskbar_icon;
     WCHAR taskbar_icon_path[MAX_PATH];
     bool  media_widget;
     int   media_position;
     bool  media_controls;
     bool  media_hide_paused;
+    bool  media_marquee;
     int   anim_speed;
     int   anim_open_ms, anim_close_ms;
     int   anim_open_scale;
@@ -92,8 +94,10 @@ static const char k_default_config_ru[] =
     "; Проверять обновления на GitHub раз в несколько часов (1/0)\r\n"
     "update_check = 1\r\n"
     "\r\n"
-    "; Кнопка Пуск на панели задач Windows 11 с нашим значком открывает лаунчер (1/0)\r\n"
+    "; Кнопка Пуск на панели задач Windows 11 открывает лаунчер (1/0)\r\n"
     "taskbar_button = 1\r\n"
+    "; Рисовать на ней наш значок вместо значка Windows (1/0)\r\n"
+    "taskbar_replace_icon = 1\r\n"
     "; Её значок: diamond (ромб) | grid (сетка) | lines (строки) | custom (свой файл PNG/ICO/JPG из taskbar_icon_path)\r\n"
     "taskbar_icon = diamond\r\n"
     "taskbar_icon_path =\r\n"
@@ -105,6 +109,8 @@ static const char k_default_config_ru[] =
     "; Кнопки «назад», «пауза», «вперёд» (1/0) и скрывать виджет, пока ничего не играет (1/0)\r\n"
     "media_controls = 1\r\n"
     "media_hide_paused = 0\r\n"
+    "; Прокручивать название и исполнителя, если они не помещаются (1/0)\r\n"
+    "media_marquee = 1\r\n"
     "\r\n"
     "; Анимации открытия и закрытия (1/0). Выключаются и системной настройкой «Эффекты анимации».\r\n"
     "animations = 1\r\n"
@@ -168,8 +174,10 @@ static const char k_default_config_en[] =
     "; Check GitHub for updates every few hours (1/0)\r\n"
     "update_check = 1\r\n"
     "\r\n"
-    "; Our icon on the Windows 11 taskbar Start button, which then opens the launcher (1/0)\r\n"
+    "; The Windows 11 taskbar Start button opens the launcher (1/0)\r\n"
     "taskbar_button = 1\r\n"
+    "; Draw our icon on it instead of the Windows logo (1/0)\r\n"
+    "taskbar_replace_icon = 1\r\n"
     "; Its icon: diamond | grid | lines | custom (a PNG/ICO/JPG file from taskbar_icon_path)\r\n"
     "taskbar_icon = diamond\r\n"
     "taskbar_icon_path =\r\n"
@@ -181,6 +189,8 @@ static const char k_default_config_en[] =
     "; Previous / pause / next buttons (1/0) and hiding the widget while nothing plays (1/0)\r\n"
     "media_controls = 1\r\n"
     "media_hide_paused = 0\r\n"
+    "; Scroll the title and artist when they do not fit (1/0)\r\n"
+    "media_marquee = 1\r\n"
     "\r\n"
     "; Open/close animations (1/0). Also off when Windows \"Animation effects\" are disabled.\r\n"
     "animations = 1\r\n"
@@ -374,9 +384,11 @@ static void config_defaults(Config *c)
     c->update_check = true;
     c->animations = true;
     c->taskbar_button = true;
+    c->taskbar_replace_icon = true;
     c->taskbar_icon = 0;
     c->media_widget = true;
     c->media_controls = true;
+    c->media_marquee = true;
     config_anim_defaults(c);
 }
 
@@ -410,12 +422,14 @@ static bool config_value(const char *k, char *out, size_t cap)
     else if (!strcmp(k, "update_check")) snprintf(out, cap, "%d", g_cfg.update_check ? 1 : 0);
     else if (!strcmp(k, "animations")) snprintf(out, cap, "%d", g_cfg.animations ? 1 : 0);
     else if (!strcmp(k, "taskbar_button")) snprintf(out, cap, "%d", g_cfg.taskbar_button ? 1 : 0);
+    else if (!strcmp(k, "taskbar_replace_icon")) snprintf(out, cap, "%d", g_cfg.taskbar_replace_icon ? 1 : 0);
     else if (!strcmp(k, "taskbar_icon")) snprintf(out, cap, "%s", k_tbi_names[CLAMP(g_cfg.taskbar_icon, 0, TBI__COUNT - 1)]);
     else if (!strcmp(k, "taskbar_icon_path")) w_to_utf8(g_cfg.taskbar_icon_path, -1, out, (int)cap);
     else if (!strcmp(k, "media_widget")) snprintf(out, cap, "%d", g_cfg.media_widget ? 1 : 0);
     else if (!strcmp(k, "media_position")) snprintf(out, cap, "%s", g_cfg.media_position ? "right" : "left");
     else if (!strcmp(k, "media_controls")) snprintf(out, cap, "%d", g_cfg.media_controls ? 1 : 0);
     else if (!strcmp(k, "media_hide_paused")) snprintf(out, cap, "%d", g_cfg.media_hide_paused ? 1 : 0);
+    else if (!strcmp(k, "media_marquee")) snprintf(out, cap, "%d", g_cfg.media_marquee ? 1 : 0);
     else if (!strcmp(k, "anim_speed")) snprintf(out, cap, "%d", g_cfg.anim_speed);
     else if (!strcmp(k, "anim_open_ms")) snprintf(out, cap, "%d", g_cfg.anim_open_ms);
     else if (!strcmp(k, "anim_close_ms")) snprintf(out, cap, "%d", g_cfg.anim_close_ms);
@@ -514,6 +528,7 @@ static void config_load(void)
         else if (!_stricmp(k, "update_check")) g_cfg.update_check = parse_bool(v);
         else if (!_stricmp(k, "animations")) g_cfg.animations = parse_bool(v);
         else if (!_stricmp(k, "taskbar_button")) g_cfg.taskbar_button = parse_bool(v);
+        else if (!_stricmp(k, "taskbar_replace_icon")) g_cfg.taskbar_replace_icon = parse_bool(v);
         else if (!_stricmp(k, "taskbar_icon")) {
             for (int i = 0; i < TBI__COUNT; i++)
                 if (!_stricmp(v, k_tbi_names[i])) g_cfg.taskbar_icon = i;
@@ -522,6 +537,7 @@ static void config_load(void)
         else if (!_stricmp(k, "media_position")) g_cfg.media_position = !_stricmp(v, "right") ? 1 : 0;
         else if (!_stricmp(k, "media_controls")) g_cfg.media_controls = parse_bool(v);
         else if (!_stricmp(k, "media_hide_paused")) g_cfg.media_hide_paused = parse_bool(v);
+        else if (!_stricmp(k, "media_marquee")) g_cfg.media_marquee = parse_bool(v);
         else if (!_stricmp(k, "anim_speed")) g_cfg.anim_speed = CLAMP(atoi(v), 30, 400);
         else if (!_stricmp(k, "anim_open_ms")) g_cfg.anim_open_ms = CLAMP(atoi(v), 0, 1000);
         else if (!_stricmp(k, "anim_close_ms")) g_cfg.anim_close_ms = CLAMP(atoi(v), 0, 1000);

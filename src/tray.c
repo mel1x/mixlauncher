@@ -135,20 +135,3 @@ static void tray_add(void)
 }
 
 static void tray_remove(void) { Shell_NotifyIconW(NIM_DELETE, &g_nid); }
-
-// uxtheme ordinals 135/136 (SetPreferredAppMode, FlushMenuThemes), as Explorer uses them.
-static void menus_set_dark(bool dark)
-{
-    static HMODULE ux;
-    static int (WINAPI *set_mode)(int);
-    static void (WINAPI *flush)(void);
-    if (!ux) {
-        ux = LoadLibraryExW(L"uxtheme.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
-        if (ux) {
-            set_mode = (int (WINAPI *)(int))(void *)GetProcAddress(ux, MAKEINTRESOURCEA(135));
-            flush = (void (WINAPI *)(void))(void *)GetProcAddress(ux, MAKEINTRESOURCEA(136));
-        }
-    }
-    if (set_mode) set_mode(dark ? 2 /*ForceDark*/ : 3 /*ForceLight*/);
-    if (flush) flush();
-}

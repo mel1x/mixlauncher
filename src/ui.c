@@ -123,6 +123,7 @@ static struct {
     App *armed;
     int mouse_x, mouse_y;
     bool menu_open;
+    bool settings_after_hide;
 
     u32 dpi;
     f32 s;
@@ -878,6 +879,7 @@ static void clipboard_paste(void)
 static void ui_render(void);
 static void settings_open(void);
 static void settings_device_lost(void);
+static void pm_close(void);
 static void settings_device_restored(void);
 static void open_settings_from_launcher(void);
 
@@ -1091,6 +1093,11 @@ static void taskbar_button_remove(void)
 
 static void ui_hide_finish(void)
 {
+    // Settings asked for from the launcher open once it has faded out, and while it still has the foreground.
+    if (U.settings_after_hide) {
+        U.settings_after_hide = false;
+        settings_open();
+    }
     U.cm.open = U.cm.closing = false;
     U.visible = false;
     U.closing = false;
@@ -1109,6 +1116,7 @@ static void ui_show(void)
     }
     if (U.visible && U.closing) {
         U.closing = false;
+        U.settings_after_hide = false;
         vis_set_direction(true);
         U.open_time = 0;
         hook_set_visible(true);
@@ -1700,6 +1708,7 @@ static void ui_draw(void)
 static bool renderer_recover(void)
 {
     settings_device_lost();
+    pm_close();
     r_shutdown();
     if (!r_init(g_hwnd, U.W, U.H)) return false;
     font_reset_atlas();
@@ -2415,8 +2424,12 @@ static bool in_settings_button(int x, int y)
 static void open_settings_from_launcher(void)
 {
     U.no_focus_restore = true;
+    U.settings_after_hide = true;
     ui_hide();
-    settings_open();
+    if (!U.visible && U.settings_after_hide) {
+        U.settings_after_hide = false;
+        settings_open();
+    }
 }
 
 static void ui_mouse_move(int x, int y)

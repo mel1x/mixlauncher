@@ -4,8 +4,8 @@ enum {
     SID_MAXAPPS, SID_HIDENOISE, SID_REINDEX, SID_MINCHARS, SID_FILTER, SID_CLEARHIST, SID_CONFIG,
     SID_DATADIR, SID_ADMIN, SID_EVERYTHING, SID_ABOUT,
     SID_ASPEED, SID_AOPEN, SID_ACLOSE, SID_ASCALE, SID_ACASCADE, SID_AROW, SID_ASTAGGER, SID_ASELECT, SID_ASCROLL, SID_AMENU,
-    SID_APAGE, SID_APREVIEW, SID_ARESET, SID_TASKBAR, SID_TBICON, SID_TBFILE, SID_MEDIA, SID_MEDIAPOS, SID_MEDIACTL, SID_MEDIAHIDE, SID_LANG,
-    SID_STYLE, SID_MATCHHL, SID_UPDCHECK, SID_UPDNOW
+    SID_APAGE, SID_APREVIEW, SID_ARESET, SID_TASKBAR, SID_TBREPLACE, SID_TBICON, SID_TBFILE, SID_MEDIA, SID_MEDIAPOS, SID_MEDIACTL, SID_MEDIAHIDE, SID_MEDIASCROLL, SID_LANG,
+    SID_STYLE, SID_MATCHHL, SID_UPDCHECK, SID_UPDNOW, SID__COUNT
 };
 enum { PG_GENERAL, PG_APPEARANCE, PG_ANIM, PG_SEARCH, PG_ADVANCED, PG_ABOUT, PG__COUNT };
 
@@ -29,6 +29,7 @@ typedef struct SItem {
     Str unit;
     Str opt[4];
     u32 glyph;
+    u8 dep, dep_val;  // shown only while setting `dep` has the value `dep_val` (and is shown itself)
 } SItem;
 
 static const SItem k_sitems[] = {
@@ -44,25 +45,31 @@ static const SItem k_sitems[] = {
                 L"Through Task Scheduler: as administrator, without a UAC prompt at sign-in" } },
     { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_TASKBAR, .group = { L"Панель задач", L"Taskbar" },
       .title = { L"Кнопка Пуск открывает MixLauncher", L"Start button opens MixLauncher" },
-      .desc = { L"Наш значок на кнопке Пуск (Windows 11). Правый клик по-прежнему открывает меню Win+X",
-                L"Our icon on the Start button (Windows 11). Right click still opens the Win+X menu" } },
-    { .page = PG_GENERAL, .kind = SK_CHOICE, .id = SID_TBICON, .title = { L"Значок кнопки", L"Button icon" },
+      .desc = { L"Клик по кнопке Пуск (Windows 11) открывает лаунчер. Правый клик по-прежнему открывает меню Win+X",
+                L"Clicking the Start button (Windows 11) opens the launcher. Right click still opens the Win+X menu" } },
+    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_TBREPLACE, .dep = SID_TASKBAR, .dep_val = 1, .title = { L"Заменять значок меню Пуск", L"Replace the Start button icon" },
+      .desc = { L"Наш значок вместо логотипа Windows. Выключено - кнопка выглядит как обычно",
+                L"Our icon instead of the Windows logo. Off keeps the button looking as usual" } },
+    { .page = PG_GENERAL, .kind = SK_CHOICE, .id = SID_TBICON, .dep = SID_TBREPLACE, .dep_val = 1, .title = { L"Значок кнопки", L"Button icon" },
       .opt = { { L"Ромб", L"Diamond" }, { L"Сетка", L"Grid" }, { L"Строки", L"Lines" }, { L"Свой", L"Custom" } } },
-    { .page = PG_GENERAL, .kind = SK_BUTTON, .id = SID_TBFILE, .title = { L"Свой значок", L"Custom icon" },
+    { .page = PG_GENERAL, .kind = SK_BUTTON, .id = SID_TBFILE, .dep = SID_TBICON, .dep_val = TBI_CUSTOM, .title = { L"Свой значок", L"Custom icon" },
       .desc = { L"PNG, ICO или JPG. Лучше квадратный, от 48×48, с прозрачным фоном", L"PNG, ICO or JPG. Square, 48×48 or larger, with a transparent background works best" },
       .opt = { { L"Выбрать…", L"Choose…" } }, .glyph = 0xE8E5 },
     { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_MEDIA, .group = { L"Сейчас играет", L"Now playing" },
       .title = { L"Медиа на панели задач", L"Media on the taskbar" },
       .desc = { L"Обложка, название и исполнитель из любого плеера: Spotify, браузера, Медиаплеера. Клик открывает плеер",
                 L"Cover, title and artist from any player: Spotify, a browser, Media Player. A click opens the player" } },
-    { .page = PG_GENERAL, .kind = SK_CHOICE, .id = SID_MEDIAPOS, .title = { L"Положение", L"Position" },
+    { .page = PG_GENERAL, .kind = SK_CHOICE, .id = SID_MEDIAPOS, .dep = SID_MEDIA, .dep_val = 1, .title = { L"Положение", L"Position" },
       .desc = { L"Справа - у значков в трее. Если значки панели выровнены по левому краю, всегда справа",
                 L"Right sits next to the tray icons. Always right when taskbar icons are aligned left" },
       .opt = { { L"Слева", L"Left" }, { L"Справа", L"Right" } } },
-    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_MEDIACTL, .title = { L"Кнопки управления", L"Playback buttons" },
+    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_MEDIACTL, .dep = SID_MEDIA, .dep_val = 1, .title = { L"Кнопки управления", L"Playback buttons" },
       .desc = { L"Предыдущий трек, пауза и следующий", L"Previous track, pause and next" } },
-    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_MEDIAHIDE, .title = { L"Скрывать на паузе", L"Hide when paused" },
+    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_MEDIAHIDE, .dep = SID_MEDIA, .dep_val = 1, .title = { L"Скрывать на паузе", L"Hide when paused" },
       .desc = { L"Показывать виджет, только пока что-то играет", L"Show the widget only while something plays" } },
+    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_MEDIASCROLL, .dep = SID_MEDIA, .dep_val = 1,
+      .title = { L"Прокручивать длинные названия", L"Scroll long titles" },
+      .desc = { L"Название, которое не помещается, медленно едет до конца и обратно", L"A title that does not fit slowly rides to its end and back" } },
     { .page = PG_GENERAL, .kind = SK_STEPPER, .id = SID_KEEPQUERY, .group = { L"Поведение", L"Behavior" },
       .title = { L"Помнить запрос", L"Keep the query" },
       .desc = { L"Сколько секунд после закрытия хранить набранный текст. 0 - всегда начинать с пустого поля",
@@ -102,44 +109,44 @@ static const SItem k_sitems[] = {
     { .page = PG_ANIM, .kind = SK_TOGGLE, .id = SID_ANIM, .group = { L"Общее", L"General" }, .title = { L"Анимации", L"Animations" },
       .desc = { L"Все анимации лаунчера и настроек. Выключаются и системной настройкой «Эффекты анимации»",
                 L"Every animation of the launcher and settings. Also off when Windows animation effects are off" } },
-    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ASPEED, .title = { L"Общая скорость", L"Overall speed" },
+    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ASPEED, .dep = SID_ANIM, .dep_val = 1, .title = { L"Общая скорость", L"Overall speed" },
       .desc = { L"Множитель для всех длительностей ниже: 200 % - всё вдвое быстрее, 50 % - вдвое медленнее",
                 L"Multiplies every duration below: 200% makes everything twice as fast, 50% twice as slow" },
       .lo = 30, .hi = 400, .step = 10, .unit = { L"%", L"%" } },
-    { .page = PG_ANIM, .kind = SK_BUTTON, .id = SID_APREVIEW, .title = { L"Проверить", L"Try it" },
+    { .page = PG_ANIM, .kind = SK_BUTTON, .id = SID_APREVIEW, .dep = SID_ANIM, .dep_val = 1, .title = { L"Проверить", L"Try it" },
       .desc = { L"Открыть лаунчер с текущими настройками. Esc вернёт сюда", L"Open the launcher with the current settings. Esc comes back here" },
       .opt = { { L"Открыть лаунчер", L"Open launcher" } }, .glyph = 0xE768 },
 
-    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_AOPEN, .group = { L"Открытие и закрытие", L"Open and close" },
+    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_AOPEN, .dep = SID_ANIM, .dep_val = 1, .group = { L"Открытие и закрытие", L"Open and close" },
       .title = { L"Появление окна", L"Window appears" }, .desc = { L"Проявление стекла и содержимого. 0 - сразу", L"Fade-in of the glass and content. 0 is instant" },
       .lo = 0, .hi = 1000, .step = 10, .unit = { L"мс", L"ms" } },
-    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ACLOSE, .title = { L"Закрытие", L"Window closes" },
+    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ACLOSE, .dep = SID_ANIM, .dep_val = 1, .title = { L"Закрытие", L"Window closes" },
       .desc = { L"Короче появления, чтобы Esc не ощущался задержкой", L"Shorter than opening so Esc never feels delayed" },
       .lo = 0, .hi = 1000, .step = 10, .unit = { L"мс", L"ms" } },
-    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ASCALE, .title = { L"Начальный масштаб", L"Starting scale" },
+    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ASCALE, .dep = SID_ANIM, .dep_val = 1, .title = { L"Начальный масштаб", L"Starting scale" },
       .desc = { L"С какого размера содержимое «наплывает» при открытии. 100 % - без увеличения",
                 L"The size the content grows from when opening. 100% means no zoom" },
       .lo = 80, .hi = 100, .step = 1, .unit = { L"%", L"%" } },
-    { .page = PG_ANIM, .kind = SK_TOGGLE, .id = SID_ACASCADE, .title = { L"Каскад строк", L"Row cascade" },
+    { .page = PG_ANIM, .kind = SK_TOGGLE, .id = SID_ACASCADE, .dep = SID_ANIM, .dep_val = 1, .title = { L"Каскад строк", L"Row cascade" },
       .desc = { L"После открытия строки появляются по очереди, сверху вниз", L"After opening the rows appear one after another, top to bottom" } },
-    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_AROW, .title = { L"Появление строки", L"Row fade-in" },
+    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_AROW, .dep = SID_ACASCADE, .dep_val = 1, .title = { L"Появление строки", L"Row fade-in" },
       .lo = 0, .hi = 1000, .step = 10, .unit = { L"мс", L"ms" } },
-    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ASTAGGER, .title = { L"Задержка между строками", L"Delay between rows" },
+    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ASTAGGER, .dep = SID_ACASCADE, .dep_val = 1, .title = { L"Задержка между строками", L"Delay between rows" },
       .lo = 0, .hi = 60, .step = 2, .unit = { L"мс", L"ms" } },
 
-    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ASELECT, .group = { L"Движение", L"Motion" },
+    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ASELECT, .dep = SID_ANIM, .dep_val = 1, .group = { L"Движение", L"Motion" },
       .title = { L"Выделение", L"Selection" },
       .desc = { L"За сколько подложка доезжает до выбранной строки (пружина: при быстром листании скорость не рвётся)",
                 L"How fast the highlight reaches the selected row (a spring: fast key repeat never jerks it)" },
       .lo = 0, .hi = 600, .step = 10, .unit = { L"мс", L"ms" } },
-    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ASCROLL, .title = { L"Прокрутка", L"Scrolling" },
+    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ASCROLL, .dep = SID_ANIM, .dep_val = 1, .title = { L"Прокрутка", L"Scrolling" },
       .lo = 0, .hi = 600, .step = 10, .unit = { L"мс", L"ms" } },
-    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_AMENU, .title = { L"Меню", L"Menus" },
+    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_AMENU, .dep = SID_ANIM, .dep_val = 1, .title = { L"Меню", L"Menus" },
       .desc = { L"Контекстное меню лаунчера и выпадающие списки настроек", L"The launcher context menu and the dropdowns in settings" },
       .lo = 0, .hi = 600, .step = 10, .unit = { L"мс", L"ms" } },
-    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_APAGE, .title = { L"Смена раздела настроек", L"Settings page switch" },
+    { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_APAGE, .dep = SID_ANIM, .dep_val = 1, .title = { L"Смена раздела настроек", L"Settings page switch" },
       .lo = 0, .hi = 800, .step = 10, .unit = { L"мс", L"ms" } },
-    { .page = PG_ANIM, .kind = SK_BUTTON, .id = SID_ARESET, .group = { L"Сброс", L"Reset" },
+    { .page = PG_ANIM, .kind = SK_BUTTON, .id = SID_ARESET, .dep = SID_ANIM, .dep_val = 1, .group = { L"Сброс", L"Reset" },
       .title = { L"Значения по умолчанию", L"Default values" }, .desc = { L"Вернуть все тайминги этой страницы", L"Restore every timing on this page" },
       .opt = { { L"Сбросить", L"Reset" } }, .glyph = 0xE777 },
 
@@ -199,6 +206,7 @@ typedef struct SRow {
     f32 x, y, w, h;
     f32 ty;
     f32 cx, cy, cw, ch;
+    f32 vis;
     int ndesc, desc_at[4];
 } SRow;
 
@@ -216,6 +224,7 @@ typedef struct KeyTok { WCHAR label[24]; const WCHAR *side; } KeyTok;
 #define SETTINGS_CLASS L"MixLauncherSettings"
 #define SETTINGS_TIMER_CARET 1
 #define SETTINGS_TIMER_FLASH 2
+#define SETTINGS_TIMER_APPLY 3
 
 enum { RM_LCTRL = 1, RM_RCTRL = 2, RM_LALT = 4, RM_RALT = 8, RM_LSHIFT = 16, RM_RSHIFT = 32, RM_LWIN = 64, RM_RWIN = 128 };
 
@@ -234,6 +243,7 @@ static struct {
     int ncards;
     SBox heads[12];
     Str head_text[12];
+    f32 head_a[12];
     int nheads;
     int focus;
     bool focus_visible;
@@ -266,6 +276,9 @@ static struct {
     f32 nav_hov[PG__COUNT];
     f32 win_hov[2];
     f32 tog[SITEMS];
+    f32 vis[SITEMS];
+    // A change shows at once and applies a moment later; changing it back before then cancels it.
+    struct { bool on; int v; f64 due; } pend[SID__COUNT];
     f32 page_t, pop_t, rec_t;
     f32 sb_t, sb_prev, row_hov;
     int row_hov_idx;
@@ -317,7 +330,7 @@ static void nav_rect(int i, f32 *r)
     r[3] = r[1] + SSR(36);
 }
 
-static int sval(int id)
+static int sval_applied(int id)
 {
     switch (id) {
     case SID_AUTOSTART: return SW.autostart;
@@ -329,11 +342,13 @@ static int sval(int id)
     case SID_BACKDROP: return g_cfg.backdrop == BACKDROP_BLUR ? 0 : g_cfg.backdrop == BACKDROP_ACRYLIC ? 1 : 2;
     case SID_ANIM: return g_cfg.animations;
     case SID_TASKBAR: return g_cfg.taskbar_button;
+    case SID_TBREPLACE: return g_cfg.taskbar_replace_icon;
     case SID_TBICON: return g_cfg.taskbar_icon;
     case SID_MEDIA: return g_cfg.media_widget;
     case SID_MEDIAPOS: return g_cfg.media_position;
     case SID_MEDIACTL: return g_cfg.media_controls;
     case SID_MEDIAHIDE: return g_cfg.media_hide_paused;
+    case SID_MEDIASCROLL: return g_cfg.media_marquee;
     case SID_WIDTH: return g_cfg.width;
     case SID_ROWS: return g_cfg.rows;
     case SID_MAXAPPS: return g_cfg.max_apps;
@@ -353,6 +368,24 @@ static int sval(int id)
     case SID_APAGE: return g_cfg.anim_page_ms;
     }
     return 0;
+}
+
+// The value the settings show: a pending change, or the applied one.
+static int sval(int id) { return SW.pend[id].on ? SW.pend[id].v : sval_applied(id); }
+
+static const SItem *sitem(int id)
+{
+    for (int i = 0; i < (int)countof(k_sitems); i++)
+        if (k_sitems[i].id == id) return &k_sitems[i];
+    return NULL;
+}
+
+static bool item_shown(int i)
+{
+    const SItem *it = &k_sitems[i];
+    if (!it->dep) return true;
+    const SItem *p = sitem(it->dep);
+    return sval(it->dep) == it->dep_val && (!p || item_shown((int)(p - k_sitems)));
 }
 
 static void save_int(const char *key, int v)
@@ -460,16 +493,50 @@ static const char *anim_key(int id)
     return "";
 }
 
-static void sset(const SItem *it, int v)
+// Autostart goes through schtasks.exe, which takes a while: it runs on its own thread, one request at a time,
+// and a request that changed again meanwhile is redone with the latest value.
+static struct { bool busy; int want; } AS;
+
+static DWORD WINAPI autostart_thread(void *param)
 {
-    if (it->kind == SK_STEPPER) v = CLAMP(v, it->lo, it->hi);
-    if (it->kind == SK_TOGGLE) v = v ? 1 : 0;
-    if (it->kind == SK_CHOICE) v = CLAMP(v, 0, choice_count(it) - 1);
-    if (v == sval(it->id)) return;
-    switch (it->id) {
-    case SID_AUTOSTART:
+    int v = (int)(INT_PTR)param;
+    autostart_set(v != 0);
+    PostMessageW(g_hwnd, WM_APP_AUTOSTART, (WPARAM)v, autostart_get());
+    return 0;
+}
+
+static void autostart_request(int v)
+{
+    AS.want = v;
+    if (AS.busy) return;
+    HANDLE t = CreateThread(NULL, 0, autostart_thread, (void *)(INT_PTR)v, 0, NULL);
+    if (t) {
+        AS.busy = true;
+        CloseHandle(t);
+    } else {
         autostart_set(v != 0);
         SW.autostart = autostart_get();
+    }
+}
+
+static void settings_autostart_done(int v, bool on)
+{
+    AS.busy = false;
+    if (AS.want != v) {
+        autostart_request(AS.want);
+        return;
+    }
+    SW.autostart = on;  // a failed change flips the toggle back
+    settings_invalidate();
+}
+
+static void sapply(const SItem *it, int v)
+{
+    if (v == sval_applied(it->id)) return;
+    switch (it->id) {
+    case SID_AUTOSTART:
+        SW.autostart = v;
+        autostart_request(v);
         break;
     case SID_LANG:
         g_cfg.language = v;
@@ -512,7 +579,6 @@ static void sset(const SItem *it, int v)
         U.backdrop_ok = backdrop_apply(g_hwnd);
         break;
     case SID_TBICON:
-        if (v == TBI_CUSTOM && !g_cfg.taskbar_icon_path[0] && !pick_taskbar_icon()) return;
         g_cfg.taskbar_icon = v;
         config_set("taskbar_icon", k_tbi_names[v]);
         tb_icon_changed();
@@ -521,6 +587,11 @@ static void sset(const SItem *it, int v)
         g_cfg.taskbar_button = v;
         config_set("taskbar_button", v ? "1" : "0");
         tb_set_enabled(v != 0);
+        break;
+    case SID_TBREPLACE:
+        g_cfg.taskbar_replace_icon = v;
+        config_set("taskbar_replace_icon", v ? "1" : "0");
+        tb_icon_changed();
         break;
     case SID_MEDIA:
         g_cfg.media_widget = v;
@@ -540,6 +611,11 @@ static void sset(const SItem *it, int v)
     case SID_MEDIAHIDE:
         g_cfg.media_hide_paused = v;
         config_set("media_hide_paused", v ? "1" : "0");
+        media_settings_changed();
+        break;
+    case SID_MEDIASCROLL:
+        g_cfg.media_marquee = v;
+        config_set("media_marquee", v ? "1" : "0");
         media_settings_changed();
         break;
     case SID_ANIM:
@@ -585,6 +661,49 @@ static void sset(const SItem *it, int v)
     settings_invalidate();
 }
 
+static void pend_schedule(void)
+{
+    f64 due = 0;
+    for (int id = 0; id < SID__COUNT; id++)
+        if (SW.pend[id].on && (due == 0 || SW.pend[id].due < due)) due = SW.pend[id].due;
+    if (!SW.hwnd) return;
+    if (due == 0) KillTimer(SW.hwnd, SETTINGS_TIMER_APPLY);
+    else SetTimer(SW.hwnd, SETTINGS_TIMER_APPLY, (UINT)MAX(10.0, (due - time_now()) * 1000.0), NULL);
+}
+
+// Applies the pending changes that are due (or all of them).
+static void pend_flush(bool all)
+{
+    f64 now = time_now();
+    for (int id = 0; id < SID__COUNT; id++) {
+        if (!SW.pend[id].on || (!all && SW.pend[id].due > now + 0.005)) continue;
+        SW.pend[id].on = false;
+        const SItem *it = sitem(id);
+        if (it) sapply(it, SW.pend[id].v);
+    }
+    pend_schedule();
+}
+
+// Shows the new value right away (the toggle starts moving) and applies it once the animation has played,
+// so the work never stalls it. Changing the value back before that cancels the change.
+static void sset(const SItem *it, int v)
+{
+    if (it->kind == SK_STEPPER) v = CLAMP(v, it->lo, it->hi);
+    if (it->kind == SK_TOGGLE) v = v ? 1 : 0;
+    if (it->kind == SK_CHOICE) v = CLAMP(v, 0, choice_count(it) - 1);
+    if (v == sval(it->id)) return;
+    if (it->id == SID_TBICON && v == TBI_CUSTOM && !g_cfg.taskbar_icon_path[0] && !pick_taskbar_icon()) return;
+    if (v == sval_applied(it->id)) {
+        SW.pend[it->id].on = false;
+    } else {
+        SW.pend[it->id].on = true;
+        SW.pend[it->id].v = v;
+        SW.pend[it->id].due = time_now() + (it->kind == SK_STEPPER ? 0.45 : 0.25);
+    }
+    pend_schedule();
+    settings_invalidate();
+}
+
 static void open_path(const WCHAR *path)
 {
     LaunchJob j;
@@ -627,6 +746,7 @@ static void button_action(const SItem *it)
         break;
     case SID_TBFILE:
         if (pick_taskbar_icon()) {
+            SW.pend[SID_TBICON].on = false;
             g_cfg.taskbar_icon = TBI_CUSTOM;
             config_set("taskbar_icon", k_tbi_names[TBI_CUSTOM]);
             tb_icon_changed();
@@ -643,6 +763,7 @@ static void button_action(const SItem *it)
         Config d;
         config_anim_defaults(&d);
         for (int i = 0; i < (int)countof(k_anim_fields); i++) {
+            SW.pend[k_anim_fields[i].id].on = false;
             int v = *(int *)((char *)&d + k_anim_fields[i].off);
             *(int *)((char *)&g_cfg + k_anim_fields[i].off) = v;
             save_int(k_anim_fields[i].key, v);
@@ -658,7 +779,7 @@ static void button_action(const SItem *it)
 
 static void refresh_status(void)
 {
-    SW.autostart = autostart_get();
+    if (!AS.busy) SW.autostart = autostart_get();
     SW.everything = ev_state();
 }
 
@@ -961,12 +1082,30 @@ static void control_size(const SItem *it, f32 *w, f32 *h)
     }
 }
 
+static f32 vis_ease(f32 v)
+{
+    v = CLAMP(v, 0.f, 1.f);
+    return v < 0.5f ? 4.f * v * v * v : 1.f - powf(-2.f * v + 2.f, 3.f) * 0.5f;
+}
+
+// How much of a group (its header and card) is shown: as much as its most visible row.
+static f32 group_vis(int i)
+{
+    f32 g = 0;
+    for (int j = i; j < (int)SITEMS && k_sitems[j].page == k_sitems[i].page && (j == i || !k_sitems[j].group.ru); j++)
+        g = MAX(g, vis_ease(SW.vis[j]));
+    return g;
+}
+
+// Every item of the page gets a row, so row indices stay put; a hidden one is 0 tall, and one that is
+// appearing or going away is cut to a part of its height.
 static void settings_layout(void)
 {
     SW.nrows = SW.ncards = SW.nheads = 0;
     f32 x0 = content_x0(), x1 = content_x1(), w = x1 - x0;
     f32 y = SSR(2);
-    int card = -1;
+    int card = -1, lead = -1;
+    bool any = false, card_first = false;
     for (int i = 0; i < (int)SITEMS && SW.nrows < SROWS_MAX; i++) {
         const SItem *it = &k_sitems[i];
         if (it->page != SW.page) continue;
@@ -979,22 +1118,29 @@ static void settings_layout(void)
             r->y = y;
             r->ndesc = wrap_lines(FONT_TEXT, SSC(13.5f), ss(it->desc), w - SSR(4), r->desc_at, 4);
             r->h = SSR(64) + SSR(22) + SSR(21) * (f32)r->ndesc + SSR(6);
+            r->vis = 1.f;
             y += r->h;
-            card = -1;
+            card = lead = -1;
+            any = true;
             continue;
         }
-        if (it->group.ru || card < 0) {
-            if (SW.nrows > 1) y += SSR(20);
+        if (it->group.ru || lead < 0) {
+            lead = i;
+            f32 gv = group_vis(i);
+            if (any) y += floorf(SSR(20) * gv + 0.5f);
             if (it->group.ru && SW.nheads < (int)countof(SW.heads)) {
-                SW.heads[SW.nheads] = (SBox){ x0 + SSR(4), y + SSR(15), 0, 0 };
+                f32 hh = floorf(SSR(28) * gv + 0.5f);
+                SW.heads[SW.nheads] = (SBox){ x0 + SSR(4), y + SSR(15), 0, hh };
+                SW.head_a[SW.nheads] = gv;
                 SW.head_text[SW.nheads++] = it->group;
-                y += SSR(28);
+                y += hh;
             }
-            if (SW.ncards < (int)countof(SW.cards)) {
+            card = -1;
+            if (gv > 0.f && SW.ncards < (int)countof(SW.cards)) {
                 card = SW.ncards++;
                 SW.cards[card] = (SBox){ x0, y, w, 0 };
             }
-            r->first = true;
+            card_first = true;
         }
         control_size(it, &r->cw, &r->ch);
         r->cx = floorf(x1 - SSR(18) - r->cw);
@@ -1005,7 +1151,14 @@ static void settings_layout(void)
         r->h = r->ndesc ? SSR(14) + SSR(20) + SSR(3) + SSR(18) * (f32)r->ndesc + SSR(14) : SSR(54);
         r->ty = r->ndesc ? y + SSR(24) : y + floorf(r->h * 0.5f);
         r->cy = floorf(r->ty - r->ch * 0.5f);
+        r->vis = vis_ease(SW.vis[i]);
+        r->h = r->vis >= 1.f ? r->h : floorf(r->h * r->vis + 0.5f);
+        if (r->h > 0 && card_first) {
+            r->first = true;
+            card_first = false;
+        }
         y += r->h;
+        any |= r->h > 0;
         if (card >= 0) SW.cards[card].h = y - SW.cards[card].y;
     }
     SW.content_h = y + SSR(28);
@@ -1015,7 +1168,7 @@ static f32 max_scroll_s(void) { return MAX(0.f, SW.content_h - ((f32)SW.H - top_
 
 static bool row_focusable(int r)
 {
-    if (r < 0 || r >= SW.nrows) return false;
+    if (r < 0 || r >= SW.nrows || !item_shown(SW.rows[r].item)) return false;
     u8 k = k_sitems[SW.rows[r].item].kind;
     return k != SK_INFO && k != SK_ABOUT;
 }
@@ -1271,7 +1424,9 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
                   editing ? SSR(1.5f) : 1.f, 0);
         const WCHAR *s = editing ? SW.edit : g_cfg.everything_filter;
         f32 ix = cx + SSR(10), iw = cw - SSR(20), base = baseline_for(FONT_TEXT, cfs, mid);
-        r_set_clip(ix - SSR(1), MAX(cy, top_h()), ix + iw + SSR(1), cy + ch);
+        f32 clip[4];
+        memcpy(clip, R.clip, sizeof clip);
+        r_set_clip(MAX(ix - SSR(1), clip[0]), MAX(cy, clip[1]), MIN(ix + iw + SSR(1), clip[2]), MIN(cy + ch, clip[3]));
         if (!s[0] && !editing) {
             text_draw(FONT_TEXT, cfs, ix, base, ss((Str){ L"Нет", L"None" }), -1, t->faint);
         } else {
@@ -1284,7 +1439,7 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
             if (editing && SW.caret_on)
                 r_rect(floorf(ix - shift + caret_x), floorf(mid - cfs * 0.6f), MAX(1.f, floorf(SSC(1.25f))), floorf(cfs * 1.2f), t->text, 0);
         }
-        r_set_clip(0, top_h(), (f32)SW.W, (f32)SW.H);
+        r_set_clip(clip[0], clip[1], clip[2], clip[3]);
         break;
     }
     case SK_HOTKEY: {
@@ -1999,16 +2154,29 @@ static void settings_draw(void)
     r_set_clip(0, top_h(), (f32)SW.W, (f32)SW.H);
     for (int i = 0; i < SW.ncards; i++) {
         SBox *b = &SW.cards[i];
+        if (b->h < 1) continue;
         r_rect(b->x, b->y + off, b->w, b->h, c.card, SSR(10));
         r_rect_ex(b->x, b->y + off, b->w, b->h, c.card_border, SSR(10), 1.f, 0);
     }
-    for (int i = 0; i < SW.nheads; i++)
+    for (int i = 0; i < SW.nheads; i++) {
+        if (SW.head_a[i] <= 0.f) continue;
+        f32 hy = SW.heads[i].y + off - SSR(15);
+        if (SW.head_a[i] < 1.f) r_set_clip(0, MAX(top_h(), hy), (f32)SW.W, MIN((f32)SW.H, hy + SW.heads[i].h));
+        R.opacity = pe * SW.head_a[i];
         text_draw(FONT_TEXT_SEMIBOLD, SSC(13), SW.heads[i].x, SW.heads[i].y + off + SSR(5), ss(SW.head_text[i]), -1, color_mix(t->dim, t->text, 0.35f));
+        r_set_clip(0, top_h(), (f32)SW.W, (f32)SW.H);
+    }
     for (int i = 0; i < SW.nrows; i++) {
         SRow *r = &SW.rows[i];
-        if (r->y + off + r->h < top_h() || r->y + off > SW.H) continue;
+        if (r->h < 1 || r->y + off + r->h < top_h() || r->y + off > SW.H) continue;
+        // A row on its way in or out is revealed from the top and fades with it.
+        bool part = r->vis < 1.f;
+        if (part) r_set_clip(0, MAX(top_h(), r->y + off), (f32)SW.W, MIN((f32)SW.H, r->y + off + r->h));
+        R.opacity = pe * r->vis;
         draw_srow(r, off, t, &c);
+        if (part) r_set_clip(0, top_h(), (f32)SW.W, (f32)SW.H);
     }
+    R.opacity = pe;
     r_set_clip(0, 0, (f32)SW.W, (f32)SW.H);
     R.opacity = 1.f;
 
@@ -2062,6 +2230,7 @@ static void settings_snap_motion(void)
     for (int i = 0; i < (int)SITEMS; i++) {
         SW.tog[i] = k_sitems[i].kind == SK_TOGGLE && sval(k_sitems[i].id) ? 1.f : 0.f;
         SW.seg[i] = is_seg(&k_sitems[i]) ? (f32)sval(k_sitems[i].id) : 0.f;
+        SW.vis[i] = item_shown(i) ? 1.f : 0.f;
     }
     memset(SW.nav_hov, 0, sizeof SW.nav_hov);
     memset(SW.win_hov, 0, sizeof SW.win_hov);
@@ -2101,7 +2270,13 @@ static bool settings_animate(f32 dt)
     for (int i = 0; i < (int)SITEMS; i++) {
         if (k_sitems[i].kind == SK_TOGGLE) anim |= approach(&SW.tog[i], sval(k_sitems[i].id) ? 1.f : 0.f, 20.f, dt);
         if (is_seg(&k_sitems[i])) anim |= approach(&SW.seg[i], (f32)sval(k_sitems[i].id), 18.f, dt);
+        f32 want = item_shown(i) ? 1.f : 0.f, vd = anim_sec(260);
+        if (SW.vis[i] != want) {
+            SW.vis[i] = vd > 0.f ? (want > SW.vis[i] ? MIN(want, SW.vis[i] + dt / vd) : MAX(want, SW.vis[i] - dt / vd)) : want;
+            anim = true;
+        }
     }
+    if (SW.pop_open && SW.pop_row >= 0 && SW.pop_row < SW.nrows && !item_shown(SW.rows[SW.pop_row].item)) SW.pop_open = false;
     SW.scroll_target = CLAMP(SW.scroll_target, 0.f, max_scroll_s());
     anim |= spring_step(&SW.scroll, &SW.scroll_v, SW.scroll_target, anim_omega(g_cfg.anim_scroll_ms), dt);
     f64 now = time_now();
@@ -2514,6 +2689,8 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         break;
     case WM_NCHITTEST:
         return settings_nchittest(h, lp);
+    case WM_NCACTIVATE:
+        return DefWindowProcW(h, msg, wp, -1);  // no classic caption repaint (the whole window is client area)
     case WM_GETMINMAXINFO: {
         MINMAXINFO *mm = (MINMAXINFO *)lp;
         if (SW.s > 0) {
@@ -2635,6 +2812,7 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_TIMER:
         if (wp == SETTINGS_TIMER_CARET) SW.caret_on = !SW.caret_on;
         if (wp == SETTINGS_TIMER_FLASH) KillTimer(h, SETTINGS_TIMER_FLASH);
+        if (wp == SETTINGS_TIMER_APPLY) pend_flush(false);
         settings_invalidate();
         return 0;
     case WM_ACTIVATE:
@@ -2661,6 +2839,7 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         DestroyWindow(h);
         return 0;
     case WM_DESTROY:
+        pend_flush(true);
         rec_close(false);
         r_target_release(&SW.target);
         SW.hwnd = NULL;
@@ -2718,7 +2897,8 @@ static void settings_open(void)
     GetMonitorInfoW(mon, &mi);
     SW.dpi = monitor_dpi(mon);
     SW.s = (f32)SW.dpi / 96.f;
-    DWORD style = WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX;
+    // WS_CAPTION gets the window the system open/minimize animations; without WS_SYSMENU DWM draws no caption buttons over ours.
+    DWORD style = WS_POPUP | WS_THICKFRAME | WS_CAPTION | WS_MINIMIZEBOX;
     DWORD ex = WS_EX_NOREDIRECTIONBITMAP | WS_EX_APPWINDOW;
     RECT wa = mi.rcWork;
     int w = MIN((int)SSR(900), (int)(wa.right - wa.left) - 40), h = MIN((int)SSR(640), (int)(wa.bottom - wa.top) - 40);
@@ -2750,6 +2930,22 @@ static void settings_open(void)
     hook_watchdog_off();
     ShowWindow(SW.hwnd, SW_SHOW);
     SetForegroundWindow(SW.hwnd);
+}
+
+// Opens the settings (or brings them up) and scrolls smoothly to the group of a setting.
+static void settings_open_at(int id)
+{
+    settings_open();
+    const SItem *it = sitem(id);
+    if (!SW.hwnd || !it) return;
+    set_page(it->page);
+    settings_layout();
+    for (int i = 0; i < SW.nrows; i++)
+        if (k_sitems[SW.rows[i].item].id == id) {
+            SW.scroll_target = CLAMP(SW.rows[i].y - SSR(36), 0.f, max_scroll_s());  // the group header just below the top
+            break;
+        }
+    settings_invalidate();
 }
 
 static void settings_device_lost(void) { r_target_release(&SW.target); }

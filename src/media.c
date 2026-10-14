@@ -50,7 +50,8 @@ static struct {
     int hover, press;
     bool hover_any;
     f32 vis_t, swap_t, hov_t, hp_t[4], press_t[4], text_a;
-    f32 scroll, scroll_t;
+    f32 scroll_t;
+    f32 mq_off[2];
     bool toggle_local;
     int toggle_status;
     f64 toggle_until;
@@ -589,6 +590,22 @@ static bool media_playing(void)
     return M.info.status == MS_PLAYING;
 }
 
+// How far a line that does not fit has to slide to show its end (0 when it fits).
+static f32 media_marquee_range(const MText *t)
+{
+    return t->cov && (f32)t->adv > M.text_w + 0.5f ? (f32)t->adv - M.text_w + MS(2) : 0.f;
+}
+
+// A long line rides to its end, waits, rides back to the start, waits, and so on.
+static f32 media_marquee_at(f32 range, f32 t)
+{
+    if (range <= 0.f) return 0.f;
+    f32 hold = 1.4f, travel = MAX(range / (13.f * M.s), 0.8f);
+    f32 c = fmodf(t, 2.f * (hold + travel));
+    f32 k = c < hold ? 0.f : c < hold + travel ? (c - hold) / travel : c < 2.f * hold + travel ? 1.f : 1.f - (c - 2.f * hold - travel) / travel;
+    return floorf(range * (k * k * (3.f - 2.f * k)) * 4.f + 0.5f) * 0.25f;
+}
+
 static void media_render(void)
 {
     int w = M.w, h = M.h;
@@ -630,10 +647,8 @@ static void media_render(void)
     bool two = M.artist.cov != NULL;
     f32 c = (f32)h * 0.5f;
     int base1 = (int)floorf(two ? c - MS(8) + cap * 0.5f + 0.5f : c + cap * 0.5f + 0.5f), base2 = (int)floorf(c + MS(8.5f) + cap * 0.5f + 0.5f);
-    f32 tx0 = M.text_x, tx1 = M.text_x + M.text_w, fade = MS(12), gap = MS(28);
-    f32 scroll = M.scroll, text_a = content * M.text_a;
-    bool over1 = (f32)M.title.adv > M.text_w + 0.5f, over2 = (f32)M.artist.adv > M.text_w + 0.5f;
-    f32 per1 = (f32)M.title.adv + gap, per2 = (f32)M.artist.adv + gap;
+    f32 tx0 = M.text_x, tx1 = M.text_x + M.text_w, fade = MS(12);
+    f32 text_a = content * M.text_a;
 
     u32 *px = M.bits;
     for (int y = 0; y < h; y++) {
@@ -679,19 +694,15 @@ static void media_render(void)
                     if (!t->cov) continue;
                     int ty = y - (line ? base2 : base1) + t->base;
                     if (ty < 0 || ty >= t->h) continue;
-                    bool over = line ? over2 : over1;
-                    f32 per = line ? per2 : per1;
-                    f32 off = over ? fmodf(scroll, per) : 0.f;
+                    f32 range = media_marquee_range(t), off = M.mq_off[line];
                     f32 lx = (f32)x - tx0 + off;
                     f32 v = mtext_at(t, lx, ty);
-                    if (over && lx + 1.f > per - gap) v = MAX(v, mtext_at(t, lx - per, ty));
-                    if (v <= 0.f) continue;
+                    if (v <= 0.f || fx > tx1) continue;
+                    // An edge fades only while more text hides behind it.
                     f32 mask = 1.f;
-                    if (over) {
-                        mask *= CLAMP((tx1 - fx) / fade, 0.f, 1.f);
-                        if (off > 0.f) mask *= CLAMP((fx - tx0) / fade, 0.f, 1.f);
-                    } else if (fx > tx1) {
-                        mask = 0;
+                    if (range > 0.f) {
+                        mask *= 1.f - (1.f - CLAMP((tx1 - fx) / fade, 0.f, 1.f)) * CLAMP((range - off) / fade, 0.f, 1.f);
+                        mask *= 1.f - (1.f - CLAMP((fx - tx0) / fade, 0.f, 1.f)) * CLAMP(off / fade, 0.f, 1.f);
                     }
                     tb_over(col, &a, fg, v * mask * text_a * (line ? (light ? 0.6f : 0.62f) : (light ? 0.9f : 1.f)));
                 }
@@ -709,17 +720,17 @@ static void media_render(void)
     if (M.wnd) UpdateLayeredWindow(M.wnd, NULL, NULL, &sz, M.dc, &src, 0, &bf, ULW_ALPHA);
 }
 
-static void media_animate(void);
+static void media_animate(bool tick);
 
 static void media_kick(void)
 {
     if (!M.wnd) return;
     M.last_anim = time_now();
     SetTimer(M.wnd, MW_TIMER_ANIM, 15, NULL);
-    media_animate();
+    media_animate(false);
 }
 
-static void media_animate(void)
+static void media_animate(bool tick)
 {
     f64 now = time_now();
     f32 dt = (f32)MIN(now - M.last_anim, 0.05);
@@ -732,25 +743,26 @@ static void media_animate(void)
         anim |= approach(&M.hp_t[p], M.hover == p || M.press == p ? 1.f : 0.f, 20.f, dt);
         anim |= approach(&M.press_t[p], M.press == p ? 1.f : 0.f, 30.f, dt);
     }
-    bool over = (f32)MAX(M.title.adv, M.artist.adv) > M.text_w + 0.5f;
-    if (M.hover_any && over && M.text_a > 0.99f) {
-        M.scroll_t += dt;
-        if (M.scroll_t > 0.6f) M.scroll += dt * 30.f * M.s;
-        anim = true;
-    } else if (M.scroll > 0.f) {
-        M.scroll_t = 0;
-        anim |= approach(&M.text_a, 0.f, 22.f, dt);
-        if (M.text_a < 0.02f) M.scroll = 0;
-        anim = true;
-    } else {
-        M.scroll_t = 0;
-        anim |= approach(&M.text_a, 1.f, 16.f, dt);
+    anim |= approach(&M.text_a, 1.f, 16.f, dt);
+    // The marquee keeps the timer going but repaints only while a line actually moves (not during the waits).
+    bool marquee = false, moved = false;
+    if (!g_cfg.media_marquee) M.scroll_t = 0;  // off: long lines stay at their start
+    if (M.visible) {
+        if (g_cfg.media_marquee) M.scroll_t = fmodf(M.scroll_t + dt, 3600.f);
+        for (int line = 0; line < 2; line++) {
+            f32 range = media_marquee_range(line ? &M.artist : &M.title), off = media_marquee_at(range, M.scroll_t);
+            marquee |= range > 0.f && g_cfg.media_marquee;
+            moved |= off != M.mq_off[line];
+            M.mq_off[line] = off;
+        }
     }
+    bool repaint = !tick || anim || moved;
+    anim |= marquee;
     if (M.vis_t <= 0.f && !M.want && M.visible) {
         ShowWindow(M.wnd, SW_HIDE);
         M.visible = false;
     }
-    if (M.visible) media_render();
+    if (M.visible && repaint) media_render();
     if (anim && (M.visible || M.want)) SetTimer(M.wnd, MW_TIMER_ANIM, 15, NULL);
     else KillTimer(M.wnd, MW_TIMER_ANIM);
 }
@@ -881,8 +893,8 @@ static void media_sync(void)
             SetEvent(M.wake);
         }
         media_layout();
-        M.scroll = 0;
         M.scroll_t = 0;
+        M.mq_off[0] = M.mq_off[1] = 0;
         if (track && M.visible) M.swap_t = 0;
     }
 
@@ -966,29 +978,14 @@ enum { MM_PLAYER = 1, MM_SETTINGS, MM_HIDE };
 
 static void media_set_enabled(bool on);
 
-static void media_menu(void)
+static void media_menu_pick(int cmd)
 {
-    HMENU m = CreatePopupMenu();
-    if (M.info.app[0]) AppendMenuW(m, MF_STRING, MM_PLAYER, TR("Открыть плеер", "Open the player"));
-    AppendMenuW(m, MF_STRING, MM_SETTINGS, TR("Настройки…", "Settings…"));
-    AppendMenuW(m, MF_SEPARATOR, 0, NULL);
-    AppendMenuW(m, MF_STRING, MM_HIDE, TR("Убрать с панели задач", "Remove from the taskbar"));
-    theme_update();
-    menus_set_dark(U.th.dark);
-    POINT pt;
-    GetCursorPos(&pt);
-    U.menu_open = true;
-    SetForegroundWindow(g_hwnd);
-    int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, pt.x, pt.y, 0, g_hwnd, NULL);
-    PostMessageW(g_hwnd, WM_NULL, 0, 0);
-    U.menu_open = false;
-    DestroyMenu(m);
     switch (cmd) {
     case MM_PLAYER:
         media_open_player();
         break;
     case MM_SETTINGS:
-        settings_open();
+        settings_open_at(SID_MEDIA);
         break;
     case MM_HIDE:
         g_cfg.media_widget = false;
@@ -997,6 +994,19 @@ static void media_menu(void)
         settings_invalidate();
         break;
     }
+}
+
+static void media_menu(void)
+{
+    PmItem items[4];
+    int n = 0;
+    if (M.info.app[0]) items[n++] = (PmItem){ MM_PLAYER, TR("Открыть плеер", "Open the player"), 0xE8D6 };
+    items[n++] = (PmItem){ MM_SETTINGS, TR("Настройки", "Settings"), 0xE713 };
+    items[n++] = (PmItem){ 0 };
+    items[n++] = (PmItem){ MM_HIDE, TR("Убрать с панели задач", "Remove from the taskbar"), 0xE711 };
+    POINT pt;
+    GetCursorPos(&pt);
+    pm_open(items, n, pt, media_menu_pick);
 }
 
 static int media_part_at(int x, int y)
@@ -1083,7 +1093,7 @@ static LRESULT CALLBACK media_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         media_menu();
         return 0;
     case WM_TIMER:
-        if (wp == MW_TIMER_ANIM) media_animate();
+        if (wp == MW_TIMER_ANIM) media_animate(true);
         else if (wp == MW_TIMER_SYNC) media_sync();
         return 0;
     case WM_DESTROY:

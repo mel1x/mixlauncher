@@ -431,8 +431,9 @@ static void tb_render(TbButton *b)
     f32 hov_a = light ? 0.055f * b->hover_t + 0.03f * b->press_t : 0.075f * b->hover_t - 0.02f * b->press_t;
     f32 zoom = 1.f - 0.08f * b->press_t, u = logo / 24.f * zoom;
     f32 dim = (light ? 0.5f : 0.42f) + 0.18f * b->hover_t;
+    bool replace = g_cfg.taskbar_replace_icon;
     int style = CLAMP(g_cfg.taskbar_icon, 0, TBI__COUNT - 1);
-    if (style == TBI_CUSTOM) {
+    if (replace && style == TBI_CUSTOM) {
         int n = (int)logo;
         if (!b->img || b->img_n != n || b->img_gen != TB.icon_gen) {
             free(b->img);
@@ -448,16 +449,17 @@ static void tb_render(TbButton *b)
         for (int x = 0; x < w; x++) {
             f32 fx = (f32)x + 0.5f - cx, fy = (f32)y + 0.5f - cy;
             f32 c[3] = { 0, 0, 0 }, a = 0;
-            tb_over(c, &a, plate_c, CLAMP(0.5f - tb_sdbox(fx, fy, plate * 0.5f, plate * 0.5f, 2.f * s), 0.f, 1.f));
+            // Without our icon the window stays see-through over the real button and draws only the hover highlight.
+            if (replace) tb_over(c, &a, plate_c, CLAMP(0.5f - tb_sdbox(fx, fy, plate * 0.5f, plate * 0.5f, 2.f * s), 0.f, 1.f));
             if (hov_a > 0.f) tb_over(c, &a, hov_c, hov_a * CLAMP(0.5f - tb_sdbox(fx, fy, box * 0.5f, box * 0.5f, brad), 0.f, 1.f));
-            if (style == TBI_CUSTOM) {
+            if (replace && style == TBI_CUSTOM) {
                 f32 ic[3], ia = tb_sample_img(b->img, b->img_n, fx / zoom + logo * 0.5f, fy / zoom + logo * 0.5f, ic);
                 if (ia > 0.f) {
                     f32 k = 1.f - 0.1f * b->press_t;
                     for (int q = 0; q < 3; q++) c[q] = ic[q] * k + c[q] * (1.f - ia);
                     a = ia + a * (1.f - ia);
                 }
-            } else {
+            } else if (replace) {
                 tb_shape(style, fx, fy, u, dim, fg, c, &a);
             }
             if (a < 1.f / 255.f) a = 1.f / 255.f;  // alpha 0 would pass clicks to the real button
