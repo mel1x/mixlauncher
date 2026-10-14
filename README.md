@@ -2,63 +2,44 @@
   <img src="docs/banner.png" alt="MixLauncher" width="860">
 </p>
 
-<h1 align="center">MixLauncher</h1>
+<h1 align="center"><img src="docs/logo.png" alt="" width="34" align="top"> MixLauncher</h1>
 
 <p align="center">
-  A fast launcher for Windows 10/11.
+  A fast Start menu replacement for Windows 10 and 11.
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0b0b0d?style=flat-square" alt="Windows 10 | 11">
-  <img src="https://img.shields.io/badge/size-~600%20KB-0b0b0d?style=flat-square" alt="~600 KB">
+  <img src="https://img.shields.io/badge/size-~800%20KB-0b0b0d?style=flat-square" alt="~800 KB">
+  <img src="https://img.shields.io/badge/RAM-~30%20MB-0b0b0d?style=flat-square" alt="~30 MB RAM">
   <img src="https://img.shields.io/badge/no%20telemetry-0b0b0d?style=flat-square" alt="No telemetry">
 </p>
 
 ## Features
 
-- **Start menu replacement.** Opens with `Win` or any other key, even over games.
-- **Apps.** Everything from the Start menu and the Microsoft Store. Frequently used ones rank higher.
-- **Files.** Searches the whole disk through a bundled [Everything](https://www.voidtools.com/). If you already run your own Everything, that one is used.
-- **Wrong keyboard layout.** `rfkr` finds Калькулятор, `сщву` finds VS Code.
-- **English names.** `notepad`, `cmd`, `calc` find Notepad, Command Prompt and Calculator on a localized Windows.
-- **Tags.** Right-click anything and add your own tags; typing a tag finds it, even by the first letters or in the wrong layout.
-- **Commands.** Lock, sleep, restart, shut down, sign out, recycle bin, installed apps (uninstall programs). Sleep, restart, shut down and sign out ask to press Enter again.
-- **Start button.** Custom icon on the Windows 11 Start button; clicking it opens the launcher.
-- **Now playing.** Cover art, title and playback controls for any player, right on the taskbar.
-- **Styles.** Standard, Raycast, Fluent and Compact lists, and Windows 11: the Start menu look with pinned apps, recommended (most launched) apps, all apps, and account and power buttons; Windows 10: the Windows 10 Start menu with resizable tiles you pin with a right click. Matches are highlighted in bold.
-- **Position.** In the center of the screen, or at the bottom like Start (left or center), sliding up from under the taskbar. The Windows 11 and Windows 10 styles are always at the bottom.
-- **Updates.** When a new version is released on GitHub, an "Update" button appears in the launcher. The check can be turned off.
+- **Lightweight and very fast.** One native ~800 KB app, no frameworks. Opens instantly and runs lighter and faster than the regular Start menu.
+- **Apps and files.** Apps from Start and the Microsoft Store, files from the whole disk through the bundled [Everything](https://www.voidtools.com/).
+- **Smart search.** Finds apps typed in the wrong layout and by English names on a localized Windows, plus your own tags.
+- **Start menu looks.** Windows 11 and Windows 10 with tiles, or a compact list: Standard, Raycast, Fluent, Compact.
+- **Taskbar.** Opens with `Win` or the Start button; a now playing widget with playback controls.
 - **No AI, no telemetry.**
+
+## Styles
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/styles/windows11.png" alt="Windows 11" width="420"><br>Windows 11</td>
+    <td align="center"><img src="docs/styles/windows10.png" alt="Windows 10" width="420"><br>Windows 10</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/styles/raycast.png" alt="Raycast" width="420"><br>Raycast</td>
+    <td align="center"><img src="docs/styles/fluent.png" alt="Fluent" width="420"><br>Fluent</td>
+  </tr>
+</table>
 
 ## Installation
 
 Download from the [Releases](https://github.com/mel1x/mixlauncher/releases) page:
 
 - `MixLauncher-Setup.exe` - installer, Everything included.
-- `MixLauncher-portable.exe` - no installation; file search requires Everything to be installed.
-
-## Hotkeys
-
-| Keys | Action |
-|---|---|
-| `Win` | open or close |
-| `↑` `↓`, `PgUp` `PgDn` | select |
-| `Tab` | next section |
-| `Enter` | open |
-| `Ctrl+Enter` | show in folder |
-| `Ctrl+Shift+Enter` | run as administrator |
-| `Alt+Enter` | properties |
-| `Ctrl+C` | copy path |
-| `Esc` | clear the query, press again to close |
-| `Ctrl+,` | settings |
-
-## Settings
-
-`Ctrl+,`, the button in the launcher's corner, or the tray icon menu. Stored in `%LOCALAPPDATA%\MixLauncher\config.ini`.
-
-## Building
-
-Requires MinGW-w64 (MSYS2) or Visual Studio Build Tools; the installer needs [Inno Setup 7](https://jrsoftware.org/isdl.php).
-
-- `build.bat` - builds `build\mixlauncher.exe`; `build.bat dev` - without the administrator prompt.
-- `release.bat` - builds the launcher and `build\MixLauncher-Setup.exe`. The version is taken from `res\version.h`.
+- `MixLauncher-portable.exe` - no installation; file search needs Everything installed.
