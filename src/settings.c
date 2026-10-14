@@ -5,15 +5,16 @@ enum {
     SID_DATADIR, SID_ADMIN, SID_EVERYTHING, SID_ABOUT,
     SID_ASPEED, SID_AOPEN, SID_ACLOSE, SID_ASCALE, SID_ACASCADE, SID_AROW, SID_ASTAGGER, SID_ASELECT, SID_ASCROLL, SID_AMENU,
     SID_APAGE, SID_APREVIEW, SID_ARESET, SID_TASKBAR, SID_TBREPLACE, SID_TBICON, SID_TBFILE, SID_MEDIA, SID_MEDIAPOS, SID_MEDIACTL, SID_MEDIAHIDE, SID_MEDIASCROLL, SID_LANG,
-    SID_STYLE, SID_MATCHHL, SID_UPDCHECK, SID_UPDNOW, SID_REDUCED, SID__COUNT
+    SID_STYLE, SID_MATCHHL, SID_UPDCHECK, SID_UPDNOW, SID_REDUCED, SID_RMGOTO, SID__COUNT
 };
-enum { PG_GENERAL, PG_APPEARANCE, PG_ANIM, PG_SEARCH, PG_ADVANCED, PG_ABOUT, PG__COUNT };
+enum { PG_GENERAL, PG_TASKBAR, PG_APPEARANCE, PG_ANIM, PG_SEARCH, PG_ADVANCED, PG_ABOUT, PG__COUNT };
 
 typedef struct Str { const WCHAR *ru, *en; } Str;
 static const WCHAR *ss(Str s) { return g_lang_ru ? s.ru : s.en; }
 
 static const struct { Str name; u32 glyph; } k_pages[PG__COUNT] = {
     { { L"Общие", L"General" }, 0xE713 },
+    { { L"Панель задач", L"Taskbar" }, 0xE7C4 },
     { { L"Внешний вид", L"Appearance" }, 0xE790 },
     { { L"Анимация", L"Animation" }, 0xE916 },
     { { L"Поиск", L"Search" }, 0xE721 },
@@ -33,57 +34,53 @@ typedef struct SItem {
 } SItem;
 
 static const SItem k_sitems[] = {
-    { .page = PG_GENERAL, .kind = SK_HOTKEY, .id = SID_HOTKEY, .group = { L"Вызов", L"Hotkey" },
+    { .page = PG_GENERAL, .kind = SK_HOTKEY, .id = SID_HOTKEY, .group = { L"Запуск", L"Startup" },
       .title = { L"Открыть MixLauncher", L"Open MixLauncher" },
       .desc = { L"Клавиша или сочетание, которое открывает и закрывает лаунчер. Прежнее действие сочетания отключается: "
                 L"например, Win больше не открывает «Пуск», а Win+D не сворачивает окна.",
                 L"The key or shortcut that opens and closes the launcher. Whatever it did before is turned off: "
                 L"Win no longer opens Start, Win+D no longer shows the desktop." } },
-    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_AUTOSTART, .group = { L"Запуск", L"Startup" },
+    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_AUTOSTART,
       .title = { L"Запускать при входе в Windows", L"Start with Windows" },
       .desc = { L"Через планировщик заданий: с правами администратора и без запроса UAC при входе",
                 L"Through Task Scheduler: as administrator, without a UAC prompt at sign-in" } },
-    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_TASKBAR, .group = { L"Панель задач", L"Taskbar" },
-      .title = { L"Кнопка Пуск открывает MixLauncher", L"Start button opens MixLauncher" },
-      .desc = { L"Клик по кнопке Пуск (Windows 11) открывает лаунчер. Правый клик по-прежнему открывает меню Win+X",
-                L"Clicking the Start button (Windows 11) opens the launcher. Right click still opens the Win+X menu" } },
-    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_TBREPLACE, .dep = SID_TASKBAR, .dep_val = 1, .title = { L"Заменять значок меню Пуск", L"Replace the Start button icon" },
-      .desc = { L"Наш значок вместо логотипа Windows. Выключено - кнопка выглядит как обычно",
-                L"Our icon instead of the Windows logo. Off keeps the button looking as usual" } },
-    { .page = PG_GENERAL, .kind = SK_CHOICE, .id = SID_TBICON, .dep = SID_TBREPLACE, .dep_val = 1, .title = { L"Значок кнопки", L"Button icon" },
-      .opt = { { L"Ромб", L"Diamond" }, { L"Сетка", L"Grid" }, { L"Строки", L"Lines" }, { L"Свой", L"Custom" } } },
-    { .page = PG_GENERAL, .kind = SK_BUTTON, .id = SID_TBFILE, .dep = SID_TBICON, .dep_val = TBI_CUSTOM, .title = { L"Свой значок", L"Custom icon" },
-      .desc = { L"PNG, ICO или JPG. Лучше квадратный, от 48×48, с прозрачным фоном", L"PNG, ICO or JPG. Square, 48×48 or larger, with a transparent background works best" },
-      .opt = { { L"Выбрать…", L"Choose…" } }, .glyph = 0xE8E5 },
-    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_MEDIA, .group = { L"Сейчас играет", L"Now playing" },
-      .title = { L"Медиа на панели задач", L"Media on the taskbar" },
-      .desc = { L"Обложка, название и исполнитель из любого плеера: Spotify, браузера, Медиаплеера. Клик открывает плеер",
-                L"Cover, title and artist from any player: Spotify, a browser, Media Player. A click opens the player" } },
-    { .page = PG_GENERAL, .kind = SK_CHOICE, .id = SID_MEDIAPOS, .dep = SID_MEDIA, .dep_val = 1, .title = { L"Положение", L"Position" },
-      .desc = { L"Справа - у значков в трее. Если значки панели выровнены по левому краю, всегда справа",
-                L"Right sits next to the tray icons. Always right when taskbar icons are aligned left" },
-      .opt = { { L"Слева", L"Left" }, { L"Справа", L"Right" } } },
-    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_MEDIACTL, .dep = SID_MEDIA, .dep_val = 1, .title = { L"Кнопки управления", L"Playback buttons" },
-      .desc = { L"Предыдущий трек, пауза и следующий", L"Previous track, pause and next" } },
-    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_MEDIAHIDE, .dep = SID_MEDIA, .dep_val = 1, .title = { L"Скрывать на паузе", L"Hide when paused" },
-      .desc = { L"Показывать виджет, только пока что-то играет", L"Show the widget only while something plays" } },
-    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_MEDIASCROLL, .dep = SID_MEDIA, .dep_val = 1,
-      .title = { L"Прокручивать длинные названия", L"Scroll long titles" },
-      .desc = { L"Название, которое не помещается, медленно едет до конца и обратно", L"A title that does not fit slowly rides to its end and back" } },
-    { .page = PG_GENERAL, .kind = SK_STEPPER, .id = SID_KEEPQUERY, .group = { L"Поведение", L"Behavior" },
-      .title = { L"Помнить запрос", L"Keep the query" },
-      .desc = { L"Сколько секунд после закрытия хранить набранный текст. 0 - всегда начинать с пустого поля",
-                L"Seconds to keep the typed text after closing. 0 always starts empty" },
-      .lo = 0, .hi = 3600, .step = 10, .unit = { L"с", L"s" } },
-    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_REDUCED, .group = { L"Доступность", L"Accessibility" },
-      .title = { L"Уменьшение движения", L"Reduced motion" },
-      .desc = { L"Без анимаций и задержек: окна, меню и списки появляются сразу. Настройки анимаций сохраняются до выключения",
-                L"No animations or delays: windows, menus and lists appear at once. Animation settings are kept until it is off" } },
     { .page = PG_GENERAL, .kind = SK_CHOICE, .id = SID_LANG, .group = { L"Язык", L"Language" },
       .title = { L"Язык интерфейса", L"Interface language" },
       .desc = { L"«Системный» берёт язык Windows: русский для русской Windows, иначе английский",
                 L"System follows Windows: Russian on a Russian Windows, English otherwise" },
       .opt = { { L"Системный", L"System" }, { L"Русский", L"Русский" }, { L"English", L"English" } } },
+    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_REDUCED, .group = { L"Доступность", L"Accessibility" },
+      .title = { L"Уменьшение движения", L"Reduced motion" },
+      .desc = { L"Без анимаций и задержек: окна, меню и списки появляются сразу. Настройки анимаций сохраняются до выключения",
+                L"No animations or delays: windows, menus and lists appear at once. Animation settings are kept until it is off" } },
+
+    { .page = PG_TASKBAR, .kind = SK_TOGGLE, .id = SID_TASKBAR, .group = { L"Кнопка Пуск", L"Start button" },
+      .title = { L"Кнопка Пуск открывает MixLauncher", L"Start button opens MixLauncher" },
+      .desc = { L"Клик по кнопке Пуск (Windows 11) открывает лаунчер. Правый клик по-прежнему открывает меню Win+X",
+                L"Clicking the Start button (Windows 11) opens the launcher. Right click still opens the Win+X menu" } },
+    { .page = PG_TASKBAR, .kind = SK_TOGGLE, .id = SID_TBREPLACE, .dep = SID_TASKBAR, .dep_val = 1, .title = { L"Заменять значок меню Пуск", L"Replace the Start button icon" },
+      .desc = { L"Наш значок вместо логотипа Windows. Выключено - кнопка выглядит как обычно",
+                L"Our icon instead of the Windows logo. Off keeps the button looking as usual" } },
+    { .page = PG_TASKBAR, .kind = SK_CHOICE, .id = SID_TBICON, .dep = SID_TBREPLACE, .dep_val = 1, .title = { L"Значок кнопки", L"Button icon" },
+      .opt = { { L"Ромб", L"Diamond" }, { L"Сетка", L"Grid" }, { L"Строки", L"Lines" }, { L"Свой", L"Custom" } } },
+    { .page = PG_TASKBAR, .kind = SK_BUTTON, .id = SID_TBFILE, .dep = SID_TBICON, .dep_val = TBI_CUSTOM, .title = { L"Свой значок", L"Custom icon" },
+      .desc = { L"PNG, ICO или JPG. Лучше квадратный, от 48×48, с прозрачным фоном", L"PNG, ICO or JPG. Square, 48×48 or larger, with a transparent background works best" },
+      .opt = { { L"Выбрать…", L"Choose…" } }, .glyph = 0xE8E5 },
+    { .page = PG_TASKBAR, .kind = SK_TOGGLE, .id = SID_MEDIA, .group = { L"Сейчас играет", L"Now playing" },
+      .title = { L"Медиа на панели задач", L"Media on the taskbar" },
+      .desc = { L"Обложка, название и исполнитель из любого плеера: Spotify, браузера, Медиаплеера. Клик открывает плеер",
+                L"Cover, title and artist from any player: Spotify, a browser, Media Player. A click opens the player" } },
+    { .page = PG_TASKBAR, .kind = SK_CHOICE, .id = SID_MEDIAPOS, .dep = SID_MEDIA, .dep_val = 1, .title = { L"Положение", L"Position" },
+      .desc = { L"Справа - у значков в трее. Если значки панели выровнены по левому краю, всегда справа",
+                L"Right sits next to the tray icons. Always right when taskbar icons are aligned left" },
+      .opt = { { L"Слева", L"Left" }, { L"Справа", L"Right" } } },
+    { .page = PG_TASKBAR, .kind = SK_TOGGLE, .id = SID_MEDIACTL, .dep = SID_MEDIA, .dep_val = 1, .title = { L"Кнопки управления", L"Playback buttons" },
+      .desc = { L"Предыдущий трек, пауза и следующий", L"Previous track, pause and next" } },
+    { .page = PG_TASKBAR, .kind = SK_TOGGLE, .id = SID_MEDIASCROLL, .dep = SID_MEDIA, .dep_val = 1,
+      .title = { L"Прокручивать длинные названия", L"Scroll long titles" },
+      .desc = { L"Название, которое не помещается, медленно едет до конца и обратно", L"A title that does not fit slowly rides to its end and back" } },
+    { .page = PG_TASKBAR, .kind = SK_TOGGLE, .id = SID_MEDIAHIDE, .dep = SID_MEDIA, .dep_val = 1, .title = { L"Скрывать на паузе", L"Hide when paused" },
+      .desc = { L"Показывать виджет, только пока что-то играет", L"Show the widget only while something plays" } },
 
     { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_THEME, .group = { L"Окно", L"Window" },
       .title = { L"Тема", L"Theme" }, .desc = { L"«Системная» следует настройке Windows", L"System follows the Windows setting" },
@@ -102,14 +99,19 @@ static const SItem k_sitems[] = {
     { .page = PG_APPEARANCE, .kind = SK_TOGGLE, .id = SID_MATCHHL, .title = { L"Подсветка совпадений", L"Highlight matches" },
       .desc = { L"Буквы, по которым нашлись приложение или файл, выделяются жирным",
                 L"The letters that matched the query are drawn in bold" } },
-    { .page = PG_APPEARANCE, .kind = SK_BUTTON, .id = SID_APREVIEW, .title = { L"Проверить", L"Try it" },
-      .desc = { L"Открыть лаунчер с текущими настройками. Esc вернёт сюда", L"Open the launcher with the current settings. Esc comes back here" },
-      .opt = { { L"Открыть лаунчер", L"Open launcher" } }, .glyph = 0xE768 },
     { .page = PG_APPEARANCE, .kind = SK_STEPPER, .id = SID_WIDTH, .group = { L"Размер", L"Size" },
       .title = { L"Ширина окна", L"Window width" }, .lo = 480, .hi = 1600, .step = 20, .unit = { L"px", L"px" } },
     { .page = PG_APPEARANCE, .kind = SK_STEPPER, .id = SID_ROWS, .title = { L"Строк в списке", L"Visible rows" },
       .lo = 4, .hi = 20, .step = 1 },
+    { .page = PG_APPEARANCE, .kind = SK_BUTTON, .id = SID_APREVIEW, .title = { L"Проверить", L"Try it" },
+      .desc = { L"Открыть лаунчер с текущими настройками. Esc вернёт сюда", L"Open the launcher with the current settings. Esc comes back here" },
+      .opt = { { L"Открыть лаунчер", L"Open launcher" } }, .glyph = 0xE768 },
 
+    { .page = PG_ANIM, .kind = SK_BUTTON, .id = SID_RMGOTO, .dep = SID_REDUCED, .dep_val = 1,
+      .title = { L"Включено уменьшение движения", L"Reduced motion is on" },
+      .desc = { L"Анимации выключены, их настройки сохранены. Выключить можно в «Общих»",
+                L"Animations are off and their settings are kept. It can be turned off in General" },
+      .opt = { { L"Перейти", L"Go there" } }, .glyph = 0xE72A },
     { .page = PG_ANIM, .kind = SK_TOGGLE, .id = SID_ANIM, .group = { L"Общее", L"General" }, .title = { L"Анимации", L"Animations" },
       .desc = { L"Все анимации лаунчера и настроек. Выключаются и системной настройкой «Эффекты анимации»",
                 L"Every animation of the launcher and settings. Also off when Windows animation effects are off" } },
@@ -120,7 +122,6 @@ static const SItem k_sitems[] = {
     { .page = PG_ANIM, .kind = SK_BUTTON, .id = SID_APREVIEW, .dep = SID_ANIM, .dep_val = 1, .title = { L"Проверить", L"Try it" },
       .desc = { L"Открыть лаунчер с текущими настройками. Esc вернёт сюда", L"Open the launcher with the current settings. Esc comes back here" },
       .opt = { { L"Открыть лаунчер", L"Open launcher" } }, .glyph = 0xE768 },
-
     { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_AOPEN, .dep = SID_ANIM, .dep_val = 1, .group = { L"Открытие и закрытие", L"Open and close" },
       .title = { L"Появление окна", L"Window appears" }, .desc = { L"Проявление стекла и содержимого. 0 - сразу", L"Fade-in of the glass and content. 0 is instant" },
       .lo = 0, .hi = 1000, .step = 10, .unit = { L"мс", L"ms" } },
@@ -137,7 +138,6 @@ static const SItem k_sitems[] = {
       .lo = 0, .hi = 1000, .step = 10, .unit = { L"мс", L"ms" } },
     { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ASTAGGER, .dep = SID_ACASCADE, .dep_val = 1, .title = { L"Задержка между строками", L"Delay between rows" },
       .lo = 0, .hi = 60, .step = 2, .unit = { L"мс", L"ms" } },
-
     { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ASELECT, .dep = SID_ANIM, .dep_val = 1, .group = { L"Движение", L"Motion" },
       .title = { L"Выделение", L"Selection" },
       .desc = { L"За сколько подложка доезжает до выбранной строки (пружина: при быстром листании скорость не рвётся)",
@@ -154,6 +154,11 @@ static const SItem k_sitems[] = {
       .title = { L"Значения по умолчанию", L"Default values" }, .desc = { L"Вернуть все тайминги этой страницы", L"Restore every timing on this page" },
       .opt = { { L"Сбросить", L"Reset" } }, .glyph = 0xE777 },
 
+    { .page = PG_SEARCH, .kind = SK_STEPPER, .id = SID_KEEPQUERY, .group = { L"Запрос", L"Query" },
+      .title = { L"Помнить запрос", L"Keep the query" },
+      .desc = { L"Сколько секунд после закрытия хранить набранный текст. 0 - всегда начинать с пустого поля",
+                L"Seconds to keep the typed text after closing. 0 always starts empty" },
+      .lo = 0, .hi = 3600, .step = 10, .unit = { L"с", L"s" } },
     { .page = PG_SEARCH, .kind = SK_STEPPER, .id = SID_MAXAPPS, .group = { L"Приложения", L"Applications" },
       .title = { L"Приложений в результатах", L"Apps in results" }, .lo = 1, .hi = 50, .step = 1 },
     { .page = PG_SEARCH, .kind = SK_TOGGLE, .id = SID_HIDENOISE, .title = { L"Скрывать деинсталляторы и справку", L"Hide uninstallers and help links" },
@@ -161,7 +166,11 @@ static const SItem k_sitems[] = {
     { .page = PG_SEARCH, .kind = SK_BUTTON, .id = SID_REINDEX, .title = { L"Список приложений", L"App list" },
       .desc = { L"Перечитать меню «Пуск» прямо сейчас. Обычно это происходит само", L"Re-read the Start menu now. Normally this happens by itself" },
       .opt = { { L"Обновить", L"Refresh" } }, .glyph = 0xE72C },
-    { .page = PG_SEARCH, .kind = SK_STEPPER, .id = SID_MINCHARS, .group = { L"Файлы (Everything)", L"Files (Everything)" },
+    { .page = PG_SEARCH, .kind = SK_INFO, .id = SID_EVERYTHING, .group = { L"Файлы (Everything)", L"Files (Everything)" },
+      .title = { L"Everything", L"Everything" },
+      .desc = { L"Поиск файлов идёт через ваш Everything, а если его нет - через встроенный",
+                L"File search goes through your own Everything, or the built-in one when you have none" } },
+    { .page = PG_SEARCH, .kind = SK_STEPPER, .id = SID_MINCHARS,
       .title = { L"Искать файлы с", L"Search files from" },
       .desc = { L"Минимальная длина запроса", L"Minimum query length" }, .lo = 1, .hi = 10, .step = 1, .unit = { L"симв.", L"chars" } },
     { .page = PG_SEARCH, .kind = SK_TEXT, .id = SID_FILTER, .title = { L"Фильтр Everything", L"Everything filter" },
@@ -179,13 +188,6 @@ static const SItem k_sitems[] = {
     { .page = PG_ADVANCED, .kind = SK_BUTTON, .id = SID_DATADIR, .title = { L"Папка данных", L"Data folder" },
       .desc = { L"Настройки, история, кэш списка приложений и журнал", L"Settings, history, app list cache and log" },
       .opt = { { L"Открыть", L"Open" } }, .glyph = 0xE838 },
-    { .page = PG_ADVANCED, .kind = SK_TOGGLE, .id = SID_UPDCHECK, .group = { L"Обновления", L"Updates" },
-      .title = { L"Проверять обновления", L"Check for updates" },
-      .desc = { L"Раз в несколько часов спрашивает GitHub о новой версии. Если она есть, в лаунчере появится кнопка «Обновить»",
-                L"Asks GitHub for a new version every few hours. When there is one, the launcher shows an Update button" } },
-    { .page = PG_ADVANCED, .kind = SK_BUTTON, .id = SID_UPDNOW, .title = { L"Версия " ML_VER_WSTR, L"Version " ML_VER_WSTR },
-      .desc = { L"Проверить сейчас или установить найденное обновление", L"Check now or install the update that was found" },
-      .opt = { { L"Проверить", L"Check now" } }, .glyph = 0xE896 },
     { .page = PG_ADVANCED, .kind = SK_INFO, .id = SID_ADMIN, .group = { L"Права", L"Permissions" },
       .title = { L"Права администратора", L"Administrator rights" },
       .desc = { L"Нужны, чтобы клавиша вызова работала поверх игр и окон администратора. Программы из лаунчера запускаются с обычными правами",
@@ -196,10 +198,13 @@ static const SItem k_sitems[] = {
                 L"Всё работает на вашем компьютере: без ИИ и без телеметрии.",
                 L"A fast launcher for Windows. Apps, files and commands on one key, music on the taskbar. "
                 L"It all runs on your computer: no AI, no telemetry." } },
-    { .page = PG_ABOUT, .kind = SK_INFO, .id = SID_EVERYTHING, .group = { L"Состояние", L"Status" },
-      .title = { L"Everything", L"Everything" },
-      .desc = { L"Поиск файлов идёт через ваш Everything, а если его нет - через встроенный",
-                L"File search goes through your own Everything, or the built-in one when you have none" } },
+    { .page = PG_ABOUT, .kind = SK_TOGGLE, .id = SID_UPDCHECK, .group = { L"Обновления", L"Updates" },
+      .title = { L"Проверять обновления", L"Check for updates" },
+      .desc = { L"Раз в несколько часов спрашивает GitHub о новой версии. Если она есть, в лаунчере появится кнопка «Обновить»",
+                L"Asks GitHub for a new version every few hours. When there is one, the launcher shows an Update button" } },
+    { .page = PG_ABOUT, .kind = SK_BUTTON, .id = SID_UPDNOW, .title = { L"Версия " ML_VER_WSTR, L"Version " ML_VER_WSTR },
+      .desc = { L"Проверить сейчас или установить найденное обновление", L"Check now or install the update that was found" },
+      .opt = { { L"Проверить", L"Check now" } }, .glyph = 0xE896 },
 };
 #define SITEMS countof(k_sitems)
 #define SROWS_MAX 24
@@ -391,7 +396,7 @@ static const SItem *sitem(int id)
 // Under reduced motion the animation settings keep their values but cannot be changed.
 static bool item_locked(const SItem *it)
 {
-    return sval(SID_REDUCED) && ((it->page == PG_ANIM && it->id != SID_APREVIEW) || it->id == SID_MEDIASCROLL);
+    return sval(SID_REDUCED) && ((it->page == PG_ANIM && it->id != SID_APREVIEW && it->id != SID_RMGOTO) || it->id == SID_MEDIASCROLL);
 }
 
 static bool item_shown(int i)
@@ -770,6 +775,9 @@ static void button_action(const SItem *it)
         break;
     case SID_APREVIEW:
         ui_show();
+        break;
+    case SID_RMGOTO:
+        settings_open_at(SID_REDUCED);
         break;
     case SID_UPDNOW:
         if (upd_state() == UPD_AVAILABLE || (upd_state() == UPD_ERROR && UPD.url[0])) upd_download();

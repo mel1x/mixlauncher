@@ -387,7 +387,7 @@ static void set_page(int page)
     SW.focus = -1;
     SW.hover.type = HT_NONE;
     tip_hide();
-    if (page == PG_ABOUT) refresh_status();
+    if (page == PG_SEARCH) refresh_status();  // the Everything status
     settings_invalidate();
 }
 

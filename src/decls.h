@@ -8,6 +8,7 @@ static void tb_icon_changed(void);
 static void media_set_enabled(bool on);
 static void media_settings_changed(void);
 static void settings_open(void);
+static void settings_open_at(int id);
 static void settings_device_lost(void);
 static void settings_device_restored(void);
 static void pm_close(void);
