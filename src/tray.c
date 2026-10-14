@@ -131,10 +131,22 @@ static NOTIFYICONDATAW g_nid;
 static UINT g_wm_taskbar_created;
 static HICON g_icon_small, g_icon_big;
 
-// Gives a window our icons outright and lets Explorer ask for them: it runs below our (elevated) integrity
-// level, and when the question does not get through the taskbar shows the exe's icon, plate and all.
+// Gives a window our icons, without the plate, on the taskbar too. The taskbar ties a window to the Start menu
+// shortcut of its exe and shows that icon instead (the exe's, plate and all); a window AppUserModelID of its
+// own unties it. Explorer also runs below our (elevated) integrity level, so it is let ask for the icon.
 static void window_icons(HWND h)
 {
+    IPropertyStore *ps = NULL;
+    if (SUCCEEDED(SHGetPropertyStoreForWindow(h, &IID_IPropertyStore, (void **)&ps)) && ps) {
+        static const PROPERTYKEY app_id = { { 0x9f4c2855, 0x9f79, 0x4b39, { 0xa8, 0xd0, 0xe1, 0xd4, 0x2d, 0xe1, 0xd5, 0xf3 } }, 5 };
+        PROPVARIANT v;
+        memset(&v, 0, sizeof v);
+        v.vt = VT_LPWSTR;
+        v.pwszVal = (LPWSTR)L"mel1x.MixLauncher.Window";
+        IPropertyStore_SetValue(ps, &app_id, &v);
+        IPropertyStore_Commit(ps);
+        IPropertyStore_Release(ps);
+    }
     uipi_allow(h, WM_GETICON);
     SendMessageW(h, WM_SETICON, ICON_BIG, (LPARAM)g_icon_big);
     SendMessageW(h, WM_SETICON, ICON_SMALL, (LPARAM)g_icon_small);
