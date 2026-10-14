@@ -26,10 +26,13 @@ static void st_metrics(void)
     U.list_y1 = (f32)U.H - U.footer_h;
 }
 
-// ---- pins: app ids, one per line, in the order they were pinned or moved
+// ---- pins: app ids, one per line, in the order they were pinned or moved; after tabs the Windows 10 tile
+// size and its cell (column, row; -1 until it has one)
 
 static struct {
     WCHAR *id[PINS_MAX];
+    u8 size[PINS_MAX];
+    i16 col[PINS_MAX], row[PINS_MAX];
     int n;
     bool loaded;
 } PIN;
@@ -45,8 +48,23 @@ static void pins_load(void)
     char *cur = text, *line;
     while ((line = next_line(&cur)) != NULL && PIN.n < PINS_MAX) {
         if (!*line || *line == '#') continue;
+        char *tab = strchr(line, '\t');
+        int size = TILE_MEDIUM, col = -1, row = -1;
+        if (tab) {
+            *tab = 0;
+            char *e = tab + 1, *f;
+            size = (int)strtol(e, &f, 10);
+            if (*f == '	') col = (int)strtol(f + 1, &f, 10);
+            if (*f == '	') row = (int)strtol(f + 1, &f, 10);
+            else col = -1;
+            size = CLAMP(size, 0, TILE__COUNT - 1);
+        }
         utf8_to_w(line, -1, id, countof(id));
-        if (id[0]) PIN.id[PIN.n++] = wdup_heap(id);
+        if (!id[0]) continue;
+        PIN.size[PIN.n] = (u8)size;
+        PIN.col[PIN.n] = (i16)(col >= 0 && row >= 0 ? MIN(col, 63) : -1);
+        PIN.row[PIN.n] = (i16)(col >= 0 && row >= 0 ? MIN(row, 250) : -1);
+        PIN.id[PIN.n++] = wdup_heap(id);
     }
     free(text);
 }
@@ -57,7 +75,7 @@ static void pins_save(void)
     buf_put(&b, "# MixLauncher pinned apps\n", 26);
     for (int i = 0; i < PIN.n; i++) {
         buf_put_w(&b, PIN.id[i]);
-        buf_put(&b, "\n", 1);
+        buf_printf(&b, "\t%d\t%d\t%d\n", PIN.size[i], PIN.col[i], PIN.row[i]);
     }
     WCHAR path[MAX_PATH];
     data_path(path, L"pins.txt");
@@ -73,22 +91,51 @@ static int pin_index(const WCHAR *id)
     return -1;
 }
 
+static int pin_size(int i) { return i >= 0 && i < PIN.n ? PIN.size[i] : TILE_MEDIUM; }
+
+static void pin_set_size(const WCHAR *id, int size)
+{
+    int i = pin_index(id);
+    if (i < 0 || PIN.size[i] == size) return;
+    PIN.size[i] = (u8)size;
+    pins_save();
+}
+
 static void pin_move(int from, int to)
 {
     WCHAR *p = PIN.id[from];
-    if (from < to) memmove(&PIN.id[from], &PIN.id[from + 1], sizeof(WCHAR *) * (to - from));
-    else memmove(&PIN.id[to + 1], &PIN.id[to], sizeof(WCHAR *) * (from - to));
+    u8 sz = PIN.size[from];
+    i16 c = PIN.col[from], r = PIN.row[from];
+    if (from < to) {
+        memmove(&PIN.id[from], &PIN.id[from + 1], sizeof(WCHAR *) * (to - from));
+        memmove(&PIN.size[from], &PIN.size[from + 1], (size_t)(to - from));
+        memmove(&PIN.col[from], &PIN.col[from + 1], sizeof(i16) * (to - from));
+        memmove(&PIN.row[from], &PIN.row[from + 1], sizeof(i16) * (to - from));
+    } else {
+        memmove(&PIN.id[to + 1], &PIN.id[to], sizeof(WCHAR *) * (from - to));
+        memmove(&PIN.size[to + 1], &PIN.size[to], (size_t)(from - to));
+        memmove(&PIN.col[to + 1], &PIN.col[to], sizeof(i16) * (from - to));
+        memmove(&PIN.row[to + 1], &PIN.row[to], sizeof(i16) * (from - to));
+    }
     PIN.id[to] = p;
+    PIN.size[to] = sz;
+    PIN.col[to] = c;
+    PIN.row[to] = r;
 }
 
 static void pin_set(const WCHAR *id, bool on)
 {
     int i = pin_index(id);
     if (on && i < 0 && PIN.n < PINS_MAX) {
+        PIN.size[PIN.n] = TILE_MEDIUM;
+        PIN.col[PIN.n] = PIN.row[PIN.n] = -1;
         PIN.id[PIN.n++] = wdup_heap(id);
     } else if (!on && i >= 0) {
         free(PIN.id[i]);
         memmove(&PIN.id[i], &PIN.id[i + 1], sizeof(WCHAR *) * (PIN.n - i - 1));
+        memmove(&PIN.size[i], &PIN.size[i + 1], (size_t)(PIN.n - i - 1));
+        memmove(&PIN.col[i], &PIN.col[i + 1], sizeof(i16) * (PIN.n - i - 1));
+        memmove(&PIN.row[i], &PIN.row[i + 1], sizeof(i16) * (PIN.n - i - 1));
         PIN.n--;
     } else {
         return;
@@ -168,6 +215,26 @@ static void st_grid(App **apps, int n)
     U.content_h = y0 + th * (f32)((n + ST_COLS - 1) / ST_COLS);
 }
 
+// All apps by name, under a header for each first letter.
+static void st_all_apps_rows(void)
+{
+    U.st.letter_count = 0;
+    WCHAR last = 0;
+    for (int i = 0; i < U.apps->shell_count; i++) {
+        App *a = &U.apps->apps[i];
+        WCHAR c = (WCHAR)towupper(a->name[0]);
+        if (!iswalpha(c)) c = '#';
+        if (c != last && U.st.letter_count < countof(U.st.letters)) {
+            WCHAR *l = U.st.letters[U.st.letter_count++];
+            l[0] = c;
+            l[1] = 0;
+            row_header(l);
+            last = c;
+        }
+        row_app(a);
+    }
+}
+
 static void st_build_home(void)
 {
     U.content_h = 0;
@@ -178,21 +245,7 @@ static void st_build_home(void)
         return;
     }
     if (U.st.all_view) {
-        U.st.letter_count = 0;
-        WCHAR last = 0;
-        for (int i = 0; i < U.apps->shell_count; i++) {
-            App *a = &U.apps->apps[i];
-            WCHAR c = (WCHAR)towupper(a->name[0]);
-            if (!iswalpha(c)) c = '#';
-            if (c != last && U.st.letter_count < countof(U.st.letters)) {
-                WCHAR *l = U.st.letters[U.st.letter_count++];
-                l[0] = c;
-                l[1] = 0;
-                row_header(l);
-                last = c;
-            }
-            row_app(a);
-        }
+        st_all_apps_rows();
         return;
     }
     if (U.st.tile_count) st_grid(U.st.tiles, U.st.tile_count);
@@ -216,7 +269,12 @@ static void st_set_all_view(bool on)
 
 static void st_pins_changed(void)
 {
-    st_refresh_tiles();
+    if (w10_on()) {
+        w10_refresh_tiles();
+        w10_pins_freeze();  // a new, resized or bumped tile keeps the cell it got
+    } else {
+        st_refresh_tiles();
+    }
     rebuild_rows(true);
     snap_highlight();
     ui_invalidate();
@@ -297,10 +355,11 @@ static bool hibernate_allowed(void)
     return f && f();
 }
 
-static void st_footer_menu(int b)
+// The account or the power menu, at a button's top left.
+static void st_menu_open(bool account, int x, int y)
 {
     U.cm.n = 0;
-    if (b == FB_ACCOUNT) {
+    if (account) {
         cm_add(CM_ST_ACCOUNT, 0xE77B, TR("Изменить параметры учётной записи", "Change account settings"), L"", false);
         cm_add(CM_ST_LOCK, 0xE72E, TR("Заблокировать", "Lock"), L"", false);
         cm_add(CM_ST_SIGNOUT, 0xF3B1, TR("Выйти", "Sign out"), L"", false);
@@ -312,8 +371,10 @@ static void st_footer_menu(int b)
         cm_add(CM_ST_SHUTDOWN, 0xE7E8, TR("Завершение работы", "Shut down"), L"", false);
         cm_add(CM_ST_RESTART, 0xE777, TR("Перезагрузка", "Restart"), L"", false);
     }
-    cm_show(U.st.fb[b][0], U.st.fb[b][1], false);
+    cm_show(x, y, false);
 }
+
+static void st_footer_menu(int b) { st_menu_open(b == FB_ACCOUNT, U.st.fb[b][0], U.st.fb[b][1]); }
 
 static void st_footer_click(int b)
 {

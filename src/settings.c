@@ -28,9 +28,10 @@ typedef struct SItem {
     Str title, desc;
     int lo, hi, step;
     Str unit;
-    Str opt[5];
+    Str opt[6];
     u32 glyph;
     u8 dep, dep_val;  // shown only while setting `dep` has the value `dep_val` (and is shown itself)
+    u16 dep_mask;     // ...or, with this, one of these values (bits)
     bool dep_not;     // ...or, with this, any other value
 } SItem;
 
@@ -94,16 +95,16 @@ static const SItem k_sitems[] = {
       .title = { L"Стиль", L"Style" },
       .desc = { L"Стандарт - мягкая подложка с контуром. Raycast - мелкие значки и плотная подложка. "
                 L"Fluent - полоска акцента у выбранной строки. Компактный - больше строк на экране. "
-                L"Windows 11 - как меню Пуск: закреплённые приложения сеткой, учётная запись и питание внизу",
+                L"Windows 11 и Windows 10 - как меню Пуск: закреплённые приложения сеткой или плитками, учётная запись и питание",
                 L"Standard has a soft outlined highlight. Raycast uses small icons and a solid highlight. "
                 L"Fluent marks the selected row with an accent bar. Compact fits more rows on screen. "
-                L"Windows 11 looks like Start: a grid of pinned apps, account and power at the bottom" },
+                L"Windows 11 and Windows 10 look like Start: pinned apps as a grid or tiles, account and power" },
       .opt = { { L"Стандарт", L"Standard" }, { L"Raycast", L"Raycast" }, { L"Fluent", L"Fluent" }, { L"Компактный", L"Compact" },
-               { L"Windows 11", L"Windows 11" } } },
-    { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_STARTPOS, .dep = SID_STYLE, .dep_val = STYLE_START, .title = { L"Положение", L"Position" },
+               { L"Windows 11", L"Windows 11" }, { L"Windows 10", L"Windows 10" } } },
+    { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_STARTPOS, .dep = SID_STYLE, .dep_mask = STYLES_START_MENU, .title = { L"Положение", L"Position" },
       .desc = { L"Как меню Пуск: окно выезжает из-под панели задач", L"Like Start: the window slides up from under the taskbar" },
       .opt = { { L"Слева снизу", L"Bottom left" }, { L"Снизу по центру", L"Bottom center" } } },
-    { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_POSITION, .dep = SID_STYLE, .dep_val = STYLE_START, .dep_not = true,
+    { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_POSITION, .dep = SID_STYLE, .dep_mask = STYLES_START_MENU, .dep_not = true,
       .title = { L"Положение", L"Position" },
       .desc = { L"Снизу - как меню Пуск: окно выезжает из-под панели задач",
                 L"Bottom works like Start: the window slides up from under the taskbar" },
@@ -111,9 +112,9 @@ static const SItem k_sitems[] = {
     { .page = PG_APPEARANCE, .kind = SK_TOGGLE, .id = SID_MATCHHL, .title = { L"Подсветка совпадений", L"Highlight matches" },
       .desc = { L"Буквы, по которым нашлись приложение или файл, выделяются жирным",
                 L"The letters that matched the query are drawn in bold" } },
-    { .page = PG_APPEARANCE, .kind = SK_STEPPER, .id = SID_WIDTH, .dep = SID_STYLE, .dep_val = STYLE_START, .dep_not = true, .group = { L"Размер", L"Size" },
+    { .page = PG_APPEARANCE, .kind = SK_STEPPER, .id = SID_WIDTH, .dep = SID_STYLE, .dep_mask = STYLES_START_MENU, .dep_not = true, .group = { L"Размер", L"Size" },
       .title = { L"Ширина окна", L"Window width" }, .lo = 480, .hi = 1600, .step = 20, .unit = { L"px", L"px" } },
-    { .page = PG_APPEARANCE, .kind = SK_STEPPER, .id = SID_ROWS, .dep = SID_STYLE, .dep_val = STYLE_START, .dep_not = true, .title = { L"Строк в списке", L"Visible rows" },
+    { .page = PG_APPEARANCE, .kind = SK_STEPPER, .id = SID_ROWS, .dep = SID_STYLE, .dep_mask = STYLES_START_MENU, .dep_not = true, .title = { L"Строк в списке", L"Visible rows" },
       .lo = 4, .hi = 20, .step = 1 },
     { .page = PG_APPEARANCE, .kind = SK_BUTTON, .id = SID_APREVIEW, .title = { L"Проверить", L"Try it" },
       .desc = { L"Открыть лаунчер с текущими настройками. Esc вернёт сюда", L"Open the launcher with the current settings. Esc comes back here" },
@@ -417,7 +418,9 @@ static bool item_shown(int i)
     const SItem *it = &k_sitems[i];
     if (!it->dep) return true;
     const SItem *p = sitem(it->dep);
-    return (sval(it->dep) == it->dep_val) != it->dep_not && (!p || item_shown((int)(p - k_sitems)));
+    int v = sval(it->dep);
+    bool match = it->dep_mask ? ((it->dep_mask >> v) & 1) != 0 : v == it->dep_val;
+    return match != it->dep_not && (!p || item_shown((int)(p - k_sitems)));
 }
 
 static void save_int(const char *key, int v)

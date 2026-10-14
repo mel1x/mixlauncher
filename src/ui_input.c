@@ -16,6 +16,7 @@ static bool ui_keydown(WPARAM vk)
     if (tg_key(vk)) return true;
     if (cm_key(vk)) return true;
     if (st_on() && st_key(vk)) return true;
+    if (w10_on() && w10_key(vk)) return true;
     bool ctrl = GetKeyState(VK_CONTROL) < 0, shift = GetKeyState(VK_SHIFT) < 0, alt = GetKeyState(VK_MENU) < 0;
     int page = MAX(1, g_cfg.rows - 1);
     switch (vk) {
@@ -145,8 +146,13 @@ static void ui_mouse_move(int x, int y)
         }
         return;
     }
+    if (U.w10.drag) {
+        w10_drag_move();
+        return;
+    }
     if (st_on()) st_mouse_move(x, y);
-    bool sb_hot = x >= U.W - (int)SR(14) && y >= U.list_y0 && y < U.list_y1;
+    if (w10_on() && w10_mouse_move(x, y)) return;
+    bool sb_hot = x >= (int)list_x1() - (int)SR(14) && x < (int)list_x1() && y >= U.list_y0 && y < U.list_y1;
     if (sb_hot != U.sb_hot) {
         U.sb_hot = sb_hot;
         U.animating = true;
@@ -196,7 +202,10 @@ static void ui_mouse_down(int x, int y, bool dbl)
         if (!cm_inside(x, y)) cm_close(true);
         return;
     }
-    if (y < U.search_h) {
+    if (w10_on() && w10_drag_begin(x, y)) return;
+    f32 sy0, sy1;
+    search_band(&sy0, &sy1);
+    if ((f32)y >= sy0 && (f32)y < sy1) {
         if (dbl) {
             U.anchor = 0;
             U.caret = U.qlen;
@@ -209,6 +218,7 @@ static void ui_mouse_down(int x, int y, bool dbl)
         return;
     }
     if (st_on() && st_mouse_down(x, y)) return;
+    if (w10_on() && w10_mouse_down(x, y)) return;
     U.press_settings = in_settings_button(x, y);
     if (U.press_settings) return;
     U.press_update = in_update_button(x, y);
@@ -245,7 +255,12 @@ static void ui_mouse_up(int x, int y)
         ReleaseCapture();
         return;
     }
+    if (U.w10.drag) {
+        w10_drag_end();
+        return;
+    }
     if (st_on() && st_mouse_up(x, y)) return;
+    if (w10_on() && w10_mouse_up(x, y)) return;
     if (U.press_settings) {
         U.press_settings = false;
         if (in_settings_button(x, y)) open_settings_from_launcher();
@@ -272,6 +287,7 @@ static void ui_wheel(int delta)
         cm_close(true);
         return;
     }
+    if (w10_on() && w10_wheel(delta)) return;
     U.scroll_target -= (f32)delta / WHEEL_DELTA * SR(ROW_H) * 3.f;
     U.scroll_target = CLAMP(U.scroll_target, 0.f, max_scroll());
     U.animating = true;

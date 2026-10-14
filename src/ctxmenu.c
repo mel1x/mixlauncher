@@ -3,7 +3,9 @@
 enum {
     CM_OPEN = 1, CM_REVEAL, CM_RUNAS, CM_COPY, CM_PROPS, CM_TAG_ADD, CM_TAG_CLEAR, CM_TAG_INFO, CM_PIN, CM_UNPIN, CM_PIN_TOP,
     // the Start style's account and power menus
-    CM_ST_ACCOUNT, CM_ST_LOCK, CM_ST_SIGNOUT, CM_ST_MLSET, CM_ST_SLEEP, CM_ST_HIBERNATE, CM_ST_SHUTDOWN, CM_ST_RESTART
+    CM_ST_ACCOUNT, CM_ST_LOCK, CM_ST_SIGNOUT, CM_ST_MLSET, CM_ST_SLEEP, CM_ST_HIBERNATE, CM_ST_SHUTDOWN, CM_ST_RESTART,
+    // Windows 10 tile sizes, in the order of TILE_*
+    CM_SIZE_SMALL, CM_SIZE_MEDIUM, CM_SIZE_WIDE, CM_SIZE_LARGE
 };
 #define CM_ITEM_H 32.f
 #define CM_PAD 5.f
@@ -74,13 +76,19 @@ static void ui_context_menu(int x, int y, bool keyboard)
         cm_add(CM_COPY, 0xE8C8, path ? TR("Копировать путь", "Copy path") : TR("Копировать имя", "Copy name"), L"Ctrl+C", true);
         if (path) cm_add(CM_PROPS, 0xE946, TR("Свойства", "Properties"), L"Alt+Enter", false);
     }
-    if (st_on() && r->kind == ROW_APP) {
+    if ((st_on() || w10_on()) && r->kind == ROW_APP) {
         int pi = pin_index(r->app->id);
         if (pi < 0) {
             cm_add(CM_PIN, 0xE718, TR("Закрепить на начальном экране", "Pin to Start"), L"", true);
         } else {
             cm_add(CM_UNPIN, 0xE77A, TR("Открепить от начального экрана", "Unpin from Start"), L"", true);
-            if (pi > 0) cm_add(CM_PIN_TOP, 0xE74A, TR("Переместить в начало", "Move to front"), L"", false);
+            if (pi > 0 && !w10_on()) cm_add(CM_PIN_TOP, 0xE74A, TR("Переместить в начало", "Move to front"), L"", false);  // Windows 10 tiles are dragged
+            if (w10_on()) {
+                const WCHAR *names[TILE__COUNT] = { TR("Мелкая плитка", "Small tile"), TR("Средняя плитка", "Medium tile"),
+                                                    TR("Широкая плитка", "Wide tile"), TR("Крупная плитка", "Large tile") };
+                int cur = pin_size(pi);
+                for (int k = 0; k < TILE__COUNT; k++) cm_add(CM_SIZE_SMALL + k, k == cur ? 0xE73E : 0, names[k], L"", k == 0);
+            }
         }
     }
     u8 ttype;
@@ -189,6 +197,15 @@ static void cm_run(int i)
         if (!r || r->kind != ROW_APP) break;
         if (cmd == CM_PIN_TOP) pin_to_top(r->app->id);
         else pin_set(r->app->id, cmd == CM_PIN);
+        st_pins_changed();
+        break;
+    }
+    case CM_SIZE_SMALL:
+    case CM_SIZE_MEDIUM:
+    case CM_SIZE_WIDE:
+    case CM_SIZE_LARGE: {
+        Row *r = sel_row();
+        if (r && r->kind == ROW_APP) pin_set_size(r->app->id, cmd - CM_SIZE_SMALL);
         st_pins_changed();
         break;
     }

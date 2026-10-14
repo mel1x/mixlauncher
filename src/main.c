@@ -18,6 +18,7 @@
 #include "ctxmenu.c"
 #include "tagdlg.c"
 #include "start.c"
+#include "start10.c"
 #include "ui_input.c"
 #include "popmenu.c"
 #include "tray.c"
@@ -38,6 +39,15 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         break;
     case WM_NCHITTEST:
         return HTCLIENT;
+    case WM_SETCURSOR:
+        if (LOWORD(lp) == HTCLIENT && w10_on()) {
+            const WCHAR *c = w10_edge_cursor();
+            if (c) {
+                SetCursor(LoadCursorW(NULL, c));
+                return TRUE;
+            }
+        }
+        break;
     case WM_NCACTIVATE:
         // DWM draws acrylic only for an active frame: always report one (-1: no non-client repaint).
         return DefWindowProcW(h, msg, TRUE, -1);
@@ -113,6 +123,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_RBUTTONUP: {
         int x = GET_X_LPARAM(lp), y = GET_Y_LPARAM(lp);
         if (U.tg.open || cm_inside(x, y)) return 0;
+        if (w10_on() && w10_rclick(x, y)) return 0;
         int r = row_at(x, y);
         if (row_selectable(r)) {
             U.sel = r;

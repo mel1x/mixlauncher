@@ -178,7 +178,7 @@ static void wcopy(WCHAR *dst, int cap, const WCHAR *src)
 
 // DWM attributes and values by name: older SDKs lack them.
 enum { DWA_NO_TRANSITIONS = 3, DWA_DARK = 20, DWA_CORNER = 33, DWA_BORDER_COLOR = 34, DWA_BACKDROP = 38 };
-enum { DWC_ROUND = 2, DWC_ROUND_SMALL = 3 };
+enum { DWC_SQUARE = 1, DWC_ROUND = 2, DWC_ROUND_SMALL = 3 };
 enum { DWB_NONE = 1, DWB_MICA = 2, DWB_ACRYLIC = 3 };
 #define DW_COLOR_NONE 0xFFFFFFFEu
 

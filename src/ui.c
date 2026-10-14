@@ -8,10 +8,11 @@ typedef struct Theme {
 
 enum { ROW_HEADER, ROW_APP, ROW_FILE, ROW_INFO, ROW_VIRTUAL };
 
-enum { CELL_ROW, CELL_TILE, CELL_TITLE, CELL_HINT };  // a full-width row, a Start grid tile, a Start section title, its hint
+// A full-width row, a Start grid tile, a Start section title, its hint, a Windows 10 tile.
+enum { CELL_ROW, CELL_TILE, CELL_TITLE, CELL_HINT, CELL_W10 };
 
 typedef struct Row {
-    u8 kind, cell;
+    u8 kind, cell, tsize;
     App *app;
     FileItem *file;
     const WCHAR *text;
@@ -109,7 +110,7 @@ static struct {
         int n, hover, press;
         f32 hl_y, hl_v;
         bool hl_init;
-        struct { int cmd; u32 glyph; const WCHAR *label, *keys; bool sep, disabled; f32 y; } it[10];
+        struct { int cmd; u32 glyph; const WCHAR *label, *keys; bool sep, disabled; f32 y; } it[16];
         WCHAR tag_count[32], tag_list[96];
     } cm;
     struct {
@@ -144,9 +145,30 @@ static struct {
         int fb[5][4];       // footer: account, downloads, explorer, settings, power
         int fb_hover, fb_press;
         f32 fb_hover_t[5];
-        WCHAR letters[40][2];
+        WCHAR letters[72][2];
         int letter_count;
     } st;
+    int tsel;  // Windows 10: the tile under the pointer (sel_row() then returns it), -1 none
+    struct {
+        Row tiles[64];
+        int tile_count;
+        f32 tiles_h, tscroll, tscroll_target;
+        int press_tile;
+        bool rail_open;
+        f32 rail_t;
+        int rail[6][4];     // menu, account, explorer, downloads, settings, power
+        int rail_hover, rail_press;
+        f32 rail_hover_t[6];
+        int act[4][4];      // search: the actions of the selected result
+        int act_cmd[4], act_n, act_hover, act_press;
+        App *tdrag;         // the tile being dragged to a new cell, and that cell
+        int drag_cx, drag_cy;
+        POINT press_pt;
+        f32 grab_x, grab_y; // where in the tile it was taken
+        int drag;           // resizing by an edge: EDGE_* bits
+        POINT drag_pt;
+        int drag_w, drag_h, drag_y;
+    } w10;
 
     u32 dpi;
     f32 s;
@@ -172,12 +194,27 @@ static void st_draw_footer(void);
 static void st_draw_cell(Row *r, f32 y, bool selected);
 static void st_draw_highlight(f32 off);
 static bool st_animate(f32 dt);
+enum { TILE_SMALL, TILE_MEDIUM, TILE_WIDE, TILE_LARGE, TILE__COUNT };
 static int pin_index(const WCHAR *id);
+static int pin_size(int i);
+static void pin_set_size(const WCHAR *id, int size);
 static void pin_set(const WCHAR *id, bool on);
 static void pin_to_top(const WCHAR *id);
 static void st_pins_changed(void);
 static void st_menu_pick(int cmd);
 static void open_settings_from_launcher(void);
+// The Windows 10 style, start10.c
+static bool w10_on(void);
+static void w10_metrics(void);
+static void w10_build_home(void);
+static void w10_refresh_tiles(void);
+static void w10_pins_freeze(void);
+static void w10_place_rows(void);
+static void w10_draw_chrome(void);
+static void w10_draw_overlay(void);
+static bool w10_animate(f32 dt);
+static f32 list_x0(void);
+static f32 list_x1(void);
 
 static bool tag_hit_has(const WCHAR *full);
 
@@ -261,6 +298,7 @@ static const LStyle k_lstyles[STYLE__COUNT] = {
     [STYLE_FLUENT] = { 40, 32, 24, 14, 56, 18, 16, 14, 42, 6, 4, 4, 4, DWC_ROUND, SEL_BAR, false, false },
     [STYLE_COMPACT] = { 32, 26, 20, 10, 48, 16, 15, 13, 36, 6, 6, 5, 4, DWC_ROUND_SMALL, SEL_PILL, false, false },
     [STYLE_START] = { 44, 34, 32, 14, 66, 14, 14, 14, 66, 39, 4, 4, 4, DWC_ROUND, SEL_PILL, false, false },
+    [STYLE_WIN10] = { 36, 36, 28, 12, 48, 14, 14, 14, 0, 4, 0, 0, 2, DWC_SQUARE, SEL_PILL, false, false },
 };
 
 static const LStyle *LS(void) { return &k_lstyles[CLAMP(g_cfg.style, 0, STYLE__COUNT - 1)]; }
@@ -303,6 +341,10 @@ static void ui_metrics(u32 dpi)
     U.footer_h = SR(LS()->footer_h);
     if (st_on()) {
         st_metrics();
+        return;
+    }
+    if (w10_on()) {
+        w10_metrics();
         return;
     }
     f32 list_h = SR(g_cfg.rows * ROW_H + 2 * LIST_PAD);
@@ -396,6 +438,8 @@ static void rebuild_rows(bool keep_sel)
     U.content_h = SR(LIST_PAD);
     if (U.qlen == 0 && st_on()) {
         st_build_home();
+    } else if (U.qlen == 0 && w10_on()) {
+        w10_build_home();
     } else if (U.qlen == 0) {
         if (!U.apps) row_info(TR("Индексирую приложения…", "Indexing applications…"));
         if (U.frequent_count) {
@@ -445,6 +489,7 @@ static void rebuild_rows(bool keep_sel)
             row_info(TR("Ничего не найдено", "No results"));
     }
     U.content_h += SR(LIST_PAD);
+    if (w10_on()) w10_place_rows();
 
     if (keep_sel && row_selectable(old)) U.sel = old;
     else if (keep_sel && old >= U.row_count) U.sel = first_selectable(U.row_count - 1, -1);
@@ -547,6 +592,7 @@ static void refresh_empty_view(void)
         f->icon_key = icon_key_for_file(f->full, rf[i].folder);
     }
     if (st_on()) st_refresh_tiles();
+    if (w10_on()) w10_refresh_tiles();
 }
 
 static void search_apps(void)
@@ -999,6 +1045,11 @@ static void ui_place_window(void)
         icons_reset(ui_icon_px());
     }
     RECT wa = mi.rcWork, mr = mi.rcMonitor;
+    if (w10_on()) {  // a resized Windows 10 Start still fits the screen
+        U.H = MIN(U.H, (int)(wa.bottom - wa.top));
+        U.W = MIN(U.W, (int)(wa.right - wa.left));
+        U.list_y1 = (f32)U.H;
+    }
     int x = wa.left + ((wa.right - wa.left) - U.W) / 2;
     int y = wa.top + (int)((f32)((wa.bottom - wa.top) - U.H) * 0.28f);
     U.mon = mon;
@@ -1006,7 +1057,7 @@ static void ui_place_window(void)
     U.slide = pos != POS_CENTER;
     U.slide_dy = 0;
     if (U.slide) {
-        int m = (int)SR(12);
+        int m = w10_on() ? 0 : (int)SR(12);  // Windows 10 Start sits right against the taskbar and the screen edge
         HWND tray = taskbar_on_monitor(mon);
         RECT tr;
         bool top = tray && GetWindowRect(tray, &tr) && tr.bottom - mr.top < mr.bottom - tr.top;  // taskbar at the top: slide down from it
@@ -1248,6 +1299,10 @@ static void ui_show(void)
     U.st.all_view = false;
     U.st.fb_hover = U.st.fb_press = -1;
     U.st.title_press = false;
+    U.tsel = U.w10.press_tile = U.w10.rail_hover = U.w10.rail_press = U.w10.act_hover = U.w10.act_press = -1;
+    U.w10.rail_open = false;
+    U.w10.rail_t = 0;
+    U.w10.tscroll = U.w10.tscroll_target = 0;
     U.st.title_hover = false;
     if (!keep) {
         U.qlen = 0;
@@ -1332,7 +1387,11 @@ static void ui_toggle(void)
     else ui_show();
 }
 
-static Row *sel_row(void) { return row_selectable(U.sel) ? &U.rows[U.sel] : NULL; }
+static Row *sel_row(void)
+{
+    if (w10_on() && U.tsel >= 0 && U.tsel < U.w10.tile_count) return &U.w10.tiles[U.tsel];
+    return row_selectable(U.sel) ? &U.rows[U.sel] : NULL;
+}
 
 static const WCHAR *row_path(Row *r)
 {
@@ -1515,7 +1574,7 @@ static void draw_row(Row *r, f32 y, bool selected)
 {
     Theme *t = &U.th;
     const LStyle *ls = LS();
-    f32 x0 = SR(ls->inset), x1 = (f32)U.W - SR(ls->inset);
+    f32 x0 = r->x, x1 = r->x + r->w;
     if (r->kind == ROW_HEADER) {
         f32 fs = S(11.5f);
         text_draw(FONT_TEXT_SEMIBOLD, fs, x0 + SR(12), y + r->h - SR(10), r->text, -1, color_mix(t->faint, t->dim, 0.6f));
@@ -1575,7 +1634,7 @@ static void draw_row(Row *r, f32 y, bool selected)
         }
         f32 sw = text_width(FONT_TEXT, sub_fs, sub, -1);
         f32 avail = right - tx;
-        bool show_sub = selected || a->kind == APP_CMD || ls->all_notes;
+        bool show_sub = (selected && !w10_on()) || a->kind == APP_CMD || ls->all_notes;
         draw_name(fs, tx, base, show_sub ? avail - sw - SR(16) : avail, a->name, a->len, a->norm, a->ws, t->text);
         if (ls->all_notes && a->kind != APP_CMD) {
             f32 away = CLAMP(fabsf(U.list_y0 - floorf(U.scroll + 0.5f) + U.hl_y - y) / r->h, 0.f, 1.f);
@@ -1699,9 +1758,22 @@ static void draw_footer(f32 y0)
     }
 }
 
+// Where the query field sits: a band across the top, or across the bottom (Windows 10, like the taskbar box).
+static void search_band(f32 *y0, f32 *y1)
+{
+    *y0 = 0;
+    *y1 = w10_on() && !U.qlen ? 0 : U.search_h;  // Windows 10 shows the query only once typing starts
+}
+
 // The query field: text from x0 to x1, centered on cy. The Start style puts it in a rounded box.
 static void search_field(f32 *x0, f32 *x1, f32 *cy)
 {
+    if (w10_on()) {
+        *x0 = SR(48);
+        *x1 = (f32)U.W - SR(16) - (upd_visible() ? SR(200) : 0);
+        *cy = floorf(U.search_h * 0.5f);
+        return;
+    }
     if (st_on()) {
         f32 m = SR(32);
         *x0 = m + SR(42);
@@ -1737,7 +1809,9 @@ static void draw_search(void)
     if (cx - U.q_scroll < 0) U.q_scroll = cx;
     if (offs[U.qlen] - U.q_scroll < width - SR(4)) U.q_scroll = MAX(0.f, offs[U.qlen] - width + SR(4));
     f32 ox = fx0 - floorf(U.q_scroll);
-    r_set_clip(fx0 - SR(2), 0, fx1, U.search_h);
+    f32 by0, by1;
+    search_band(&by0, &by1);
+    r_set_clip(fx0 - SR(2), by0, fx1, by1);
     if (U.anchor != U.caret) {
         int a = MIN(U.anchor, U.caret), b = MAX(U.anchor, U.caret);
         r_rect(floorf(ox + offs[a]), sel_top, floorf(offs[b] - offs[a] + 0.5f), sel_h, t->text_sel, SR(3));
@@ -1756,17 +1830,20 @@ static void ui_draw(void)
     r_rect(0, 0, (f32)U.W, (f32)U.H, U.backdrop_ok ? t->bg : t->bg_solid, 0);
     if (st_on()) {
         st_draw_chrome();
+    } else if (w10_on()) {
+        w10_draw_chrome();
     } else {
         draw_search();
         r_rect(0, U.search_h, (f32)U.W, 1, t->sep, 0);
     }
 
-    r_set_clip(0, U.list_y0, (f32)U.W, U.list_y1);
+    r_set_clip(list_x0(), U.list_y0, list_x1(), U.list_y1);
     f32 off = U.list_y0 - floorf(U.scroll + 0.5f);
     f64 now = time_now();
     bool cascade = rows_cascading(now);
     f32 hl_op = 1.f;
-    if (row_selectable(U.sel)) {
+    // Windows 10: no list highlight while a tile is pointed at, held or dragged
+    if (row_selectable(U.sel) && !(w10_on() && (U.tsel >= 0 || U.w10.press_tile >= 0 || U.w10.tdrag))) {
         int k = 0;
         for (int i = 0; cascade && i < U.sel; i++)
             if (U.rows[i].y + U.rows[i].h >= U.scroll) k++;
@@ -1774,7 +1851,7 @@ static void ui_draw(void)
         const LStyle *ls = LS();
         f32 hy = floorf(off + U.hl_y + 0.5f), hh = floorf(U.hl_h + 0.5f);
         f32 hx = SR(ls->inset), hw = (f32)U.W - hx * 2, hr = SR(ls->sel_r);
-        if (st_on()) {
+        if (st_on() || w10_on()) {
             st_draw_highlight(off);
         } else if (ls->sel == SEL_PILL) {
             r_rect(hx, hy, hw, hh, t->sel, hr);
@@ -1801,7 +1878,9 @@ static void ui_draw(void)
         else draw_row(r, off + r->y + dy, i == U.sel);
     }
     u32 note_col;
-    const WCHAR *note = sel_row() && sel_row()->cell ? NULL : row_note(sel_row(), &note_col);
+    Row *nr_row = sel_row();
+    bool quiet = nr_row && (nr_row->cell || (w10_on() && nr_row->kind == ROW_APP && nr_row->app->kind != APP_CMD));  // Windows 10 lists no "Application"
+    const WCHAR *note = quiet ? NULL : row_note(nr_row, &note_col);
     if (note) {
         U.sub_text = note;
         U.sub_col = note_col;
@@ -1810,7 +1889,7 @@ static void ui_draw(void)
         f32 nfs = S(12.5f), cy = off + U.hl_y + U.hl_h * 0.5f;
         f32 nw = text_width(FONT_TEXT, nfs, U.sub_text, -1);
         R.opacity = hl_op * U.sub_t;
-        f32 nr = st_on() ? U.hl_x + U.hl_w - SR(12) : (f32)U.W - SR(20);
+        f32 nr = st_on() || w10_on() ? U.hl_x + U.hl_w - SR(12) : (f32)U.W - SR(20);
         text_draw(FONT_TEXT, nfs, floorf(nr - nw), floorf(cy + font_cap_height(FONT_TEXT, nfs) * 0.5f + 0.5f), U.sub_text, -1,
                   U.sub_col);
     }
@@ -1821,12 +1900,14 @@ static void ui_draw(void)
     if (ms > 0 && U.sb_t > 0.f) {
         f32 lh = list_height() - SR(8), bar_h = MAX(SR(24), lh * lh / U.content_h);
         f32 by = U.list_y0 + SR(4) + (lh - bar_h) * CLAMP(U.scroll / ms, 0.f, 1.f), bw = U.sb_hot ? SR(5) : SR(3);
-        r_rect((f32)U.W - SR(3) - bw, floorf(by), bw, floorf(bar_h), color_alpha(U.sb_hot ? t->dim : t->faint, U.sb_t), bw * 0.5f);
+        r_rect(list_x1() - SR(3) - bw, floorf(by), bw, floorf(bar_h), color_alpha(U.sb_hot ? t->dim : t->faint, U.sb_t), bw * 0.5f);
     }
 
     f32 fy = U.list_y1;
     if (st_on()) {
         st_draw_footer();
+    } else if (w10_on()) {
+        w10_draw_overlay();
     } else {
         r_rect(0, fy, (f32)U.W, 1, t->sep, 0);
         draw_footer(fy + 1);
@@ -1875,8 +1956,10 @@ static void animate(f32 dt)
     bool sb_on = max_scroll() > 0 && (U.sb_hot || recent);
     anim |= approach(&U.sb_t, sb_on ? 1.f : 0.f, sb_on ? 20.f : 7.f, dt);
     if (recent && !U.sb_hot && max_scroll() > 0) anim = true;
-    anim |= approach(&U.sub_t, row_selectable(U.sel) && U.rows[U.sel].kind == ROW_APP && !U.rows[U.sel].cell ? 1.f : 0.f, 24.f, dt);
+    anim |= approach(&U.sub_t, row_selectable(U.sel) && U.rows[U.sel].kind == ROW_APP && !U.rows[U.sel].cell &&
+                                       !(w10_on() && U.rows[U.sel].app->kind != APP_CMD) ? 1.f : 0.f, 24.f, dt);
     if (st_on()) anim |= st_animate(dt);
+    if (w10_on()) anim |= w10_animate(dt);
     anim |= cm_animate(dt);
     anim |= tg_animate(dt);
     if (slide_spring()) {
@@ -1932,7 +2015,7 @@ static void ui_render(void)
 
 static int row_at(int x, int y)
 {
-    if (y < U.list_y0 || y >= U.list_y1) return -1;
+    if (y < U.list_y0 || y >= U.list_y1 || (f32)x < list_x0() || (f32)x >= list_x1()) return -1;
     f32 cy = (f32)y - U.list_y0 + U.scroll;
     for (int i = row_first_below(cy); i < U.row_count && U.rows[i].y <= cy; i++) {
         Row *r = &U.rows[i];
