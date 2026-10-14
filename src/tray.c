@@ -131,6 +131,15 @@ static NOTIFYICONDATAW g_nid;
 static UINT g_wm_taskbar_created;
 static HICON g_icon_small, g_icon_big;
 
+// Gives a window our icons outright and lets Explorer ask for them: it runs below our (elevated) integrity
+// level, and when the question does not get through the taskbar shows the exe's icon, plate and all.
+static void window_icons(HWND h)
+{
+    uipi_allow(h, WM_GETICON);
+    SendMessageW(h, WM_SETICON, ICON_BIG, (LPARAM)g_icon_big);
+    SendMessageW(h, WM_SETICON, ICON_SMALL, (LPARAM)g_icon_small);
+}
+
 static void tray_add(void)
 {
     memset(&g_nid, 0, sizeof g_nid);

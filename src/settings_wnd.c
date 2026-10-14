@@ -831,6 +831,7 @@ static void settings_open(void)
     SW.hwnd = CreateWindowExW(ex, SETTINGS_CLASS, ss((Str){ L"Настройки MixLauncher", L"MixLauncher Settings" }), style, x, y, w, h, NULL, NULL,
                               GetModuleHandleW(NULL), NULL);
     if (!SW.hwnd) return;
+    window_icons(SW.hwnd);
     dwm_set(SW.hwnd, DWA_DARK, U.th.dark);
     dwm_set(SW.hwnd, DWA_CORNER, DWC_ROUND);
     dwm_set(SW.hwnd, DWA_NO_TRANSITIONS, g_cfg.reduced_motion);  // the system open and minimize animations

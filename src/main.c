@@ -528,6 +528,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     uipi_allow(g_hwnd, WM_APP_EXIT);
     uipi_allow(g_hwnd, WM_APP_SHOW);
     uipi_allow(g_hwnd, WM_APP_SETTINGS);
+    window_icons(g_hwnd);  // on the taskbar over a fullscreen app (app mode)
     if (!g_pinned) tray_add();
     if (g_cfg.taskbar_button && !g_pinned) tb_set_enabled(true);
     if (g_cfg.media_widget && !g_pinned) media_set_enabled(true);
