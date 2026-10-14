@@ -279,8 +279,7 @@ static u32 *icon_load(IconReq *r)
     WCHAR buf[1024];
     const WCHAR *path = r->path;
     if (r->kind == ICON_KIND_APP) {
-        _snwprintf(buf, countof(buf), L"shell:AppsFolder\\%s", r->path);
-        buf[countof(buf) - 1] = 0;
+        wfmt(buf, countof(buf), L"shell:AppsFolder\\%s", r->path);
         path = buf;
     }
     if (FAILED(SHCreateItemFromParsingName(path, NULL, &ML_IID_IShellItem, (void **)&item)) || !item) return NULL;

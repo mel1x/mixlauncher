@@ -73,8 +73,10 @@ static bool tb_read_centered(void)
 static void CALLBACK tb_winevent(HWINEVENTHOOK hook, DWORD ev, HWND h, LONG obj, LONG child, DWORD tid, DWORD time)
 {
     (void)hook, (void)ev, (void)tid, (void)time;
-    if (!g_tb_centered || GetWindow(h, GW_OWNER) || (GetWindowLongW(h, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)) return;
-    if (obj == OBJID_WINDOW && child == CHILDID_SELF && h && GetAncestor(h, GA_ROOT) == h) {
+    // every window event in the system lands here: cheap checks first
+    if (!g_tb_centered || obj != OBJID_WINDOW || child != CHILDID_SELF || !h) return;
+    if (GetWindow(h, GW_OWNER) || (GetWindowLongW(h, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)) return;
+    if (GetAncestor(h, GA_ROOT) == h) {
         TB.fast_until = time_now() + 0.8;
         SetEvent(TB.wake);
     }
@@ -199,19 +201,6 @@ static bool taskbar_light(void)
     return false;
 }
 
-static f32 tb_sdbox(f32 px, f32 py, f32 hx, f32 hy, f32 r)
-{
-    f32 qx = fabsf(px) - hx + r, qy = fabsf(py) - hy + r;
-    f32 ox = MAX(qx, 0.f), oy = MAX(qy, 0.f);
-    return sqrtf(ox * ox + oy * oy) + MIN(MAX(qx, qy), 0.f) - r;
-}
-
-static void tb_over(f32 *c, f32 *a, const f32 *col, f32 alpha)
-{
-    for (int k = 0; k < 3; k++) c[k] = col[k] * alpha + c[k] * (1.f - alpha);
-    *a = alpha + *a * (1.f - alpha);
-}
-
 static void tb_free_bitmap(TbButton *b)
 {
     if (b->dc) DeleteDC(b->dc);
@@ -227,10 +216,8 @@ static int tb_color_dist(COLORREF a, COLORREF b)
     return MAX(abs(GetRValue(a) - GetRValue(b)), MAX(abs(GetGValue(a) - GetGValue(b)), abs(GetBValue(a) - GetBValue(b))));
 }
 
-// Reads the taskbar color around the button. A single pixel can catch a window covering the bar
-// (a fullscreen game), a neighbor icon sliding by or a hover highlight, so the bar itself must be
-// under every point, the points must agree, and a new color only replaces the old one once a later sample confirms it.
-// Returns true when the plate color changed.
+// Samples the bar color around the button: every point must show the bar itself and agree, and a new color
+// needs a second sample to confirm it. Returns true when the plate color changed.
 static bool tb_sample(TbButton *b)
 {
     b->sampled = time_now();
@@ -247,7 +234,7 @@ static bool tb_sample(TbButton *b)
         for (int j = 0; j < 2; j++) {
             POINT p = { xs[i], ys[j] };
             if (!PtInRect(&tr, p)) continue;
-            // A fullscreen game (or anything else) on top of the taskbar: the screen shows it, not the bar.
+            // something (a fullscreen game) covers the bar
             if (GetAncestor(WindowFromPoint(p), GA_ROOT) != b->taskbar) {
                 ReleaseDC(NULL, sdc);
                 return false;
@@ -270,7 +257,7 @@ static bool tb_sample(TbButton *b)
         b->pending_ok = false;
         return false;
     }
-    // The first color is taken as is: without it the plate falls back to a generic gray anyway.
+    // the first color is taken as is
     bool confirmed = !b->plate_ok || (b->pending_ok && tb_color_dist(c, b->pending) <= 4 && b->sampled - b->pending_at >= 0.3);
     if (!confirmed) {
         if (!b->pending_ok || tb_color_dist(c, b->pending) > 4) b->pending_at = b->sampled;
@@ -366,24 +353,24 @@ static void tb_shape(int style, f32 fx, f32 fy, f32 u, f32 dim, const f32 *fg, f
         f32 t = 4.6f * u, g = 1.6f * u, off = t + g * 0.5f;
         for (int d = 0; d < 4; d++) {
             f32 sx = (d & 1) ? 1.f : -1.f, sy = (d & 2) ? 1.f : -1.f;
-            f32 m = CLAMP(0.5f - tb_sdbox(fx - sx * off, fy - sy * off, t, t, 1.6f * u), 0.f, 1.f);
-            if (m > 0.f) tb_over(c, a, fg, m * (d == 0 ? 1.f : dim));
+            f32 m = CLAMP(0.5f - sd_box(fx - sx * off, fy - sy * off, t, t, 1.6f * u), 0.f, 1.f);
+            if (m > 0.f) px_over(c, a, fg, m * (d == 0 ? 1.f : dim));
         }
     } else if (style == TBI_LINES) {
-        f32 m = CLAMP(0.5f - (fabsf(tb_sdbox(fx, fy + 5.2f * u, 9.5f * u, 3.1f * u, 3.1f * u)) - 0.8f * u), 0.f, 1.f);
-        if (m > 0.f) tb_over(c, a, fg, m);
-        m = CLAMP(0.5f - tb_sdbox(fx + 1.5f * u, fy - 1.8f * u, 8.f * u, 1.f * u, 1.f * u), 0.f, 1.f);
-        if (m > 0.f) tb_over(c, a, fg, m * (dim + 0.13f));
-        m = CLAMP(0.5f - tb_sdbox(fx + 3.5f * u, fy - 6.f * u, 6.f * u, 1.f * u, 1.f * u), 0.f, 1.f);
-        if (m > 0.f) tb_over(c, a, fg, m * (dim - 0.07f));
+        f32 m = CLAMP(0.5f - (fabsf(sd_box(fx, fy + 5.2f * u, 9.5f * u, 3.1f * u, 3.1f * u)) - 0.8f * u), 0.f, 1.f);
+        if (m > 0.f) px_over(c, a, fg, m);
+        m = CLAMP(0.5f - sd_box(fx + 1.5f * u, fy - 1.8f * u, 8.f * u, 1.f * u, 1.f * u), 0.f, 1.f);
+        if (m > 0.f) px_over(c, a, fg, m * (dim + 0.13f));
+        m = CLAMP(0.5f - sd_box(fx + 3.5f * u, fy - 6.f * u, 6.f * u, 1.f * u, 1.f * u), 0.f, 1.f);
+        if (m > 0.f) px_over(c, a, fg, m * (dim - 0.07f));
     } else {
         static const f32 k_dots[4][2] = { { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } };
         f32 half = 3.3f * u, rad = 1.2f * u, off = 6.5f * u;
         for (int d = 0; d < 4; d++) {
             f32 qx = fx - k_dots[d][0] * off, qy = fy - k_dots[d][1] * off;
             f32 rx = (qx + qy) * 0.70710678f, ry = (qy - qx) * 0.70710678f;
-            f32 m = CLAMP(0.5f - tb_sdbox(rx, ry, half, half, rad), 0.f, 1.f);
-            if (m > 0.f) tb_over(c, a, fg, m * (d == 0 ? 1.f : dim));
+            f32 m = CLAMP(0.5f - sd_box(rx, ry, half, half, rad), 0.f, 1.f);
+            if (m > 0.f) px_over(c, a, fg, m * (d == 0 ? 1.f : dim));
         }
     }
 }
@@ -449,9 +436,9 @@ static void tb_render(TbButton *b)
         for (int x = 0; x < w; x++) {
             f32 fx = (f32)x + 0.5f - cx, fy = (f32)y + 0.5f - cy;
             f32 c[3] = { 0, 0, 0 }, a = 0;
-            // Without our icon the window stays see-through over the real button and draws only the hover highlight.
-            if (replace) tb_over(c, &a, plate_c, CLAMP(0.5f - tb_sdbox(fx, fy, plate * 0.5f, plate * 0.5f, 2.f * s), 0.f, 1.f));
-            if (hov_a > 0.f) tb_over(c, &a, hov_c, hov_a * CLAMP(0.5f - tb_sdbox(fx, fy, box * 0.5f, box * 0.5f, brad), 0.f, 1.f));
+            // without our icon only the hover highlight is drawn over the real button
+            if (replace) px_over(c, &a, plate_c, CLAMP(0.5f - sd_box(fx, fy, plate * 0.5f, plate * 0.5f, 2.f * s), 0.f, 1.f));
+            if (hov_a > 0.f) px_over(c, &a, hov_c, hov_a * CLAMP(0.5f - sd_box(fx, fy, box * 0.5f, box * 0.5f, brad), 0.f, 1.f));
             if (replace && style == TBI_CUSTOM) {
                 f32 ic[3], ia = tb_sample_img(b->img, b->img_n, fx / zoom + logo * 0.5f, fy / zoom + logo * 0.5f, ic);
                 if (ia > 0.f) {
@@ -678,18 +665,7 @@ static void tb_set_enabled(bool on)
 {
     TB.enabled = on;
     if (on) {
-        static bool registered;
-        if (!registered) {
-            registered = true;
-            WNDCLASSEXW wc;
-            memset(&wc, 0, sizeof wc);
-            wc.cbSize = sizeof wc;
-            wc.style = CS_DBLCLKS;
-            wc.lpfnWndProc = tb_wndproc;
-            wc.hInstance = GetModuleHandleW(NULL);
-            wc.lpszClassName = TB_CLASS;
-            RegisterClassExW(&wc);
-        }
+        window_class(TB_CLASS, tb_wndproc, CS_DBLCLKS, NULL, NULL);
         TB.light = taskbar_light();
         if (!TB.thread) {
             InitializeSRWLock(&TB.lock);

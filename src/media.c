@@ -484,7 +484,7 @@ static f32 mtext_at(const MText *t, f32 x, int y)
     int x0 = (int)floorf(x);
     f32 fr = x - (f32)x0;
     const u8 *row = t->cov + (size_t)y * t->w;
-    f32 a = x0 >= 0 && x0 < t->w ? row[x0] : 0, b = x0 + 1 >= 0 && x0 + 1 < t->w ? row[x0 + 1] : 0;
+    f32 a = x0 >= 0 && x0 < t->w ? (f32)row[x0] : 0.f, b = x0 + 1 >= 0 && x0 + 1 < t->w ? (f32)row[x0 + 1] : 0.f;
     return (a + (b - a) * fr) / 255.f;
 }
 
@@ -554,7 +554,7 @@ static f32 media_icon(int part, bool playing, f32 fx, f32 fy)
     switch (part) {
     case MP_TOGGLE:
         if (playing) {
-            f32 a = tb_sdbox(fx + 3.f * u, fy, 1.6f * u, 6.f * u, 1.f * u), b = tb_sdbox(fx - 3.f * u, fy, 1.6f * u, 6.f * u, 1.f * u);
+            f32 a = sd_box(fx + 3.f * u, fy, 1.6f * u, 6.f * u, 1.f * u), b = sd_box(fx - 3.f * u, fy, 1.6f * u, 6.f * u, 1.f * u);
             d = MIN(a, b);
         } else {
             d = sd_triangle(fx, fy, -4.2f * u + r, -6.4f * u + r * 1.6f, 6.4f * u - r * 1.8f, 0, -4.2f * u + r, 6.4f * u - r * 1.6f) - r;
@@ -563,7 +563,7 @@ static f32 media_icon(int part, bool playing, f32 fx, f32 fy)
     case MP_PREV:
     case MP_NEXT: {
         if (part == MP_NEXT) fx = -fx;
-        f32 bar = tb_sdbox(fx + 4.6f * u, fy, 0.9f * u, 5.f * u, 0.9f * u);
+        f32 bar = sd_box(fx + 4.6f * u, fy, 0.9f * u, 5.f * u, 0.9f * u);
         f32 tri = sd_triangle(fx, fy, 4.6f * u - r, -5.f * u + r * 1.6f, -3.f * u + r * 1.8f, 0, 4.6f * u - r, 5.f * u - r * 1.6f) - r;
         d = MIN(bar, tri);
         break;
@@ -606,11 +606,14 @@ static f32 media_marquee_at(f32 range, f32 t)
     return floorf(range * (k * k * (3.f - 2.f * k)) * 4.f + 0.5f) * 0.25f;
 }
 
-static void media_render(void)
+// Redraws the columns [xa, xb) of the widget bitmap (all of it after a resize) and shows it.
+static void media_render_cols(int xa, int xb)
 {
     int w = M.w, h = M.h;
     if (w <= 0 || h <= 0) return;
     if (!M.bmp || M.bmp_w != w || M.bmp_h != h) {
+        xa = 0;
+        xb = w;
         media_free_bitmap();
         BITMAPINFO bi;
         memset(&bi, 0, sizeof bi);
@@ -652,25 +655,25 @@ static void media_render(void)
 
     u32 *px = M.bits;
     for (int y = 0; y < h; y++) {
-        for (int x = 0; x < w; x++) {
+        for (int x = MAX(xa, 0); x < MIN(xb, w); x++) {
             f32 fx = (f32)x + 0.5f, fy = (f32)y + 0.5f;
             f32 col[3] = { 0, 0, 0 }, a = 0;
-            if (bg_a > 0.f) tb_over(col, &a, fg, bg_a * CLAMP(0.5f - tb_sdbox(fx - (f32)w * 0.5f, fy - (f32)h * 0.5f, (f32)w * 0.5f, (f32)h * 0.5f - MS(1), brad), 0.f, 1.f));
+            if (bg_a > 0.f) px_over(col, &a, fg, bg_a * CLAMP(0.5f - sd_box(fx - (f32)w * 0.5f, fy - (f32)h * 0.5f, (f32)w * 0.5f, (f32)h * 0.5f - MS(1), brad), 0.f, 1.f));
 
             for (int p = MP_PREV; p <= MP_NEXT && media_controls(); p++) {
                 const f32 *r = M.part[p];
                 if (fx < r[0] || fx >= r[2] || fy < r[1] || fy >= r[3]) continue;
                 f32 bx = (r[0] + r[2]) * 0.5f, by = (r[1] + r[3]) * 0.5f;
                 f32 ha = (hov_btn * M.hp_t[p] + (light ? 0.03f : -0.02f) * M.press_t[p]) * vis;
-                if (ha > 0.f) tb_over(col, &a, fg, ha * CLAMP(0.5f - tb_sdbox(fx - bx, fy - by, (r[2] - r[0]) * 0.5f - MS(1), (r[3] - r[1]) * 0.5f - MS(2), MS(4)), 0.f, 1.f));
+                if (ha > 0.f) px_over(col, &a, fg, ha * CLAMP(0.5f - sd_box(fx - bx, fy - by, (r[2] - r[0]) * 0.5f - MS(1), (r[3] - r[1]) * 0.5f - MS(2), MS(4)), 0.f, 1.f));
                 bool en = p == MP_PREV ? M.info.can_prev : p == MP_NEXT ? M.info.can_next : M.info.can_toggle;
                 f32 zoom = 1.f - 0.1f * M.press_t[p];
                 f32 m = media_icon(p, playing, (fx - bx) / zoom, (fy - by) / zoom);
-                if (m > 0.f) tb_over(col, &a, fg, m * content * (en ? (light ? 0.86f : 0.92f) : 0.3f));
+                if (m > 0.f) px_over(col, &a, fg, m * content * (en ? (light ? 0.86f : 0.92f) : 0.3f));
             }
 
             if (fx >= cx0 - 1 && fx < cx0 + cover + 1 && fy >= cy0 - 1 && fy < cy0 + cover + 1) {
-                f32 m = CLAMP(0.5f - tb_sdbox(fx - ccx, fy - ccy, cover * 0.5f, cover * 0.5f, crad), 0.f, 1.f) * content;
+                f32 m = CLAMP(0.5f - sd_box(fx - ccx, fy - ccy, cover * 0.5f, cover * 0.5f, crad), 0.f, 1.f) * content;
                 if (m > 0.f && art) {
                     int ix = CLAMP(x - (int)cx0, 0, M.art_n - 1), iy = CLAMP(y - (int)cy0, 0, M.art_n - 1);
                     u32 p = M.art[iy * M.art_n + ix];
@@ -680,10 +683,10 @@ static void media_render(void)
                     col[2] = (f32)(p & 255) / 255.f * m + col[2] * (1.f - ia);
                     a = ia + a * (1.f - ia);
                 } else if (m > 0.f) {
-                    tb_over(col, &a, fg, m * (light ? 0.07f : 0.09f));
+                    px_over(col, &a, fg, m * (light ? 0.07f : 0.09f));
                     if (M.note.cov) {
                         f32 v = mtext_at(&M.note, (f32)x - floorf(ccx - (f32)M.note.adv * 0.5f), y - note_base + M.note.base);
-                        if (v > 0.f) tb_over(col, &a, fg, v * content * 0.55f);
+                        if (v > 0.f) px_over(col, &a, fg, v * content * 0.55f);
                     }
                 }
             }
@@ -704,7 +707,7 @@ static void media_render(void)
                         mask *= 1.f - (1.f - CLAMP((tx1 - fx) / fade, 0.f, 1.f)) * CLAMP((range - off) / fade, 0.f, 1.f);
                         mask *= 1.f - (1.f - CLAMP((fx - tx0) / fade, 0.f, 1.f)) * CLAMP(off / fade, 0.f, 1.f);
                     }
-                    tb_over(col, &a, fg, v * mask * text_a * (line ? (light ? 0.6f : 0.62f) : (light ? 0.9f : 1.f)));
+                    px_over(col, &a, fg, v * mask * text_a * (line ? (light ? 0.6f : 0.62f) : (light ? 0.9f : 1.f)));
                 }
             }
 
@@ -719,6 +722,8 @@ static void media_render(void)
     BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
     if (M.wnd) UpdateLayeredWindow(M.wnd, NULL, NULL, &sz, M.dc, &src, 0, &bf, ULW_ALPHA);
 }
+
+static void media_render(void) { media_render_cols(0, M.w); }
 
 static void media_animate(bool tick);
 
@@ -744,7 +749,7 @@ static void media_animate(bool tick)
         anim |= approach(&M.press_t[p], M.press == p ? 1.f : 0.f, 30.f, dt);
     }
     anim |= approach(&M.text_a, 1.f, 16.f, dt);
-    // The marquee keeps the timer going but repaints only while a line actually moves (not during the waits).
+    // The marquee keeps the timer going but repaints only while a line moves.
     bool marquee = false, moved = false;
     if (!g_cfg.media_marquee) M.scroll_t = 0;  // off: long lines stay at their start
     if (M.visible) {
@@ -756,13 +761,15 @@ static void media_animate(bool tick)
             M.mq_off[line] = off;
         }
     }
-    bool repaint = !tick || anim || moved;
+    bool full = !tick || anim;
     anim |= marquee;
     if (M.vis_t <= 0.f && !M.want && M.visible) {
         ShowWindow(M.wnd, SW_HIDE);
         M.visible = false;
     }
-    if (M.visible && repaint) media_render();
+    // only the marquee moved: redraw just the text columns
+    if (M.visible && full) media_render();
+    else if (M.visible && moved) media_render_cols((int)floorf(M.text_x), (int)ceilf(M.text_x + M.text_w) + 2);
     if (anim && (M.visible || M.want)) SetTimer(M.wnd, MW_TIMER_ANIM, 15, NULL);
     else KillTimer(M.wnd, MW_TIMER_ANIM);
 }
@@ -976,8 +983,6 @@ static void media_open_player(void)
 
 enum { MM_PLAYER = 1, MM_SETTINGS, MM_HIDE };
 
-static void media_set_enabled(bool on);
-
 static void media_menu_pick(int cmd)
 {
     switch (cmd) {
@@ -1012,8 +1017,7 @@ static void media_menu(void)
 static int media_part_at(int x, int y)
 {
     for (int p = MP_INFO; p <= MP_NEXT; p++) {
-        const f32 *r = M.part[p];
-        if ((f32)x >= r[0] && (f32)x < r[2] && (f32)y >= r[1] && (f32)y < r[3]) return p;
+        if (in_box(M.part[p], (f32)x, (f32)y)) return p;
     }
     return MP_INFO;
 }
@@ -1135,18 +1139,7 @@ static void media_set_enabled(bool on)
 {
     M.enabled = on;
     if (on) {
-        static bool registered;
-        if (!registered) {
-            registered = true;
-            WNDCLASSEXW wc;
-            memset(&wc, 0, sizeof wc);
-            wc.cbSize = sizeof wc;
-            wc.style = CS_DBLCLKS;
-            wc.lpfnWndProc = media_wndproc;
-            wc.hInstance = GetModuleHandleW(NULL);
-            wc.lpszClassName = MW_CLASS;
-            RegisterClassExW(&wc);
-        }
+        window_class(MW_CLASS, media_wndproc, CS_DBLCLKS, NULL, NULL);
         M.light = taskbar_light();
         if (!M.thread) {
             InitializeSRWLock(&M.lock);
@@ -1172,10 +1165,7 @@ static void media_set_enabled(bool on)
     }
 }
 
-// Diagnostics: read the current session once and draw the widget over a taskbar-like
-// background into a BMP, without touching the real taskbar. --media-dump <out.bmp> [dpi] [light] [sample]
-// ("sample" draws a long title without a cover, "demo" a made-up playing track with a drawn cover;
-// "...-alpha" keeps the background transparent, straight alpha in the 4th byte).
+// Diagnostics: --media-dump <out.bmp> [dpi] [light] [sample|demo][-alpha] draws the widget into a BMP.
 static int media_dump(const WCHAR *out, int dpi, bool light, const WCHAR *mode)
 {
     CoInitializeEx(NULL, COINIT_MULTITHREADED);
@@ -1260,8 +1250,7 @@ static int media_dump(const WCHAR *out, int dpi, bool light, const WCHAR *mode)
     buf_put_w(&t, M.info.app);
     buf_put(&t, "\n", 1);
     WCHAR txt[MAX_PATH + 8];
-    _snwprintf(txt, countof(txt), L"%s.txt", out);
-    txt[countof(txt) - 1] = 0;
+    wfmt(txt, countof(txt), L"%s.txt", out);
     write_file_atomic(txt, t.data, (DWORD)t.len);
     return 0;
 }

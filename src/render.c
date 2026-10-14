@@ -10,6 +10,23 @@ typedef struct RInst {
 #define ICON_ATLAS  1024
 #define RGBA(r, g, b, a) ((u32)(r) | ((u32)(g) << 8) | ((u32)(b) << 16) | ((u32)(a) << 24))
 
+// CPU rasterizing (icons, taskbar windows): signed distance to a rounded box, and "over" compositing.
+static f32 sd_box(f32 px, f32 py, f32 hx, f32 hy, f32 r)
+{
+    f32 qx = fabsf(px) - hx + r, qy = fabsf(py) - hy + r;
+    f32 ox = MAX(qx, 0.f), oy = MAX(qy, 0.f);
+    return sqrtf(ox * ox + oy * oy) + MIN(MAX(qx, qy), 0.f) - r;
+}
+
+static void px_over(f32 *c, f32 *a, const f32 *col, f32 alpha)
+{
+    for (int k = 0; k < 3; k++) c[k] = col[k] * alpha + c[k] * (1.f - alpha);
+    *a = alpha + *a * (1.f - alpha);
+}
+
+// b = { x0, y0, x1, y1 }
+static bool in_box(const f32 *b, f32 x, f32 y) { return x >= b[0] && x < b[2] && y >= b[1] && y < b[3]; }
+
 static u32 color_alpha(u32 c, f32 k)
 {
     u32 a = (u32)((f32)(c >> 24) * CLAMP(k, 0.f, 1.f) + 0.5f);

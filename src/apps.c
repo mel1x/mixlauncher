@@ -99,8 +99,7 @@ static WCHAR *resolve_known_folder_path(Arena *a, const WCHAR *id)
     return r;
 }
 
-// Explorer sometimes hands out a packaged app's name unresolved ("ms-resource:AppName"), e.g. while the
-// package is being updated. Resolve it against the package ourselves; NULL if that fails too.
+// Explorer may hand out a packaged app's name unresolved ("ms-resource:...", e.g. mid-update): resolve it ourselves.
 static WCHAR *resolve_ms_resource(Arena *a, const WCHAR *res, const WCHAR *aumid)
 {
     typedef LONG(WINAPI * PFN_GetPackagesByPackageFamily)(PCWSTR, UINT32 *, PWSTR *, UINT32 *, WCHAR *);
@@ -131,12 +130,12 @@ static WCHAR *resolve_ms_resource(Arena *a, const WCHAR *res, const WCHAR *aumid
             int k;
             if (v == 0) {
                 if (key[0] == '/' || wcschr(key, '/')) continue;
-                k = _snwprintf(src, countof(src), L"@{%s?ms-resource://%s/resources/%s}", names[0], family, key);
+                k = wfmt(src, countof(src), L"@{%s?ms-resource://%s/resources/%s}", names[0], family, key);
             } else if (v == 1) {
                 if (key[0] == '/') continue;
-                k = _snwprintf(src, countof(src), L"@{%s?ms-resource://%s/%s}", names[0], family, key);
+                k = wfmt(src, countof(src), L"@{%s?ms-resource://%s/%s}", names[0], family, key);
             } else {
-                k = _snwprintf(src, countof(src), L"@{%s?%s}", names[0], res);
+                k = wfmt(src, countof(src), L"@{%s?%s}", names[0], res);
             }
             if (k <= 0 || k >= countof(src)) continue;
             out[0] = 0;
@@ -163,7 +162,7 @@ static const struct {
     { CMD_RECYCLE,  L"Корзина",            L"Recycle Bin", L"recycle bin|trash|корзина", 0xE74D, false },
     { CMD_UNINSTALL, L"Установленные приложения", L"Installed apps",
       L"installed programs|apps and features|установленные программы|приложения и возможности", 0xE71D, false },
-    // The same page under the name Start has always used, so "удаление" / "uninstall" finds this one
+    // Start's classic name for the same page: "удаление" / "uninstall" find this one
     { CMD_ADDREMOVE, L"Установка и удаление программ", L"Add or remove programs",
       L"uninstall|remove program|programs and features|appwiz|удаление программ|удалить программу|программы и компоненты|деинсталляция",
       0xECAA, false },
@@ -242,8 +241,7 @@ static AppList *applist_build(RawApp *raw, int n)
         app->glyph = k_commands[i].glyph;
         app->name = wdup(&l->arena, g_lang_ru ? k_commands[i].ru : k_commands[i].en, -1);
         WCHAR idbuf[32];
-        _snwprintf(idbuf, countof(idbuf), L"cmd:%d", (int)app->cmd);
-        idbuf[countof(idbuf) - 1] = 0;
+        wfmt(idbuf, countof(idbuf), L"cmd:%d", (int)app->cmd);
         app->id = wdup(&l->arena, idbuf, -1);
         app->id_hash = hash_wstr_i(app->id, -1);
         app_fill_match(&l->arena, app);

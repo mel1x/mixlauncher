@@ -194,9 +194,8 @@ static void ev_pump(void)
     }
 }
 
-// Our own copy of Everything: Everything\Everything.exe next to our exe (the installer puts it there).
-// It runs as a separate hidden instance with its settings and index in our data folder, and only while
-// the user has no Everything of their own: theirs is always preferred, so the disk is never indexed twice.
+// Built-in Everything (Everything\Everything.exe next to ours): a hidden instance with its index in our data folder,
+// run only when the user has no Everything of their own.
 #define EV_INSTANCE L"MixLauncher"
 #define EV_OWN_CLASS L"EVERYTHING_TASKBAR_NOTIFICATION_(" EV_INSTANCE L")"
 
@@ -220,8 +219,7 @@ static bool ev_own_exe(WCHAR *out)
     WCHAR dir[MAX_PATH];
     wcopy(dir, MAX_PATH, g_exe_path);
     PathRemoveFileSpecW(dir);
-    _snwprintf(out, MAX_PATH, L"%s\\Everything\\Everything.exe", dir);
-    out[MAX_PATH - 1] = 0;
+    wfmt(out, MAX_PATH, L"%s\\Everything\\Everything.exe", dir);
     return GetFileAttributesW(out) != INVALID_FILE_ATTRIBUTES;
 }
 
@@ -229,8 +227,7 @@ static HANDLE ev_own_run(const WCHAR *args)
 {
     WCHAR exe[MAX_PATH], cmd[3 * MAX_PATH + 128];
     if (!ev_own_exe(exe)) return NULL;
-    _snwprintf(cmd, countof(cmd), L"\"%s\" -instance " EV_INSTANCE L" %s", exe, args);
-    cmd[countof(cmd) - 1] = 0;
+    wfmt(cmd, countof(cmd), L"\"%s\" -instance " EV_INSTANCE L" %s", exe, args);
     STARTUPINFOW si;
     PROCESS_INFORMATION pi;
     memset(&si, 0, sizeof si);
@@ -253,8 +250,8 @@ static void ev_own_start(void)
     WCHAR dir[MAX_PATH], ini[MAX_PATH], db[MAX_PATH], args[2 * MAX_PATH + 64];
     data_path(dir, L"Everything");
     CreateDirectoryW(dir, NULL);
-    _snwprintf(ini, MAX_PATH, L"%s\\Everything.ini", dir);
-    _snwprintf(db, MAX_PATH, L"%s\\Everything.db", dir);
+    wfmt(ini, MAX_PATH, L"%s\\Everything.ini", dir);
+    wfmt(db, MAX_PATH, L"%s\\Everything.db", dir);
     ini[MAX_PATH - 1] = db[MAX_PATH - 1] = 0;
     if (GetFileAttributesW(ini) == INVALID_FILE_ATTRIBUTES) {
         static const char k_ini[] = "[Everything]\r\n"
@@ -264,8 +261,7 @@ static void ev_own_start(void)
                                     "auto_include_fixed_volumes=1\r\n";
         write_file_atomic(ini, k_ini, (DWORD)(sizeof k_ini - 1));
     }
-    _snwprintf(args, countof(args), L"-startup -config \"%s\" -db \"%s\"", ini, db);
-    args[countof(args) - 1] = 0;
+    wfmt(args, countof(args), L"-startup -config \"%s\" -db \"%s\"", ini, db);
     if (g_ev_own_proc) CloseHandle(g_ev_own_proc);
     g_ev_own_proc = ev_own_run(args);
     g_ev_own_started = time_now();
@@ -470,9 +466,8 @@ static void ev_build(FileResults *res, size_t reserve)
     for (int i = 0; i < E.raw_count; i++) {
         RawFile *r = &E.raw[i];
         WCHAR full[2048];
-        if (r->path[0]) _snwprintf(full, countof(full), L"%s\\%s", r->path, r->name);
-        else _snwprintf(full, countof(full), L"%s\\", r->name);
-        full[countof(full) - 1] = 0;
+        if (r->path[0]) wfmt(full, countof(full), L"%s\\%s", r->path, r->name);
+        else wfmt(full, countof(full), L"%s\\", r->name);
         int fl = wlen(full);
         if (!seen_add(hash_wstr_i(full, fl))) continue;
         if (wends_with_i(full, fl, L".lnk") && StrStrIW(full, L"\\Start Menu\\Programs\\")) continue;
@@ -505,9 +500,8 @@ static void ev_run(u32 id, const WCHAR *query, const WCHAR *filter)
     E.cur_id = 0;
 
     WCHAR search[2048];
-    if (filter[0]) _snwprintf(search, countof(search), L"<%s> %s", query, filter);
-    else _snwprintf(search, countof(search), L"%s", query);
-    search[countof(search) - 1] = 0;
+    if (filter[0]) wfmt(search, countof(search), L"<%s> %s", query, filter);
+    else wfmt(search, countof(search), L"%s", query);
 
     int ok = ev_send_query(ev, search, 0, EV_FIRST_PAGE, EV_SORT_DATE_MODIFIED_DESC);
     if (ok < 0) {
@@ -517,9 +511,8 @@ static void ev_run(u32 id, const WCHAR *query, const WCHAR *filter)
     u32 main_count = (u32)E.raw_count;
     bool plain = query_is_simple(query);
     if (ok > 0 && plain && E.raw_total > (u32)E.raw_count && !ev_superseded()) {
-        if (filter[0]) _snwprintf(search, countof(search), L"startwith:<%s> %s", query, filter);
-        else _snwprintf(search, countof(search), L"startwith:%s", query);
-        search[countof(search) - 1] = 0;
+        if (filter[0]) wfmt(search, countof(search), L"startwith:<%s> %s", query, filter);
+        else wfmt(search, countof(search), L"startwith:%s", query);
         u32 total = E.raw_total;
         int ok2 = ev_send_query(ev, search, 0, 128, EV_SORT_DATE_MODIFIED_DESC);
         E.raw_total = total;
@@ -538,9 +531,8 @@ static void ev_run(u32 id, const WCHAR *query, const WCHAR *filter)
     norm_str(E.cur_qn, query, E.cur_qlen);
     while (E.cur_qlen && E.cur_qn[E.cur_qlen - 1] == ' ') E.cur_qn[--E.cur_qlen] = 0;
     E.cur_plain = plain;
-    if (filter[0]) _snwprintf(E.cur_search, countof(E.cur_search), L"<%s> %s", query, filter);
-    else _snwprintf(E.cur_search, countof(E.cur_search), L"%s", query);
-    E.cur_search[countof(E.cur_search) - 1] = 0;
+    if (filter[0]) wfmt(E.cur_search, countof(E.cur_search), L"<%s> %s", query, filter);
+    else wfmt(E.cur_search, countof(E.cur_search), L"%s", query);
     if (E.seen) memset(E.seen, 0, sizeof(u64) * E.seen_cap);
     E.seen_count = 0;
 

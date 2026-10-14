@@ -86,8 +86,7 @@ static int score_fuzzy(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int 
     return CLAMP(sc, 1000, SCORE_FUZZY_MAX);
 }
 
-// Another form of the same word: "удалить" finds "удаление", "программу" finds "программ", "uninstalling" finds
-// "uninstall". The token without its ending (up to 3 letters, at least 4 left) must start a word.
+// Word forms: the token minus an ending of up to 3 letters (4+ left) must start a word ("удалить" -> "удаление").
 static int stem_at(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int m)
 {
     if (m < 5) return -1;

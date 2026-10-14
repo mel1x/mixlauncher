@@ -176,6 +176,57 @@ static void wcopy(WCHAR *dst, int cap, const WCHAR *src)
     dst[n] = 0;
 }
 
+// DWM attributes and values by name: older SDKs lack them.
+enum { DWA_NO_TRANSITIONS = 3, DWA_DARK = 20, DWA_CORNER = 33, DWA_BORDER_COLOR = 34, DWA_BACKDROP = 38 };
+enum { DWC_ROUND = 2, DWC_ROUND_SMALL = 3 };
+enum { DWB_NONE = 1, DWB_MICA = 2, DWB_ACRYLIC = 3 };
+#define DW_COLOR_NONE 0xFFFFFFFEu
+
+static bool dwm_set(HWND h, DWORD attr, DWORD v) { return SUCCEEDED(DwmSetWindowAttribute(h, attr, &v, sizeof v)); }
+
+// A system backdrop under the whole window (the frame extended over the client area).
+static bool dwm_backdrop(HWND h, DWORD type)
+{
+    MARGINS m = { -1, -1, -1, -1 };
+    DwmExtendFrameIntoClientArea(h, &m);
+    return dwm_set(h, DWA_BACKDROP, type);
+}
+
+// Registering a class that exists already just fails, so callers need no guard.
+static void window_class(const WCHAR *name, WNDPROC proc, UINT style, HICON icon, HICON icon_sm)
+{
+    WNDCLASSEXW wc;
+    memset(&wc, 0, sizeof wc);
+    wc.cbSize = sizeof wc;
+    wc.style = style;
+    wc.lpfnWndProc = proc;
+    wc.hInstance = GetModuleHandleW(NULL);
+    wc.hIcon = icon;
+    wc.hIconSm = icon_sm;
+    wc.hCursor = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
+    wc.lpszClassName = name;
+    RegisterClassExW(&wc);
+}
+
+// swprintf into a fixed buffer, always terminated. Returns the length, or -1 when the text was cut.
+static int wfmt(WCHAR *buf, int cap, const WCHAR *fmt, ...)
+{
+    if (cap <= 0) return -1;
+    va_list ap;
+    va_start(ap, fmt);
+#ifdef _MSC_VER
+    int n = _vsnwprintf_s(buf, (size_t)cap, _TRUNCATE, fmt, ap);
+#else
+    int n = _vsnwprintf(buf, (size_t)cap, fmt, ap);
+    if (n < 0 || n >= cap) {
+        buf[cap - 1] = 0;
+        n = -1;
+    }
+#endif
+    va_end(ap);
+    return n;
+}
+
 static WCHAR wlower_ascii(WCHAR c) { return (c >= 'A' && c <= 'Z') ? (WCHAR)(c + 32) : c; }
 
 static bool wstarts_with_i(const WCHAR *s, const WCHAR *prefix)
@@ -281,8 +332,7 @@ static WCHAR g_exe_path[MAX_PATH];
 
 static void data_path(WCHAR *out, const WCHAR *file)
 {
-    _snwprintf(out, MAX_PATH, L"%s\\%s", g_data_dir, file);
-    out[MAX_PATH - 1] = 0;
+    wfmt(out, MAX_PATH, L"%s\\%s", g_data_dir, file);
 }
 
 static SRWLOCK g_log_lock = SRWLOCK_INIT;
@@ -346,8 +396,7 @@ static char *read_file(const WCHAR *path, DWORD *out_size)
 static bool write_file_atomic(const WCHAR *path, const void *data, DWORD size)
 {
     WCHAR tmp[MAX_PATH + 8];
-    _snwprintf(tmp, countof(tmp), L"%s.tmp", path);
-    tmp[countof(tmp) - 1] = 0;
+    wfmt(tmp, countof(tmp), L"%s.tmp", path);
     HANDLE f = CreateFileW(tmp, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (f == INVALID_HANDLE_VALUE) return false;
     DWORD w = 0;

@@ -120,8 +120,7 @@ static void launch_exec(LaunchJob *j)
     WCHAR buf[2048];
     const WCHAR *app_uri = NULL;
     if (j->is_app) {
-        _snwprintf(buf, countof(buf), L"shell:AppsFolder\\%s", j->target);
-        buf[countof(buf) - 1] = 0;
+        wfmt(buf, countof(buf), L"shell:AppsFolder\\%s", j->target);
         app_uri = buf;
     }
     switch (j->act) {

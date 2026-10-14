@@ -1,5 +1,4 @@
-// Windows 11-style popup menu in its own window (the tray menu): DWM acrylic, rounded corners, Fluent icons,
-// a slide-in from the top edge, keyboard navigation. Same look as the mix-widgets tray menu.
+// Windows 11 style popup menu (tray, media widget): acrylic, Fluent icons, keyboard navigation.
 
 #define PM_CLASS L"MixLauncherMenu"
 #define PM_MAX 16
@@ -127,7 +126,7 @@ static LRESULT CALLBACK pm_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_NCHITTEST:
         return HTCLIENT;
     case WM_NCACTIVATE:
-        // Keeps the acrylic backdrop (DWM draws it only for an active frame), as the launcher window does.
+        // keeps acrylic, see the launcher's WM_NCACTIVATE
         return DefWindowProcW(h, msg, TRUE, -1);
     case WM_ERASEBKGND:
         return 1;
@@ -192,18 +191,7 @@ static LRESULT CALLBACK pm_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 static void pm_open(const PmItem *items, int n, POINT at, void (*pick)(int id))
 {
     pm_close();
-    static bool registered;
-    if (!registered) {
-        registered = true;
-        WNDCLASSEXW wc;
-        memset(&wc, 0, sizeof wc);
-        wc.cbSize = sizeof wc;
-        wc.lpfnWndProc = pm_wndproc;
-        wc.hInstance = GetModuleHandleW(NULL);
-        wc.hCursor = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
-        wc.lpszClassName = PM_CLASS;
-        RegisterClassExW(&wc);
-    }
+    window_class(PM_CLASS, pm_wndproc, 0, NULL, NULL);
     theme_update();
     PM.n = MIN(n, PM_MAX);
     memcpy(PM.items, items, sizeof(PmItem) * PM.n);
@@ -232,16 +220,10 @@ static void pm_open(const PmItem *items, int n, POINT at, void (*pick)(int id))
     PM.hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOREDIRECTIONBITMAP, PM_CLASS, L"MixLauncher", WS_POPUP, x, y, PM.W, PM.H,
                               NULL, NULL, GetModuleHandleW(NULL), NULL);
     if (!PM.hwnd) return;
-    BOOL d = U.th.dark;
-    DwmSetWindowAttribute(PM.hwnd, 20 /*DWMWA_USE_IMMERSIVE_DARK_MODE*/, &d, sizeof d);
-    int corner = 2;  // DWMWCP_ROUND
-    DwmSetWindowAttribute(PM.hwnd, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/, &corner, sizeof corner);
-    COLORREF none = 0xFFFFFFFE;  // DWMWA_COLOR_NONE: no outline
-    DwmSetWindowAttribute(PM.hwnd, 34 /*DWMWA_BORDER_COLOR*/, &none, sizeof none);
-    MARGINS m = { -1, -1, -1, -1 };
-    DwmExtendFrameIntoClientArea(PM.hwnd, &m);
-    int type = 3;  // DWMSBT_TRANSIENTWINDOW
-    PM.backdrop = SUCCEEDED(DwmSetWindowAttribute(PM.hwnd, 38 /*DWMWA_SYSTEMBACKDROP_TYPE*/, &type, sizeof type));
+    dwm_set(PM.hwnd, DWA_DARK, U.th.dark);
+    dwm_set(PM.hwnd, DWA_CORNER, DWC_ROUND);
+    dwm_set(PM.hwnd, DWA_BORDER_COLOR, DW_COLOR_NONE);
+    PM.backdrop = dwm_backdrop(PM.hwnd, DWB_ACRYLIC);
     SetWindowPos(PM.hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     if (!r_target_init(&PM.target, PM.hwnd, PM.W, PM.H)) {
         DestroyWindow(PM.hwnd);

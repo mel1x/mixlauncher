@@ -1,6 +1,4 @@
-// Updates from GitHub releases: a periodic check of the latest release, then on request a download of the
-// installer (installed copy) or the portable exe (portable copy) and a restart into the new version.
-// Nothing but the release query and the download goes over the network.
+// Updates from GitHub releases: a periodic check, then the installer or portable exe download and a restart.
 
 #define UPD_HOST L"api.github.com"
 #define UPD_PATH L"/repos/mel1x/mixlauncher/releases/latest"
@@ -235,10 +233,9 @@ static DWORD WINAPI upd_download_thread(void *arg)
     DWORD n = GetTempPathW(MAX_PATH, dir);
     bool ok = n && n < MAX_PATH - 40;
     if (ok) {
-        wcscat(dir, L"MixLauncher-update");
+        wcopy(dir + n, MAX_PATH - (int)n, L"MixLauncher-update");
         CreateDirectoryW(dir, NULL);
-        _snwprintf(UPD.file, MAX_PATH, L"%s\\%s", dir, upd_installed() ? L"" UPD_SETUP_ASSET : L"" UPD_PORTABLE_ASSET);
-        UPD.file[MAX_PATH - 1] = 0;
+        wfmt(UPD.file, MAX_PATH, L"%s\\%s", dir, upd_installed() ? L"" UPD_SETUP_ASSET : L"" UPD_PORTABLE_ASSET);
         HANDLE f = CreateFileW(UPD.file, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
         ok = f != INVALID_HANDLE_VALUE;
         if (ok) {
@@ -287,8 +284,7 @@ static bool upd_run(const WCHAR *file, const WCHAR *args)
     return ShellExecuteExW(&sei) != 0;
 }
 
-// Runs on the UI thread once the download is ready. The installer closes this instance itself
-// (PrepareToInstall runs --shutdown) and starts the new one; the portable exe is swapped in place.
+// UI thread, download ready. The installer closes us itself (--shutdown); the portable exe is swapped in place.
 static void upd_apply(void)
 {
     if (UPD.dry_run) {
@@ -301,8 +297,7 @@ static void upd_apply(void)
         return;
     }
     WCHAR old[MAX_PATH + 8];
-    _snwprintf(old, countof(old), L"%s.old", g_exe_path);
-    old[countof(old) - 1] = 0;
+    wfmt(old, countof(old), L"%s.old", g_exe_path);
     DeleteFileW(old);
     if (!MoveFileExW(g_exe_path, old, MOVEFILE_REPLACE_EXISTING)) {
         upd_set(UPD_ERROR);
@@ -314,8 +309,7 @@ static void upd_apply(void)
         return;
     }
     WCHAR args[32];
-    _snwprintf(args, countof(args), L"--after-update %lu", GetCurrentProcessId());
-    args[countof(args) - 1] = 0;
+    wfmt(args, countof(args), L"--after-update %lu", GetCurrentProcessId());
     if (!upd_run(g_exe_path, args)) {
         MoveFileExW(g_exe_path, UPD.file, MOVEFILE_REPLACE_EXISTING);
         MoveFileExW(old, g_exe_path, MOVEFILE_REPLACE_EXISTING);
@@ -340,8 +334,7 @@ static void upd_init(const WCHAR *pretend_version)
     upd_parse_ver(v, UPD.cur);
     // A previous portable update leaves the old exe behind.
     WCHAR old[MAX_PATH + 8];
-    _snwprintf(old, countof(old), L"%s.old", g_exe_path);
-    old[countof(old) - 1] = 0;
+    wfmt(old, countof(old), L"%s.old", g_exe_path);
     DeleteFileW(old);
 }
 
@@ -368,8 +361,8 @@ static const WCHAR *upd_label(WCHAR *buf, int cap)
     switch (upd_state()) {
     case UPD_CHECKING: return TR("Проверка…", "Checking…");
     case UPD_LATEST: return TR("Последняя версия", "Up to date");
-    case UPD_AVAILABLE: _snwprintf(buf, cap, L"%ls %ls", TR("Обновить до", "Update to"), UPD.latest); break;
-    case UPD_DOWNLOADING: _snwprintf(buf, cap, L"%ls %d%%", TR("Загрузка", "Downloading"), (int)(UPD.progress / 10)); break;
+    case UPD_AVAILABLE: wfmt(buf, cap, L"%ls %ls", TR("Обновить до", "Update to"), UPD.latest); break;
+    case UPD_DOWNLOADING: wfmt(buf, cap, L"%ls %d%%", TR("Загрузка", "Downloading"), (int)(UPD.progress / 10)); break;
     case UPD_INSTALLING: return TR("Установка…", "Installing…");
     case UPD_ERROR: return UPD.url[0] ? TR("Ошибка, повторить", "Failed, retry") : TR("Нет связи с GitHub", "GitHub unreachable");
     default: return TR("Проверить", "Check now");

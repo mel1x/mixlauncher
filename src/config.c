@@ -297,13 +297,13 @@ static void key_label(u32 vk, WCHAR *out, int cap, const WCHAR **side)
             wcopy(out, cap, k_key_names[i].label);
             return;
         }
-    if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) _snwprintf(out, cap, L"%c", (WCHAR)vk);
-    else if (vk >= VK_F1 && vk <= VK_F24) _snwprintf(out, cap, L"F%u", vk - VK_F1 + 1);
-    else if (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD9) _snwprintf(out, cap, L"Num %u", vk - VK_NUMPAD0);
+    if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) wfmt(out, cap, L"%c", (WCHAR)vk);
+    else if (vk >= VK_F1 && vk <= VK_F24) wfmt(out, cap, L"F%u", vk - VK_F1 + 1);
+    else if (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD9) wfmt(out, cap, L"Num %u", vk - VK_NUMPAD0);
     else {
         UINT sc = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC_EX);
         LONG lp = (LONG)((sc & 0xFF) << 16) | ((sc & 0xE000) ? (1 << 24) : 0);
-        if (!sc || GetKeyNameTextW(lp, out, cap) <= 0) _snwprintf(out, cap, L"VK %02X", vk & 0xFF);
+        if (!sc || GetKeyNameTextW(lp, out, cap) <= 0) wfmt(out, cap, L"VK %02X", vk & 0xFF);
     }
     out[cap - 1] = 0;
 }
@@ -342,13 +342,10 @@ static bool hotkey_parse(const WCHAR *s, Hotkey *out)
 
 static void hotkey_format(Hotkey h, WCHAR *out, int cap)
 {
-    char buf[96] = "", key[24];
-    if (h.mods & HK_CTRL) strcat(buf, "ctrl+");
-    if (h.mods & HK_ALT) strcat(buf, "alt+");
-    if (h.mods & HK_SHIFT) strcat(buf, "shift+");
-    if (h.mods & HK_WIN) strcat(buf, "win+");
+    char buf[96], key[24];
     key_name(h.vk, key, sizeof key);
-    strcat(buf, key);
+    snprintf(buf, sizeof buf, "%s%s%s%s%s", h.mods & HK_CTRL ? "ctrl+" : "", h.mods & HK_ALT ? "alt+" : "", h.mods & HK_SHIFT ? "shift+" : "",
+             h.mods & HK_WIN ? "win+" : "", key);
     utf8_to_w(buf, -1, out, cap);
 }
 

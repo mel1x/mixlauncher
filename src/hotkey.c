@@ -173,7 +173,6 @@ pass:
     return CallNextHookEx(K.hook, code, wp, lp);
 }
 
-static bool tb_hit(POINT pt);
 
 static LRESULT CALLBACK ll_mouse(int code, WPARAM wp, LPARAM lp)
 {

@@ -25,6 +25,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\stop-running.ps1
 where cl >nul 2>nul && goto :msvc
 
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+rem vcvars64.bat runs vswhere by name and prints an error when its folder is not on PATH
+set "PATH=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer;%PATH%"
 if exist "%VSWHERE%" (
     for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
         if exist "%%i\VC\Auxiliary\Build\vcvars64.bat" (
@@ -52,8 +54,8 @@ echo [msvc %MODE% %OUT%]
 set RCFLAGS=/nologo
 if defined RCDEF set RCFLAGS=/nologo /d %RCDEF%
 rc %RCFLAGS% /fo build\%OUT%.res res\mixlauncher.rc || exit /b 1
-set CFLAGS=/nologo /utf-8 /W3 /std:c11 /GS- /Gw /Gy /MT /DNDEBUG
-if "%MODE%"=="debug" (set CFLAGS=/nologo /utf-8 /W3 /std:c11 /Zi /Od /MTd)
+set CFLAGS=/nologo /utf-8 /W3 /WX /std:c11 /GS- /Gw /Gy /MT /DNDEBUG
+if "%MODE%"=="debug" (set CFLAGS=/nologo /utf-8 /W3 /WX /std:c11 /Zi /Od /MTd)
 cl %CFLAGS% /O2 src\main.c build\%OUT%.res /Fe:build\%OUT%.exe /Fo:build\ /Fd:build\ /link /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /INCREMENTAL:NO || exit /b 1
 goto :done
 

@@ -1,6 +1,4 @@
-// Tags: the user's own search words for an app, a command, a file or a folder ("Add tag" in the context
-// menu). A tagged item is found by its tag the way it is found by its name: a prefix, a word, or the
-// tag typed in the wrong keyboard layout.
+// Tags: the user's own search words for an app, command, file or folder, matched like names.
 
 #define TAG_INPUT_MAX 120
 
@@ -194,8 +192,7 @@ static void tags_clear(u8 type, const WCHAR *key)
     tags_save();
 }
 
-// The best match of the query against the item's tags, 0 if none is close enough. A tag only counts as a
-// prefix, a word, an acronym or a substring: fuzzy matches on short tags would find everything.
+// Best tag match, 0 if none: prefix, word, acronym or substring only (fuzzy hits on short tags match everything).
 static int tags_score(const TagItem *ti, const WCHAR *qn, int ql, const WCHAR *alt, bool has_alt, bool *is_alt)
 {
     int best = 0, min = SCORE_SUBSTRING - 400;
@@ -228,6 +225,5 @@ static void tags_count_label(WCHAR *out, int cap, int n)
     } else {
         w = n == 1 ? L"tag" : L"tags";
     }
-    _snwprintf(out, cap, L"%d %ls", n, w);
-    out[cap - 1] = 0;
+    wfmt(out, cap, L"%d %ls", n, w);
 }

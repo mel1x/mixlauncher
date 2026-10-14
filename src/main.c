@@ -1,5 +1,6 @@
 #include "base.h"
 #include "com_min.h"
+#include "decls.h"
 #include "config.c"
 #include "render.c"
 #include "font.c"
@@ -13,44 +14,19 @@
 #include "elevation.c"
 #include "launch.c"
 #include "update.c"
-#include "tray.c"
 #include "ui.c"
+#include "ctxmenu.c"
+#include "tagdlg.c"
+#include "ui_input.c"
 #include "popmenu.c"
+#include "tray.c"
 #include "settings.c"
+#include "donate.c"
+#include "settings_wnd.c"
 #include "taskbar.c"
 #include "media.c"
 
 #define WINDOW_CLASS L"MixLauncherWindow"
-
-enum { TM_OPEN = 1, TM_SETTINGS, TM_EXIT };
-
-static void tray_pick(int id)
-{
-    switch (id) {
-    case TM_OPEN:
-        ui_show();
-        break;
-    case TM_SETTINGS:
-        settings_open();
-        break;
-    case TM_EXIT:
-        PostMessageW(g_hwnd, WM_APP_EXIT, 0, 0);
-        break;
-    }
-}
-
-static void tray_menu(void)
-{
-    PmItem items[] = {
-        { TM_OPEN, TR("Открыть MixLauncher", "Open MixLauncher"), 0xE721 },
-        { TM_SETTINGS, TR("Настройки", "Settings"), 0xE713 },
-        { 0 },
-        { TM_EXIT, TR("Выход", "Exit"), 0xE7E8 },
-    };
-    POINT pt;
-    GetCursorPos(&pt);
-    pm_open(items, countof(items), pt, tray_pick);
-}
 
 static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
@@ -62,8 +38,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_NCHITTEST:
         return HTCLIENT;
     case WM_NCACTIVATE:
-        // DWM draws the acrylic backdrop only for an active frame; an inactive one gets a flat gray fallback and
-        // a crossfade on activation. The launcher always reports an active frame (-1: no non-client repaint).
+        // DWM draws acrylic only for an active frame: always report one (-1: no non-client repaint).
         return DefWindowProcW(h, msg, TRUE, -1);
     case WM_ERASEBKGND:
         return 1;
@@ -343,8 +318,7 @@ static int cmd_test_everything(const WCHAR *query, const WCHAR *out)
     return 0;
 }
 
-// Installer hooks: close every running launcher and our copy of Everything, and wait for them,
-// so their files can be replaced or removed.
+// Installer hooks: close every launcher and our Everything and wait, so their files can be replaced.
 static void shutdown_running(void)
 {
     HWND h = NULL;
@@ -367,8 +341,7 @@ static void init_paths(void)
     WCHAR base[MAX_PATH];
     DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", base, MAX_PATH);
     if (!n || n >= MAX_PATH) SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, base);
-    _snwprintf(g_data_dir, MAX_PATH, L"%s\\MixLauncher", base);
-    g_data_dir[MAX_PATH - 1] = 0;
+    wfmt(g_data_dir, MAX_PATH, L"%s\\MixLauncher", base);
     CreateDirectoryW(g_data_dir, NULL);
 }
 
@@ -411,8 +384,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
         } else if (!wcscmp(argv[i], L"--test-unelevated") && i + 1 < argc) {
             CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
             WCHAR args[MAX_PATH + 64];
-            _snwprintf(args, countof(args), L"/c whoami /groups > \"%s\"", argv[i + 1]);
-            args[countof(args) - 1] = 0;
+            wfmt(args, countof(args), L"/c whoami /groups > \"%s\"", argv[i + 1]);
             return shell_exec_unelevated_ex(L"cmd.exe", args, NULL, NULL, SW_HIDE) ? 0 : 1;
         } else if (!wcscmp(argv[i], L"--write-icon") && i + 1 < argc) {
             return app_icon_write_ico(argv[i + 1]) ? 0 : 1;
@@ -496,17 +468,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     g_icon_big = app_icon_create(GetSystemMetrics(SM_CXICON));
     g_icon_small = app_icon_create(GetSystemMetrics(SM_CXSMICON));
 
-    WNDCLASSEXW wc;
-    memset(&wc, 0, sizeof wc);
-    wc.cbSize = sizeof wc;
-    wc.style = CS_DBLCLKS;
-    wc.lpfnWndProc = wndproc;
-    wc.hInstance = inst;
-    wc.hIcon = g_icon_big;
-    wc.hIconSm = g_icon_small;
-    wc.hCursor = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
-    wc.lpszClassName = WINDOW_CLASS;
-    RegisterClassExW(&wc);
+    window_class(WINDOW_CLASS, wndproc, CS_DBLCLKS, g_icon_big, g_icon_small);
 
     POINT origin = { 0, 0 };
     ui_metrics(monitor_dpi(MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY)));
@@ -516,8 +478,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     theme_update();
     U.backdrop_ok = backdrop_apply(g_hwnd);
     SetLayeredWindowAttributes(g_hwnd, 0, 255, LWA_ALPHA);
-    BOOL no_dwm_anim = TRUE;
-    DwmSetWindowAttribute(g_hwnd, 3 /*DWMWA_TRANSITIONS_FORCEDISABLED*/, &no_dwm_anim, sizeof no_dwm_anim);
+    dwm_set(g_hwnd, DWA_NO_TRANSITIONS, TRUE);
 
     if (!font_init()) {
         MessageBoxW(NULL, TR("Не удалось инициализировать DirectWrite.", "Failed to initialize DirectWrite."), L"MixLauncher", MB_ICONERROR);

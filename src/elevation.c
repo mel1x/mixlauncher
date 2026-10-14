@@ -96,8 +96,7 @@ static bool shell_exec_unelevated(const WCHAR *file, const WCHAR *args, const WC
 static bool run_tool(const WCHAR *exe, const WCHAR *args, DWORD wait_ms, DWORD *exit_code)
 {
     WCHAR cmd[2048];
-    _snwprintf(cmd, countof(cmd), L"\"%s\" %s", exe, args);
-    cmd[countof(cmd) - 1] = 0;
+    wfmt(cmd, countof(cmd), L"\"%s\" %s", exe, args);
     STARTUPINFOW si;
     memset(&si, 0, sizeof si);
     si.cb = sizeof si;
@@ -120,16 +119,14 @@ static bool task_exists(const WCHAR *name)
 {
     WCHAR path[MAX_PATH], sys[MAX_PATH];
     if (!GetSystemDirectoryW(sys, MAX_PATH)) return false;
-    _snwprintf(path, MAX_PATH, L"%s\\Tasks\\%s", sys, name);
-    path[MAX_PATH - 1] = 0;
+    wfmt(path, MAX_PATH, L"%s\\Tasks\\%s", sys, name);
     return GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES;
 }
 
 static void task_delete(const WCHAR *name)
 {
     WCHAR args[256];
-    _snwprintf(args, countof(args), L"/delete /tn \"%s\" /f", name);
-    args[countof(args) - 1] = 0;
+    wfmt(args, countof(args), L"/delete /tn \"%s\" /f", name);
     run_tool(L"schtasks.exe", args, 10000, NULL);
 }
 
@@ -151,8 +148,7 @@ static bool task_create_autostart(void)
     WCHAR user[256], dom[128], name[128];
     if (!GetEnvironmentVariableW(L"USERDOMAIN", dom, countof(dom))) dom[0] = 0;
     if (!GetEnvironmentVariableW(L"USERNAME", name, countof(name))) return false;
-    _snwprintf(user, countof(user), dom[0] ? L"%s\\%s" : L"%s%s", dom, name);
-    user[countof(user) - 1] = 0;
+    wfmt(user, countof(user), dom[0] ? L"%s\\%s" : L"%s%s", dom, name);
     Buf b = { 0 };
     xml_put(&b, L"\xFEFF<?xml version=\"1.0\" encoding=\"UTF-16\"?>\r\n"
                 L"<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\r\n"
@@ -189,8 +185,7 @@ static bool task_create_autostart(void)
     free(b.data);
     if (!ok) return false;
     WCHAR args[MAX_PATH + 96];
-    _snwprintf(args, countof(args), L"/create /tn \"%s\" /xml \"%s\" /f", AUTOSTART_TASK, xml);
-    args[countof(args) - 1] = 0;
+    wfmt(args, countof(args), L"/create /tn \"%s\" /xml \"%s\" /f", AUTOSTART_TASK, xml);
     DWORD code = 1;
     ok = run_tool(L"schtasks.exe", args, 10000, &code) && code == 0;
     DeleteFileW(xml);
@@ -211,8 +206,7 @@ static void run_key_set(bool on)
     if (RegOpenKeyExW(HKEY_CURRENT_USER, k_run_key, 0, KEY_SET_VALUE, &k) != ERROR_SUCCESS) return;
     if (on) {
         WCHAR val[MAX_PATH + 8];
-        _snwprintf(val, countof(val), L"\"%s\"", g_exe_path);
-        val[countof(val) - 1] = 0;
+        wfmt(val, countof(val), L"\"%s\"", g_exe_path);
         RegSetValueExW(k, L"MixLauncher", 0, REG_SZ, (const BYTE *)val, (DWORD)(wlen(val) + 1) * sizeof(WCHAR));
     } else {
         RegDeleteValueW(k, L"MixLauncher");

@@ -1,10 +1,3 @@
-static f32 sd_round_box(f32 px, f32 py, f32 hx, f32 hy, f32 r)
-{
-    f32 qx = fabsf(px) - hx + r, qy = fabsf(py) - hy + r;
-    f32 ox = MAX(qx, 0.f), oy = MAX(qy, 0.f);
-    return sqrtf(ox * ox + oy * oy) + MIN(MAX(qx, qy), 0.f) - r;
-}
-
 // Bars of the logo: x, y, w, h in pixels of an S x S icon, snapped to whole pixels; the middle one is the selected row.
 static void app_logo_bars(f32 S, f32 b[3][4])
 {
@@ -27,13 +20,13 @@ static void app_icon_render(u32 *out, int S)
     for (int y = 0; y < S; y++) {
         for (int x = 0; x < S; x++) {
             f32 px = x + 0.5f - s * 0.5f, py = y + 0.5f - s * 0.5f;
-            f32 dbg = sd_round_box(px, py, half, half, rad);
+            f32 dbg = sd_box(px, py, half, half, rad);
             f32 abg = CLAMP(0.5f - dbg, 0.f, 1.f);
             f32 ring = CLAMP(0.5f - (fabsf(dbg + 0.5f + s * 0.004f) - 0.5f), 0.f, 1.f) * 0.10f;
             f32 v = 17.f + (255.f - 17.f) * ring;
             for (int i = 0; i < 3; i++) {
                 const f32 *b = bars[i];
-                f32 d = sd_round_box(x + 0.5f - (b[0] + b[2] * 0.5f), y + 0.5f - (b[1] + b[3] * 0.5f), b[2] * 0.5f, b[3] * 0.5f, b[3] * 0.5f);
+                f32 d = sd_box(x + 0.5f - (b[0] + b[2] * 0.5f), y + 0.5f - (b[1] + b[3] * 0.5f), b[2] * 0.5f, b[3] * 0.5f, b[3] * 0.5f);
                 f32 m = CLAMP(0.5f - d, 0.f, 1.f) * (i == 1 ? 1.f : APP_LOGO_DIM);
                 v = v * (1 - m) + 255.f * m;
             }
@@ -135,3 +128,33 @@ static void tray_add(void)
 }
 
 static void tray_remove(void) { Shell_NotifyIconW(NIM_DELETE, &g_nid); }
+
+enum { TM_OPEN = 1, TM_SETTINGS, TM_EXIT };
+
+static void tray_pick(int id)
+{
+    switch (id) {
+    case TM_OPEN:
+        ui_show();
+        break;
+    case TM_SETTINGS:
+        settings_open();
+        break;
+    case TM_EXIT:
+        PostMessageW(g_hwnd, WM_APP_EXIT, 0, 0);
+        break;
+    }
+}
+
+static void tray_menu(void)
+{
+    PmItem items[] = {
+        { TM_OPEN, TR("Открыть MixLauncher", "Open MixLauncher"), 0xE721 },
+        { TM_SETTINGS, TR("Настройки", "Settings"), 0xE713 },
+        { 0 },
+        { TM_EXIT, TR("Выход", "Exit"), 0xE7E8 },
+    };
+    POINT pt;
+    GetCursorPos(&pt);
+    pm_open(items, countof(items), pt, tray_pick);
+}
