@@ -5,7 +5,7 @@ enum {
     SID_DATADIR, SID_ADMIN, SID_EVERYTHING, SID_ABOUT,
     SID_ASPEED, SID_AOPEN, SID_ACLOSE, SID_ASCALE, SID_ACASCADE, SID_AROW, SID_ASTAGGER, SID_ASELECT, SID_ASCROLL, SID_AMENU,
     SID_APAGE, SID_APREVIEW, SID_ARESET, SID_TASKBAR, SID_TBREPLACE, SID_TBICON, SID_TBFILE, SID_MEDIA, SID_MEDIAPOS, SID_MEDIACTL, SID_MEDIAHIDE, SID_MEDIASCROLL, SID_LANG,
-    SID_STYLE, SID_MATCHHL, SID_UPDCHECK, SID_UPDNOW, SID__COUNT
+    SID_STYLE, SID_MATCHHL, SID_UPDCHECK, SID_UPDNOW, SID_REDUCED, SID__COUNT
 };
 enum { PG_GENERAL, PG_APPEARANCE, PG_ANIM, PG_SEARCH, PG_ADVANCED, PG_ABOUT, PG__COUNT };
 
@@ -75,6 +75,10 @@ static const SItem k_sitems[] = {
       .desc = { L"Сколько секунд после закрытия хранить набранный текст. 0 - всегда начинать с пустого поля",
                 L"Seconds to keep the typed text after closing. 0 always starts empty" },
       .lo = 0, .hi = 3600, .step = 10, .unit = { L"с", L"s" } },
+    { .page = PG_GENERAL, .kind = SK_TOGGLE, .id = SID_REDUCED, .group = { L"Доступность", L"Accessibility" },
+      .title = { L"Уменьшение движения", L"Reduced motion" },
+      .desc = { L"Без анимаций и задержек: окна, меню и списки появляются сразу. Настройки анимаций сохраняются до выключения",
+                L"No animations or delays: windows, menus and lists appear at once. Animation settings are kept until it is off" } },
     { .page = PG_GENERAL, .kind = SK_CHOICE, .id = SID_LANG, .group = { L"Язык", L"Language" },
       .title = { L"Язык интерфейса", L"Interface language" },
       .desc = { L"«Системный» берёт язык Windows: русский для русской Windows, иначе английский",
@@ -225,6 +229,7 @@ typedef struct KeyTok { WCHAR label[24]; const WCHAR *side; } KeyTok;
 #define SETTINGS_TIMER_CARET 1
 #define SETTINGS_TIMER_FLASH 2
 #define SETTINGS_TIMER_APPLY 3
+#define SETTINGS_TIMER_TIP   4
 
 enum { RM_LCTRL = 1, RM_RCTRL = 2, RM_LALT = 4, RM_RALT = 8, RM_LSHIFT = 16, RM_RSHIFT = 32, RM_LWIN = 64, RM_RWIN = 128 };
 
@@ -295,7 +300,10 @@ static struct {
     f32 sb_btn[2][4], sb_hov[2];
     f64 sb_seen;
     int mx, my;
-} SW = { .focus = -1, .editing = -1, .pop_row = -1, .flash_id = -1, .page_t = 1, .pop_t = 1, .rec_t = 1, .seg_click = -1 };
+    // Tooltip of a locked row: armed when the mouse enters it, shown at (tip_x, tip_y) after a pause.
+    int tip_row, tip_x, tip_y;
+    bool tip_on;
+} SW = { .focus = -1, .editing = -1, .pop_row = -1, .flash_id = -1, .page_t = 1, .pop_t = 1, .rec_t = 1, .seg_click = -1, .tip_row = -1 };
 
 static f32 SSC(f32 v) { return v * SW.s; }
 static f32 SSR(f32 v) { return floorf(v * SW.s + 0.5f); }
@@ -340,6 +348,7 @@ static int sval_applied(int id)
     case SID_LANG: return g_cfg.language;
     case SID_BACKDROP: return g_cfg.backdrop == BACKDROP_BLUR ? 0 : g_cfg.backdrop == BACKDROP_ACRYLIC ? 1 : 2;
     case SID_ANIM: return g_cfg.animations;
+    case SID_REDUCED: return g_cfg.reduced_motion;
     case SID_TASKBAR: return g_cfg.taskbar_button;
     case SID_TBREPLACE: return g_cfg.taskbar_replace_icon;
     case SID_TBICON: return g_cfg.taskbar_icon;
@@ -377,6 +386,12 @@ static const SItem *sitem(int id)
     for (int i = 0; i < (int)countof(k_sitems); i++)
         if (k_sitems[i].id == id) return &k_sitems[i];
     return NULL;
+}
+
+// Under reduced motion the animation settings keep their values but cannot be changed.
+static bool item_locked(const SItem *it)
+{
+    return sval(SID_REDUCED) && ((it->page == PG_ANIM && it->id != SID_APREVIEW) || it->id == SID_MEDIASCROLL);
 }
 
 static bool item_shown(int i)
@@ -615,6 +630,12 @@ static void sapply(const SItem *it, int v)
         g_cfg.animations = v;
         config_set("animations", v ? "1" : "0");
         break;
+    case SID_REDUCED:
+        g_cfg.reduced_motion = v;
+        config_set("reduced_motion", v ? "1" : "0");
+        if (SW.hwnd) dwm_set(SW.hwnd, DWA_NO_TRANSITIONS, v);
+        media_settings_changed();
+        break;
     case SID_WIDTH:
         g_cfg.width = v;
         save_int("width", v);
@@ -683,9 +704,12 @@ static void sset(const SItem *it, int v)
     if (it->kind == SK_STEPPER) v = CLAMP(v, it->lo, it->hi);
     if (it->kind == SK_TOGGLE) v = v ? 1 : 0;
     if (it->kind == SK_CHOICE) v = CLAMP(v, 0, choice_count(it) - 1);
-    if (v == sval(it->id)) return;
+    if (v == sval(it->id) || item_locked(it)) return;
     if (it->id == SID_TBICON && v == TBI_CUSTOM && !g_cfg.taskbar_icon_path[0] && !pick_taskbar_icon()) return;
-    if (v == sval_applied(it->id)) {
+    if (g_cfg.reduced_motion || it->id == SID_REDUCED) {  // nothing to wait for without the animation
+        SW.pend[it->id].on = false;
+        sapply(it, v);
+    } else if (v == sval_applied(it->id)) {
         SW.pend[it->id].on = false;
     } else {
         SW.pend[it->id].on = true;
@@ -1159,7 +1183,7 @@ static f32 max_scroll_s(void) { return MAX(0.f, SW.content_h - ((f32)SW.H - top_
 
 static bool row_focusable(int r)
 {
-    if (r < 0 || r >= SW.nrows || !item_shown(SW.rows[r].item)) return false;
+    if (r < 0 || r >= SW.nrows || !item_shown(SW.rows[r].item) || item_locked(&k_sitems[SW.rows[r].item])) return false;
     u8 k = k_sitems[SW.rows[r].item].kind;
     return k != SK_INFO && k != SK_ABOUT;
 }
@@ -1232,12 +1256,13 @@ static void draw_app_tile(f32 x, f32 y, f32 sz)
     x = floorf(x);
     y = floorf(y);
     f32 rad = floorf(sz * 0.225f + 0.5f);
-    r_rect(x, y, sz, sz, RGBA(17, 17, 19, 255), rad);
+    r_rect(x, y, sz, sz, RGBA(APP_LOGO_TILE >> 16, (APP_LOGO_TILE >> 8) & 255, APP_LOGO_TILE & 255, 255), rad);
     r_rect_ex(x, y, sz, sz, RGBA(255, 255, 255, 26), rad, 1.f, 0);
-    f32 bars[3][4];
-    app_logo_bars(floorf(sz), bars);
-    for (int i = 0; i < 3; i++)
-        r_rect(x + bars[i][0], y + bars[i][1], bars[i][2], bars[i][3], RGBA(255, 255, 255, i == 1 ? 255 : (int)(APP_LOGO_DIM * 255.f + 0.5f)), bars[i][3] * 0.5f);
+    f32 u = sz * APP_LOGO_FILL / 152.f, m[4] = { 0.70710678f, 0.70710678f * APP_LOGO_SQUASH, -0.70710678f, 0.70710678f * APP_LOGO_SQUASH };
+    for (int i = 0; i < 3; i++) {
+        u32 c = k_logo_rgb[i];
+        r_rect_affine(x + sz * 0.5f, y + sz * 0.5f + k_logo_dy[i] * u, 112.f * u, 112.f * u, m, RGBA(c >> 16, (c >> 8) & 255, c & 255, 255), 9.f * u);
+    }
 }
 
 static void draw_skeycaps(f32 x, f32 cy, const KeyTok *t, int n, int font, f32 fs, f32 h, f32 pad, f32 gap, f32 rad, u32 bg, u32 border,
@@ -1314,7 +1339,8 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
     const SItem *it = &k_sitems[r->item];
     f32 y = r->y + off, ty = r->ty + off;
     int ri = (int)(r - SW.rows);
-    bool hov = SW.hover.type == HT_ROW && SW.hover.idx == ri;
+    bool locked = item_locked(it);
+    bool hov = SW.hover.type == HT_ROW && SW.hover.idx == ri && !locked;
     f32 fs = SSC(14), dfs = SSC(12.5f), cfs = SSC(13.5f);
 
     if (it->kind == SK_ABOUT) {
@@ -1335,6 +1361,8 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
     }
 
     if (!r->first) r_rect(r->x + SSR(18), y, r->w - SSR(36), 1, c->sep, 0);
+    f32 opacity = R.opacity;
+    if (locked) R.opacity *= 0.4f;
     if (SW.row_hov_idx == ri && SW.row_hov > 0.f) {
         f32 g = SSR(4);
         r_rect(r->x + g, y + g, r->w - g * 2, r->h - g * 2, color_alpha(c->nav_hover, SW.row_hov), SSR(7));
@@ -1476,6 +1504,19 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
         f32 g = SSR(3);
         r_rect_ex(cx - g, cy - g, cw + g * 2, ch + g * 2, t->accent, SSR(9), SSR(2), 0);
     }
+    R.opacity = opacity;
+}
+
+static void draw_tip(const Theme *t, const SColors *c)
+{
+    const WCHAR *s = ss((Str){ L"Изменение недоступно при включённом уменьшении движения", L"Can't be changed while reduced motion is on" });
+    f32 fs = SSC(12.5f), pad = SSR(10), h = SSR(30), w = floorf(text_width(FONT_TEXT, fs, s, -1) + pad * 2);
+    f32 x = floorf(MAX(SSR(8), MIN((f32)SW.tip_x, (f32)SW.W - w - SSR(8)))), y = (f32)SW.tip_y + SSR(22);
+    if (y + h > (f32)SW.H - SSR(8)) y = (f32)SW.tip_y - h - SSR(8);
+    r_rect_ex(x, y + SSR(3), w, h, c->shadow, SSR(7), 0, SSR(8));
+    r_rect(x, y, w, h, c->pop, SSR(7));
+    r_rect_ex(x, y, w, h, c->pop_border, SSR(7), 1.f, 0);
+    text_draw(FONT_TEXT, fs, x + pad, baseline_for(FONT_TEXT, fs, y + h * 0.5f), s, -1, t->text);
 }
 
 static void draw_popover(const Theme *t, const SColors *c)
@@ -1588,5 +1629,6 @@ static bool sb_hot(void)
 static int row_hover_target(void)
 {
     if (SW.hover.type != HT_ROW || SW.pop_open || SW.rec.open || SW.hover.idx < 0 || SW.hover.idx >= SW.nrows) return -1;
-    return k_sitems[SW.rows[SW.hover.idx].item].kind == SK_TOGGLE ? SW.hover.idx : -1;
+    const SItem *it = &k_sitems[SW.rows[SW.hover.idx].item];
+    return it->kind == SK_TOGGLE && !item_locked(it) ? SW.hover.idx : -1;
 }

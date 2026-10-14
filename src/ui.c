@@ -954,12 +954,13 @@ static void ui_place_window(void)
 
 static bool anims_enabled(void)
 {
+    if (g_cfg.reduced_motion) return false;
     BOOL sys = TRUE;
     SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &sys, 0);
     return g_cfg.animations && sys;
 }
 
-static f32 anim_sec(int ms) { return (f32)ms / 1000.f * 100.f / (f32)MAX(g_cfg.anim_speed, 1); }
+static f32 anim_sec(int ms) { return g_cfg.reduced_motion ? 0.f : (f32)ms / 1000.f * 100.f / (f32)MAX(g_cfg.anim_speed, 1); }
 
 static f32 anim_omega(int ms)
 {

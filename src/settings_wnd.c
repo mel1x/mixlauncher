@@ -127,6 +127,27 @@ static void settings_draw(void)
     }
     if (SW.don.open) draw_donate(t, &c);
     confetti_draw();
+    if (SW.tip_on && SW.tip_row < SW.nrows && item_locked(&k_sitems[SW.rows[SW.tip_row].item])) draw_tip(t, &c);
+}
+
+static void tip_hide(void)
+{
+    SW.tip_row = -1;
+    SW.tip_on = false;
+    if (SW.hwnd) KillTimer(SW.hwnd, SETTINGS_TIMER_TIP);
+}
+
+// Arms the tooltip when the mouse comes onto a locked row; it shows after a pause, like a system tooltip.
+static void tip_track(void)
+{
+    int row = SW.hover.type == HT_ROW && SW.hover.idx >= 0 && SW.hover.idx < SW.nrows && item_locked(&k_sitems[SW.rows[SW.hover.idx].item])
+                  ? SW.hover.idx
+                  : -1;
+    if (row == SW.tip_row) return;
+    tip_hide();
+    SW.tip_row = row;
+    if (row >= 0) SetTimer(SW.hwnd, SETTINGS_TIMER_TIP, 600, NULL);
+    settings_invalidate();
 }
 
 static void settings_snap_motion(void)
@@ -365,6 +386,7 @@ static void set_page(int page)
     SW.page_t = 0;
     SW.focus = -1;
     SW.hover.type = HT_NONE;
+    tip_hide();
     if (page == PG_ABOUT) refresh_status();
     settings_invalidate();
 }
@@ -372,6 +394,7 @@ static void set_page(int page)
 static void activate_row(int ri, int part)
 {
     const SItem *it = &k_sitems[SW.rows[ri].item];
+    if (item_locked(it)) return;
     if (it->id != SID_CLEARHIST) SW.armed = false;
     switch (it->kind) {
     case SK_TOGGLE: sset(it, !sval(it->id)); break;
@@ -490,6 +513,7 @@ static void settings_mouse_down(int mx, int my)
     SHit h = settings_hit(mx, my);
     SW.press = h;
     SW.focus_visible = false;
+    tip_hide();
     if (SW.rec.open) {
         if (h.type == HT_RECSAVE) rec_close(true);
         else if (h.type == HT_RECCANCEL || h.type == HT_RECOUT) rec_close(false);
@@ -650,6 +674,7 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         if (hit.type != SW.hover.type || hit.idx != SW.hover.idx || hit.part != SW.hover.part) {
             SW.hover = hit;
             if (SW.pop_open && hit.type == HT_POPITEM) SW.pop_hover = hit.idx;
+            tip_track();
             settings_invalidate();
         }
         TRACKMOUSEEVENT tme = { sizeof tme, TME_LEAVE, h, 0 };
@@ -658,6 +683,7 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_MOUSELEAVE:
         SW.hover.type = HT_NONE;
+        tip_hide();
         SW.mx = SW.my = -1;
         settings_invalidate();
         return 0;
@@ -680,6 +706,7 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
         SW.pop_open = false;
+        tip_hide();
         SW.scroll_target = CLAMP(SW.scroll_target - (f32)GET_WHEEL_DELTA_WPARAM(wp) / WHEEL_DELTA * SSR(64), 0.f, max_scroll_s());
         settings_invalidate();
         return 0;
@@ -720,6 +747,12 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         if (wp == SETTINGS_TIMER_CARET) SW.caret_on = !SW.caret_on;
         if (wp == SETTINGS_TIMER_FLASH) KillTimer(h, SETTINGS_TIMER_FLASH);
         if (wp == SETTINGS_TIMER_APPLY) pend_flush(false);
+        if (wp == SETTINGS_TIMER_TIP) {
+            KillTimer(h, SETTINGS_TIMER_TIP);
+            SW.tip_on = SW.tip_row >= 0;
+            SW.tip_x = SW.mx;
+            SW.tip_y = SW.my;
+        }
         settings_invalidate();
         return 0;
     case WM_ACTIVATE:
@@ -775,6 +808,8 @@ static void settings_open(void)
     SW.armed = false;
     SW.pop_open = false;
     SW.don.open = false;
+    SW.tip_row = -1;
+    SW.tip_on = false;
     memset(&SW.rec, 0, sizeof SW.rec);
 
     POINT pt;
@@ -801,6 +836,7 @@ static void settings_open(void)
     if (!SW.hwnd) return;
     dwm_set(SW.hwnd, DWA_DARK, U.th.dark);
     dwm_set(SW.hwnd, DWA_CORNER, DWC_ROUND);
+    dwm_set(SW.hwnd, DWA_NO_TRANSITIONS, g_cfg.reduced_motion);  // the system open and minimize animations
     SW.mica = dwm_backdrop(SW.hwnd, DWB_MICA);
     SetWindowPos(SW.hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     RECT cr;

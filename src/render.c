@@ -44,9 +44,10 @@ static u32 color_mix(u32 a, u32 b, f32 t)
     return r;
 }
 
+// Both motion helpers jump straight to the target under reduced motion.
 static bool spring_step(f32 *x, f32 *v, f32 target, f32 omega, f32 dt)
 {
-    if (omega <= 0.f) {
+    if (omega <= 0.f || g_cfg.reduced_motion) {
         *x = target;
         *v = 0;
         return false;
@@ -67,7 +68,7 @@ static bool spring_step(f32 *x, f32 *v, f32 target, f32 omega, f32 dt)
 static bool approach(f32 *x, f32 target, f32 rate, f32 dt)
 {
     f32 d = target - *x;
-    if (fabsf(d) < 0.004f) {
+    if (fabsf(d) < 0.004f || g_cfg.reduced_motion) {
         *x = target;
         return false;
     }
@@ -148,7 +149,7 @@ static const char k_shader_src[] =
     "  float2 p = lerp(i.r.xy - pad, i.r.zw + pad, t);\n"
     "  float2 mid = (i.r.xy + i.r.zw) * 0.5;\n"
     "  o.local = p - mid;\n"
-    "  if (i.p.w > 2.5) { float2 d = o.local * float2(i.uv.z, 1.0); p = mid + float2(d.x * i.uv.x - d.y * i.uv.y, d.x * i.uv.y + d.y * i.uv.x); }\n"
+    "  if (i.p.w > 2.5) p = mid + o.local.x * i.uv.xy + o.local.y * i.uv.zw;\n"
     "  o.cpos = p;\n"
     "  float2 ctr = 0.5 / vp.xy;\n"
     "  float2 q = ctr + (p - ctr) * vp.z;\n"
@@ -519,8 +520,8 @@ static void r_rect_ex(f32 x, f32 y, f32 w, f32 h, u32 color, f32 radius, f32 bor
 
 static void r_rect(f32 x, f32 y, f32 w, f32 h, u32 color, f32 radius) { r_rect_ex(x, y, w, h, color, radius, 0, 0); }
 
-// A rounded rect centered at (cx, cy), squashed horizontally by sx (a tumble in depth) and then rotated by angle.
-static void r_rect_rot(f32 cx, f32 cy, f32 w, f32 h, f32 angle, f32 sx, u32 color, f32 radius)
+// A rounded rect centered at (cx, cy) mapped by the 2x2 matrix m: its local x axis goes to (m[0], m[1]), y to (m[2], m[3]).
+static void r_rect_affine(f32 cx, f32 cy, f32 w, f32 h, const f32 m[4], u32 color, f32 radius)
 {
     color = r_fade(color);
     if ((color >> 24) == 0) return;
@@ -530,15 +531,22 @@ static void r_rect_rot(f32 cx, f32 cy, f32 w, f32 h, f32 angle, f32 sx, u32 colo
     q->y0 = cy - h * 0.5f;
     q->x1 = cx + w * 0.5f;
     q->y1 = cy + h * 0.5f;
-    q->u0 = cosf(angle);
-    q->v0 = sinf(angle);
-    q->u1 = sx;
-    q->v1 = 0;
+    q->u0 = m[0];
+    q->v0 = m[1];
+    q->u1 = m[2];
+    q->v1 = m[3];
     q->color = color;
     q->radius = radius;
     q->border = 0;
     q->soft = 0;
     q->mode = 3;
+}
+
+// A rounded rect centered at (cx, cy), squashed horizontally by sx (a tumble in depth) and then rotated by angle.
+static void r_rect_rot(f32 cx, f32 cy, f32 w, f32 h, f32 angle, f32 sx, u32 color, f32 radius)
+{
+    f32 c = cosf(angle), s = sinf(angle), m[4] = { c * sx, s * sx, -s, c };
+    r_rect_affine(cx, cy, w, h, m, color, radius);
 }
 
 static void r_glyph(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u32 color)

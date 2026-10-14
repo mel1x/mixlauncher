@@ -465,8 +465,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     theme_update();
 
-    g_icon_big = app_icon_create(GetSystemMetrics(SM_CXICON));
-    g_icon_small = app_icon_create(GetSystemMetrics(SM_CXSMICON));
+    // Window icons (tray, taskbar, Alt+Tab) are the logo without its tile; only the exe icon keeps it.
+    g_icon_big = app_icon_create(GetSystemMetrics(SM_CXICON), false);
+    g_icon_small = app_icon_create(GetSystemMetrics(SM_CXSMICON), false);
 
     window_class(WINDOW_CLASS, wndproc, CS_DBLCLKS, g_icon_big, g_icon_small);
 

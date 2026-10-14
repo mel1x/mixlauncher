@@ -751,12 +751,15 @@ static void media_animate(bool tick)
     anim |= approach(&M.text_a, 1.f, 16.f, dt);
     // The marquee keeps the timer going but repaints only while a line moves.
     bool marquee = false, moved = false;
-    if (!g_cfg.media_marquee) M.scroll_t = 0;  // off: long lines stay at their start
+    bool on = g_cfg.media_marquee && !g_cfg.reduced_motion;
+    if (!on) M.scroll_t = 0;  // off: long lines stay at their start
     if (M.visible) {
-        if (g_cfg.media_marquee) M.scroll_t = fmodf(M.scroll_t + dt, 3600.f);
+        // paused: lines freeze where they were
+        bool run = on && media_playing();
+        if (run) M.scroll_t = fmodf(M.scroll_t + dt, 3600.f);
         for (int line = 0; line < 2; line++) {
             f32 range = media_marquee_range(line ? &M.artist : &M.title), off = media_marquee_at(range, M.scroll_t);
-            marquee |= range > 0.f && g_cfg.media_marquee;
+            marquee |= range > 0.f && run;
             moved |= off != M.mq_off[line];
             M.mq_off[line] = off;
         }

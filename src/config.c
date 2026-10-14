@@ -28,6 +28,7 @@ typedef struct Config {
     int   keep_query_seconds;
     bool  update_check;
     bool  animations;
+    bool  reduced_motion;
     bool  taskbar_button;
     bool  taskbar_replace_icon;
     int   taskbar_icon;
@@ -112,6 +113,9 @@ static const char k_default_config_ru[] =
     "; Прокручивать название и исполнителя, если они не помещаются (1/0)\r\n"
     "media_marquee = 1\r\n"
     "\r\n"
+    "; Уменьшение движения (1/0): без анимаций и задержек, всё происходит сразу. Настройки анимаций ниже сохраняются.\r\n"
+    "reduced_motion = 0\r\n"
+    "\r\n"
     "; Анимации открытия и закрытия (1/0). Выключаются и системной настройкой «Эффекты анимации».\r\n"
     "animations = 1\r\n"
     "\r\n"
@@ -191,6 +195,9 @@ static const char k_default_config_en[] =
     "media_hide_paused = 0\r\n"
     "; Scroll the title and artist when they do not fit (1/0)\r\n"
     "media_marquee = 1\r\n"
+    "\r\n"
+    "; Reduced motion (1/0): no animations or delays, everything happens at once. The animation settings below are kept.\r\n"
+    "reduced_motion = 0\r\n"
     "\r\n"
     "; Open/close animations (1/0). Also off when Windows \"Animation effects\" are disabled.\r\n"
     "animations = 1\r\n"
@@ -418,6 +425,7 @@ static bool config_value(const char *k, char *out, size_t cap)
     else if (!strcmp(k, "keep_query_seconds")) snprintf(out, cap, "%d", g_cfg.keep_query_seconds);
     else if (!strcmp(k, "update_check")) snprintf(out, cap, "%d", g_cfg.update_check ? 1 : 0);
     else if (!strcmp(k, "animations")) snprintf(out, cap, "%d", g_cfg.animations ? 1 : 0);
+    else if (!strcmp(k, "reduced_motion")) snprintf(out, cap, "%d", g_cfg.reduced_motion ? 1 : 0);
     else if (!strcmp(k, "taskbar_button")) snprintf(out, cap, "%d", g_cfg.taskbar_button ? 1 : 0);
     else if (!strcmp(k, "taskbar_replace_icon")) snprintf(out, cap, "%d", g_cfg.taskbar_replace_icon ? 1 : 0);
     else if (!strcmp(k, "taskbar_icon")) snprintf(out, cap, "%s", k_tbi_names[CLAMP(g_cfg.taskbar_icon, 0, TBI__COUNT - 1)]);
@@ -487,12 +495,11 @@ static void config_load(void)
     config_path(path);
     char *text = read_file(path, NULL);
     if (!text) {
-        const char *def = g_lang_ru ? k_default_config_ru : k_default_config_en;
-        Buf b = { 0 };
-        buf_put(&b, "\xEF\xBB\xBF", 3);
-        buf_put(&b, def, strlen(def));
-        write_file_atomic(path, b.data, (DWORD)b.len);
-        free(b.data);
+        // First run: reduced motion follows the Windows "Animation effects" setting.
+        BOOL anim = TRUE;
+        SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &anim, 0);
+        g_cfg.reduced_motion = !anim;
+        config_write_all();
         return;
     }
     int old_win_key = -1;
@@ -524,6 +531,7 @@ static void config_load(void)
         else if (!_stricmp(k, "keep_query_seconds")) g_cfg.keep_query_seconds = CLAMP(atoi(v), 0, 24 * 3600);
         else if (!_stricmp(k, "update_check")) g_cfg.update_check = parse_bool(v);
         else if (!_stricmp(k, "animations")) g_cfg.animations = parse_bool(v);
+        else if (!_stricmp(k, "reduced_motion")) g_cfg.reduced_motion = parse_bool(v);
         else if (!_stricmp(k, "taskbar_button")) g_cfg.taskbar_button = parse_bool(v);
         else if (!_stricmp(k, "taskbar_replace_icon")) g_cfg.taskbar_replace_icon = parse_bool(v);
         else if (!_stricmp(k, "taskbar_icon")) {
