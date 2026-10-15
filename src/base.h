@@ -480,6 +480,7 @@ enum {
     WM_APP_MEDIA,
     WM_APP_UPDATE,
     WM_APP_AUTOSTART,
+    WM_APP_PRTSC,
 };
 
 static HWND g_hwnd;

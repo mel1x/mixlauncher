@@ -34,6 +34,7 @@ typedef struct TagHit {
 #define Q_MAX 500
 #define TIMER_CARET 1
 #define TIMER_REHOOK 2
+#define TIMER_PRTSC 4
 
 static struct {
     bool visible;
@@ -47,6 +48,7 @@ static struct {
     int win_x, win_y, slide_dy, slide_y;
     f32 slide_off, slide_v;  // offset from the resting place and its velocity, px
     bool no_focus_restore;
+    int prtsc_ticks;  // PrtSc hand-off (hotkey.c): the foreground is taken back when the screenshot tool is done
     int settings_btn[4], update_btn[4];
     bool settings_hover, press_settings, update_hover, press_update;
     f32 update_hover_t;
@@ -1355,6 +1357,13 @@ static void ui_show(void)
     }
 }
 
+static void prtsc_handoff_end(void)
+{
+    if (!K.prtsc_from) return;
+    K.prtsc_from = NULL;
+    KillTimer(g_hwnd, TIMER_PRTSC);
+}
+
 static void ui_hide(void)
 {
     if (!U.visible || U.closing) return;
@@ -1365,6 +1374,7 @@ static void ui_hide(void)
     KillTimer(g_hwnd, TIMER_CARET);
     bool restore = !U.no_focus_restore;
     U.no_focus_restore = false;
+    if (K.prtsc_from == g_hwnd) prtsc_handoff_end();
     hook_set_visible(false);
     if (restore && !g_pinned && GetForegroundWindow() == g_hwnd && U.prev_fg && IsWindow(U.prev_fg) &&
         IsWindowVisible(U.prev_fg) && !is_shell_window(U.prev_fg))
@@ -1379,6 +1389,48 @@ static void ui_hide(void)
     U.animating = true;
     set_click_through(true);
     ui_invalidate();
+}
+
+static void prtsc_handoff(void)
+{
+    U.prtsc_ticks = 0;
+    SetTimer(g_hwnd, TIMER_PRTSC, 600, NULL);
+}
+
+// A screenshot tool's overlay over our window, even one that has not taken the foreground (yet).
+static bool prtsc_covered(HWND h)
+{
+    RECT r;
+    if (!GetWindowRect(h, &r)) return false;
+    POINT c = { (r.left + r.right) / 2, (r.top + r.bottom) / 2 };
+    HWND top = GetAncestor(WindowFromPoint(c), GA_ROOT);
+    DWORD pid = 0;
+    if (top) GetWindowThreadProcessId(top, &pid);
+    return top && pid != GetCurrentProcessId();
+}
+
+// The tool either never took the foreground or gave it back to the window we handed it to: return it to ours.
+static void prtsc_handoff_tick(void)
+{
+    SetTimer(g_hwnd, TIMER_PRTSC, 250, NULL);
+    HWND from = K.prtsc_from, fg = GetForegroundWindow();
+    DWORD pid = 0;
+    if (fg) GetWindowThreadProcessId(fg, &pid);
+    if (!from || !IsWindow(from) || !IsWindowVisible(from) || (from == g_hwnd && (!U.visible || U.closing)) ||
+        pid == GetCurrentProcessId()) {
+        prtsc_handoff_end();
+        return;
+    }
+    if (fg == K.prtsc_to && !prtsc_covered(from)) {
+        prtsc_handoff_end();
+        force_foreground(from);
+    } else if (++U.prtsc_ticks > 4 * 120) {
+        prtsc_handoff_end();
+        if (from == g_hwnd) {
+            U.no_focus_restore = true;
+            ui_hide();
+        }
+    }
 }
 
 static void ui_toggle(void)

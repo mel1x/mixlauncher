@@ -24,6 +24,9 @@ static struct {
     u32 hook_presses;
     u32 raw_presses;
     u32 reinstalls;
+    bool prtsc_handoff;
+    HWND volatile prtsc_from;
+    HWND prtsc_to;
 } K;
 
 typedef struct KeyTrace {
@@ -94,6 +97,49 @@ static void inject_keys(INPUT *in, int n)
 
 static void watchdog_set(bool on);
 
+static bool own_foreground(void)
+{
+    HWND fg = GetForegroundWindow();
+    DWORD pid = 0;
+    if (fg) GetWindowThreadProcessId(fg, &pid);
+    return pid == GetCurrentProcessId();
+}
+
+static bool window_elevated(DWORD pid)
+{
+    HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid), tok;
+    TOKEN_ELEVATION e = { 0 };
+    DWORD sz = 0;
+    if (!p) return true;
+    if (OpenProcessToken(p, TOKEN_QUERY, &tok)) {
+        GetTokenInformation(tok, TokenElevation, &e, sizeof e, &sz);
+        CloseHandle(tok);
+    }
+    CloseHandle(p);
+    return e.TokenIsElevated != 0;
+}
+
+// The first ordinary window below ours (z-order), down to the desktop. Not the taskbar: while it is in front,
+// PrtSc reaches no hook or hotkey of a screenshot tool either.
+static BOOL CALLBACK prtsc_target_enum(HWND h, LPARAM lp)
+{
+    if (!IsWindowVisible(h) || IsIconic(h) || GetWindow(h, GW_OWNER)) return TRUE;
+    if (GetWindowLongW(h, GWL_EXSTYLE) & (WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)) return TRUE;
+    DWORD cloaked = 0, pid = 0;
+    if (SUCCEEDED(DwmGetWindowAttribute(h, DWMWA_CLOAKED, &cloaked, sizeof cloaked)) && cloaked) return TRUE;
+    GetWindowThreadProcessId(h, &pid);
+    if (!pid || pid == GetCurrentProcessId() || window_elevated(pid)) return TRUE;
+    *(HWND *)lp = h;
+    return FALSE;
+}
+
+static HWND prtsc_target(void)
+{
+    HWND h = NULL;
+    EnumWindows(prtsc_target_enum, (LPARAM)&h);
+    return h ? h : FindWindowW(L"Progman", NULL);
+}
+
 static void post_toggle(void)
 {
     watchdog_set(false);
@@ -131,6 +177,20 @@ static LRESULT CALLBACK ll_keyboard(int code, WPARAM wp, LPARAM lp)
         }
         if (!(k->flags & LLKHF_INJECTED) && b.vk && key_class(vk) == key_class(b.vk)) K.hook_presses++;
         if (K.tap_armed && vk != K.tap_vk) K.tap_armed = false;
+        // Our elevated window in front: Windows holds PrtSc back from the hooks and hotkeys of normal screenshot
+        // tools (Lightshot, Snipaste). Hand the foreground to an ordinary window before the key goes on; a key
+        // sent again from here would not reach them either, since it comes from an elevated process.
+        if (vk == VK_SNAPSHOT && K.prtsc_handoff && own_foreground()) {
+            u8 mods = held_mods();
+            HWND to = !(mods & HK_WIN) && !(hk_vk_match(b.vk, vk) && mods == b.mods) ? prtsc_target() : NULL;
+            if (to) {
+                K.prtsc_from = GetForegroundWindow();
+                K.prtsc_to = to;
+                AllowSetForegroundWindow(ASFW_ANY);  // the tool gets the key while the window is still taking over
+                if (SetForegroundWindow(to)) PostMessageW(g_hwnd, WM_APP_PRTSC, 0, 0);
+                else K.prtsc_from = NULL;
+            }
+        }
         if (!b.vk) goto pass;
         if (bit && hk_vk_match(b.vk, vk)) {
             bool repeat = K.tap_down && vk == K.tap_vk && (GetAsyncKeyState((int)vk) & 0x8000);

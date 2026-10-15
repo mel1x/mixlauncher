@@ -70,10 +70,11 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             GetClassNameW(GetForegroundWindow(), fgc, 64);
             log_msg("activate t=%lu state=%d other=%p fg=%ls", GetTickCount(), LOWORD(wp), (void *)lp, fgc);
         }
-        if (LOWORD(wp) == WA_INACTIVE && U.visible && !U.menu_open && !g_pinned) ui_hide();
+        if (LOWORD(wp) != WA_INACTIVE) prtsc_handoff_end();
+        else if (U.visible && !U.menu_open && !g_pinned && K.prtsc_from != h) ui_hide();
         return 0;
     case WM_ACTIVATEAPP:
-        if (!wp && U.visible && !U.menu_open && !g_pinned) ui_hide();
+        if (!wp && U.visible && !U.menu_open && !g_pinned && K.prtsc_from != h) ui_hide();
         return 0;
     case WM_MOUSEACTIVATE:
         return MA_ACTIVATE;
@@ -144,6 +145,10 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             if (U.app_mode) taskbar_button_remove();
             return 0;
         }
+        if (wp == TIMER_PRTSC) {
+            prtsc_handoff_tick();
+            return 0;
+        }
         if (wp == TIMER_UPDATE) {
             upd_on_timer();
             return 0;
@@ -205,6 +210,9 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         upd_on_message();
         ui_invalidate();
         settings_invalidate();
+        return 0;
+    case WM_APP_PRTSC:
+        prtsc_handoff();
         return 0;
     case WM_APP_CLICK_OUTSIDE:
         if (U.visible && !U.closing && !U.menu_open && !g_pinned) {
@@ -520,6 +528,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     g_ev_own_allowed = g_elevated && !g_pinned;
     ev_start();
     launch_start();
+    K.prtsc_handoff = g_elevated;
     if (!g_pinned) hook_start(g_cfg.hk);
 
     g_wm_taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
