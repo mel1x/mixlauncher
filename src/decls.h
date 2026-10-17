@@ -5,6 +5,7 @@
 static bool tb_hit(POINT pt);
 static void tb_set_enabled(bool on);
 static void tb_icon_changed(void);
+static void tb_set_open(HMONITOR mon);
 static void media_set_enabled(bool on);
 static void media_settings_changed(void);
 static void settings_open(void);

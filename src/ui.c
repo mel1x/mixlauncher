@@ -1271,6 +1271,7 @@ static void ui_show(void)
         set_click_through(false);
         if (!g_pinned) force_foreground(g_hwnd);
         slide_below_taskbar();
+        tb_set_open(U.mon);
         U.caret_on = true;
         SetTimer(g_hwnd, TIMER_CARET, GetCaretBlinkTime(), NULL);
         U.animating = true;
@@ -1311,6 +1312,7 @@ static void ui_show(void)
     }
     if (U.app_mode) taskbar_button_remove();
     slide_below_taskbar();
+    tb_set_open(U.mon);
 
     U.st.all_view = false;
     U.st.fb_hover = U.st.fb_press = -1;
@@ -1382,6 +1384,7 @@ static void ui_hide(void)
     U.no_focus_restore = false;
     if (K.prtsc_from == g_hwnd) prtsc_handoff_end();
     hook_set_visible(false);
+    tb_set_open(NULL);
     if (restore && !g_pinned && GetForegroundWindow() == g_hwnd && U.prev_fg && IsWindow(U.prev_fg) &&
         IsWindowVisible(U.prev_fg) && !is_shell_window(U.prev_fg))
         SetForegroundWindow(U.prev_fg);

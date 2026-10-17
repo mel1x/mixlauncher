@@ -150,6 +150,13 @@ static void ui_mouse_move(int x, int y)
         w10_drag_move();
         return;
     }
+    // the update chip can sit over the Windows 10 tiles or search bar: before their handlers
+    bool hover = in_update_button(x, y);
+    if (hover != U.update_hover) {
+        U.update_hover = hover;
+        U.animating = true;
+        ui_invalidate();
+    }
     if (st_on()) st_mouse_move(x, y);
     if (w10_on() && w10_mouse_move(x, y)) return;
     bool sb_hot = x >= (int)list_x1() - (int)SR(14) && x < (int)list_x1() && y >= U.list_y0 && y < U.list_y1;
@@ -158,15 +165,9 @@ static void ui_mouse_move(int x, int y)
         U.animating = true;
         ui_invalidate();
     }
-    bool hover = in_settings_button(x, y);
+    hover = in_settings_button(x, y);
     if (hover != U.settings_hover) {
         U.settings_hover = hover;
-        U.animating = true;
-        ui_invalidate();
-    }
-    hover = in_update_button(x, y);
-    if (hover != U.update_hover) {
-        U.update_hover = hover;
         U.animating = true;
         ui_invalidate();
     }
@@ -202,6 +203,8 @@ static void ui_mouse_down(int x, int y, bool dbl)
         if (!cm_inside(x, y)) cm_close(true);
         return;
     }
+    U.press_update = in_update_button(x, y);  // before the search bar and the Windows 10 tiles it can sit over
+    if (U.press_update) return;
     if (w10_on() && w10_drag_begin(x, y)) return;
     f32 sy0, sy1;
     search_band(&sy0, &sy1);
@@ -221,8 +224,6 @@ static void ui_mouse_down(int x, int y, bool dbl)
     if (w10_on() && w10_mouse_down(x, y)) return;
     U.press_settings = in_settings_button(x, y);
     if (U.press_settings) return;
-    U.press_update = in_update_button(x, y);
-    if (U.press_update) return;
     int r = row_at(x, y);
     U.press_row = row_selectable(r) ? r : -1;
     if (U.press_row >= 0) {
@@ -259,17 +260,17 @@ static void ui_mouse_up(int x, int y)
         w10_drag_end();
         return;
     }
+    if (U.press_update) {
+        U.press_update = false;
+        if (in_update_button(x, y)) upd_download();
+        ui_invalidate();
+        return;
+    }
     if (st_on() && st_mouse_up(x, y)) return;
     if (w10_on() && w10_mouse_up(x, y)) return;
     if (U.press_settings) {
         U.press_settings = false;
         if (in_settings_button(x, y)) open_settings_from_launcher();
-        return;
-    }
-    if (U.press_update) {
-        U.press_update = false;
-        if (in_update_button(x, y)) upd_download();
-        ui_invalidate();
         return;
     }
     int r = row_at(x, y);

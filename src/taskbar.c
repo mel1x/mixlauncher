@@ -11,8 +11,8 @@ typedef struct TbButton {
     RECT screen;
     int w, h;
     bool hover, press;
-    f32 hover_t, press_t;
-    f64 last_anim;
+    f32 hover_t, press_t, open_t;
+    f64 last_anim, bounce_at;  // when the launcher opened from here: the icon squeezes and springs back
     COLORREF plate, pending;
     bool plate_ok, pending_ok;
     f64 pending_at;
@@ -38,6 +38,7 @@ static struct {
     TbButton b[TB_MAX];
     int n;
     bool light;
+    HMONITOR open_on;  // the launcher is open on this monitor: its button gets the open-window plate
     u32 icon_gen;
 } TB = { .menu_for = 0, .icon_gen = 1 };
 
@@ -375,6 +376,14 @@ static void tb_shape(int style, f32 fx, f32 fy, f32 u, f32 dim, const f32 *fg, f
     }
 }
 
+// How much the icon is squeezed: a damped spring, down to about 0.84 and a little past 1 on the way back, as Start's logo does.
+static f32 tb_bounce(TbButton *b)
+{
+    f32 t = (f32)(time_now() - b->bounce_at);
+    if (!b->bounce_at || t >= 0.6f || g_cfg.reduced_motion) return 0.f;
+    return 0.35f * expf(-9.f * t) * sinf(18.f * t);
+}
+
 static void tb_render(TbButton *b)
 {
     int w = b->w, h = b->h;
@@ -416,7 +425,8 @@ static void tb_render(TbButton *b)
     plate_c[1] = (f32)GetGValue(pc) / 255.f;
     plate_c[2] = (f32)GetBValue(pc) / 255.f;
     f32 hov_a = light ? 0.055f * b->hover_t + 0.03f * b->press_t : 0.075f * b->hover_t - 0.02f * b->press_t;
-    f32 zoom = 1.f - 0.08f * b->press_t, u = logo / 24.f * zoom;
+    hov_a += (light ? 0.04f : 0.06f) * b->open_t * (1.f - 0.5f * b->hover_t);  // like a running app's icon
+    f32 zoom = (1.f - 0.08f * b->press_t) * (1.f - tb_bounce(b)), u = logo / 24.f * zoom;
     f32 dim = (light ? 0.5f : 0.42f) + 0.18f * b->hover_t;
     bool replace = g_cfg.taskbar_replace_icon;
     int style = CLAMP(g_cfg.taskbar_icon, 0, TBI__COUNT - 1);
@@ -476,6 +486,9 @@ static void tb_animate(TbButton *b)
     bool anim = false;
     anim |= approach(&b->hover_t, b->hover || b->press ? 1.f : 0.f, 18.f, dt);
     anim |= approach(&b->press_t, b->press ? 1.f : 0.f, 30.f, dt);
+    bool open = TB.open_on && MonitorFromWindow(b->taskbar, MONITOR_DEFAULTTONEAREST) == TB.open_on;
+    anim |= approach(&b->open_t, open ? 1.f : 0.f, 18.f, dt);
+    anim |= b->bounce_at && now - b->bounce_at < 0.6;
     tb_render(b);
     if (anim) SetTimer(b->wnd, TB_TIMER_ANIM, 15, NULL);
     else KillTimer(b->wnd, TB_TIMER_ANIM);
@@ -643,6 +656,18 @@ static void tb_sync(void)
         if (moved || covered || !IsWindowVisible(b->wnd)) SetWindowPos(b->wnd, HWND_TOP, p.x, p.y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
     tb_publish_hits();
+}
+
+// The launcher opened on a monitor, or closed (NULL).
+static void tb_set_open(HMONITOR mon)
+{
+    TB.open_on = mon;
+    for (int i = 0; i < TB.n; i++) {
+        TbButton *b = &TB.b[i];
+        if (!b->wnd) continue;
+        if (mon && MonitorFromWindow(b->taskbar, MONITOR_DEFAULTTONEAREST) == mon) b->bounce_at = time_now();
+        tb_kick(b);
+    }
 }
 
 static void tb_icon_changed(void)
