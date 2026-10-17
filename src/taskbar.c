@@ -571,6 +571,18 @@ static void tb_publish_hits(void)
     g_tb_hit_count = n;
 }
 
+// Something of the taskbar's own (its XAML island) went above `h`. Our other taskbar
+// windows don't count: raising over each other in turn makes the taskbar flicker.
+static bool tb_covered(HWND h)
+{
+    for (HWND w = GetWindow(h, GW_HWNDPREV); w; w = GetWindow(w, GW_HWNDPREV)) {
+        DWORD pid = 0;
+        GetWindowThreadProcessId(w, &pid);
+        if (pid != GetCurrentProcessId()) return true;
+    }
+    return false;
+}
+
 static void tb_sync(void)
 {
     if (!TB.enabled) return;
@@ -627,7 +639,7 @@ static void tb_sync(void)
         f64 since = time_now() - b->sampled;
         bool resample = moved || since > 5.0 || ((b->pending_ok || !b->plate_ok) && since > 0.3);
         if ((resample && tb_sample(b)) || resized) tb_render(b);
-        bool covered = GetWindow(b->wnd, GW_HWNDPREV) != NULL;
+        bool covered = tb_covered(b->wnd);
         if (moved || covered || !IsWindowVisible(b->wnd)) SetWindowPos(b->wnd, HWND_TOP, p.x, p.y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
     tb_publish_hits();

@@ -5,7 +5,10 @@
 
 #define W10_MIN_W 300.f  // the rail and the apps column, no tiles
 #define W10_H 608.f
-#define W10_RESULTS 330.f  // the results column of the search pane
+#define W10_SEARCH_W 720.f  // the search pane keeps the default width, whatever Start was narrowed to
+#define W10_RESULTS 390.f  // the results column of the search pane
+#define W10_SEARCH_W_2K 900.f  // on a 2K or bigger monitor: wider, the room going to the results
+#define W10_RESULTS_2K 550.f
 #define W10_RAIL 48.f
 #define W10_RAIL_OPEN 256.f
 #define W10_COL 252.f    // the apps column
@@ -23,7 +26,7 @@ static bool w10_on(void) { return g_cfg.style == STYLE_WIN10; }
 
 // The list pane: the apps column, or the results column of the search pane.
 static f32 list_x0(void) { return w10_on() && !U.qlen ? SR(W10_RAIL) : 0; }
-static f32 list_x1(void) { return !w10_on() ? (f32)U.W : U.qlen ? SR(W10_RESULTS) : SR(W10_RAIL + W10_COL); }
+static f32 list_x1(void) { return !w10_on() ? (f32)U.W : U.qlen ? SR(U.w10.wide ? W10_RESULTS_2K : W10_RESULTS) : SR(W10_RAIL + W10_COL); }
 
 static f32 w10_pane_x(void) { return SR(W10_RAIL + W10_COL + 24); }
 
@@ -37,10 +40,29 @@ static int w10_units(void)
 
 static void w10_metrics(void)
 {
-    U.W = (int)SR((f32)CLAMP(g_cfg.start10_width, (int)W10_MIN_W, 4000));
+    f32 search_w = U.w10.wide ? W10_SEARCH_W_2K : W10_SEARCH_W;
+    U.W = (int)SR(U.qlen ? search_w : (f32)CLAMP(g_cfg.start10_width, (int)W10_MIN_W, 4000));
     U.H = (int)SR((f32)CLAMP(g_cfg.start10_height, 420, 2000));
     U.list_y0 = SR(4);
     U.list_y1 = (f32)U.H;
+}
+
+// Typing or clearing the query: switch between the search pane's width and the one Start was resized to.
+static void w10_fit_size(void)
+{
+    int w = U.W, h = U.H;
+    w10_metrics();
+    MONITORINFO mi;
+    mi.cbSize = sizeof mi;
+    GetMonitorInfoW(U.mon, &mi);
+    RECT wa = mi.rcWork;
+    U.W = MIN(U.W, (int)(wa.right - wa.left));
+    U.H = MIN(U.H, (int)(wa.bottom - wa.top));
+    U.list_y1 = (f32)U.H;
+    if (U.W == w && U.H == h) return;
+    SetWindowPos(g_hwnd, NULL, U.win_x, U.win_y + U.slide_y, U.W, U.H, SWP_NOZORDER | SWP_NOACTIVATE);
+    r_resize(U.W, U.H);
+    w10_refresh_tiles();
 }
 
 static void w10_place_rows(void)
@@ -219,7 +241,7 @@ static int w10_edge_at(int x, int y)
 {
     if (U.w10.rail_open || U.cm.open || U.tg.open) return 0;
     int g = (int)SR(6), e = 0;
-    if (x >= U.W - g) e |= EDGE_SIDE;
+    if (x >= U.W - g && !U.qlen) e |= EDGE_SIDE;  // the search pane has a fixed width
     if (w10_bottom_anchored() ? y < g : y >= U.H - g) e |= EDGE_FREE;
     return e;
 }

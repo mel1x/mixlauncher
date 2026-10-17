@@ -170,6 +170,7 @@ static struct {
         int drag;           // resizing by an edge: EDGE_* bits
         POINT drag_pt;
         int drag_w, drag_h, drag_y;
+        bool wide;          // on a monitor 2560 px wide or more: a wider search pane
     } w10;
 
     u32 dpi;
@@ -208,6 +209,7 @@ static void open_settings_from_launcher(void);
 // The Windows 10 style, start10.c
 static bool w10_on(void);
 static void w10_metrics(void);
+static void w10_fit_size(void);
 static void w10_build_home(void);
 static void w10_refresh_tiles(void);
 static void w10_pins_freeze(void);
@@ -843,6 +845,7 @@ static void on_query_changed(void)
 {
     U.armed = NULL;
     cm_close(false);
+    if (w10_on()) w10_fit_size();
     search_apps();
     search_tags();
     request_files();
@@ -1048,6 +1051,8 @@ static void ui_place_window(void)
     }
     RECT wa = mi.rcWork, mr = mi.rcMonitor;
     if (w10_on()) {  // a resized Windows 10 Start still fits the screen
+        U.w10.wide = mr.right - mr.left >= 2560;
+        w10_metrics();  // the search pane's width or the resized one, for the query it opens with
         U.H = MIN(U.H, (int)(wa.bottom - wa.top));
         U.W = MIN(U.W, (int)(wa.right - wa.left));
         U.list_y1 = (f32)U.H;
@@ -1277,6 +1282,16 @@ static void ui_show(void)
     HWND fg = GetForegroundWindow();
     U.prev_fg = fg != g_hwnd ? fg : NULL;
 
+    bool keep = U.qlen && (now - U.hide_time) < (f64)g_cfg.keep_query_seconds;
+    if (!keep) {  // before placing: the Windows 10 style sizes itself by the query
+        U.qlen = 0;
+        U.q[0] = 0;
+        U.caret = U.anchor = 0;
+    } else {
+        U.anchor = 0;
+        U.caret = U.qlen;
+    }
+
     bool was_dark = U.th.dark;
     theme_update();
     if (was_dark != U.th.dark) U.backdrop_ok = backdrop_apply(g_hwnd);
@@ -1297,7 +1312,6 @@ static void ui_show(void)
     if (U.app_mode) taskbar_button_remove();
     slide_below_taskbar();
 
-    bool keep = U.qlen && (now - U.hide_time) < (f64)g_cfg.keep_query_seconds;
     U.st.all_view = false;
     U.st.fb_hover = U.st.fb_press = -1;
     U.st.title_press = false;
@@ -1306,14 +1320,6 @@ static void ui_show(void)
     U.w10.rail_t = 0;
     U.w10.tscroll = U.w10.tscroll_target = 0;
     U.st.title_hover = false;
-    if (!keep) {
-        U.qlen = 0;
-        U.q[0] = 0;
-        U.caret = U.anchor = 0;
-    } else {
-        U.anchor = 0;
-        U.caret = U.qlen;
-    }
     refresh_frecency();
     refresh_empty_view();
     U.q_scroll = 0;
@@ -1654,10 +1660,11 @@ static void draw_row(Row *r, f32 y, bool selected)
     }
     if (r->kind == ROW_INFO) {
         if (U.row_count == 1) {
-            f32 lcy = U.list_y0 + list_height() * 0.5f - SR(6), tw = text_width(FONT_TEXT, fs, r->text, -1);
-            text_draw_icon(0xE721, S(26), (f32)U.W * 0.5f, lcy - SR(20), t->faint);
-            text_draw_fit(FONT_TEXT, fs, floorf(MAX(SR(20), ((f32)U.W - tw) * 0.5f)), floorf(lcy + SR(22) + 0.5f), x1 - SR(20), r->text, -1,
-                          t->dim, false);
+            // centered in the row: the Windows 10 search pane's results column, not the whole window
+            f32 lcy = U.list_y0 + list_height() * 0.5f - SR(6), tw = text_width(FONT_TEXT, fs, r->text, -1), cx = (x0 + x1) * 0.5f;
+            f32 tx = floorf(MAX(x0 + SR(16), cx - tw * 0.5f));
+            text_draw_icon(0xE721, S(26), cx, lcy - SR(20), t->faint);
+            text_draw_fit(FONT_TEXT, fs, tx, floorf(lcy + SR(22) + 0.5f), x1 - SR(16) - tx, r->text, -1, t->dim, false);
             return;
         }
         text_draw_fit(FONT_TEXT, fs, x0 + SR(12), base, x1 - x0 - SR(24), r->text, -1, t->dim, false);

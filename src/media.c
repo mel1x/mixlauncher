@@ -820,7 +820,7 @@ static bool media_place(bool left)
     POINT cp = { cur.left, cur.top };
     ScreenToClient(M.taskbar, &cp);
     bool moved = cp.x != p.x || cp.y != p.y || cur.right - cur.left != M.w || cur.bottom - cur.top != M.h;
-    bool covered = GetWindow(M.wnd, GW_HWNDPREV) != NULL;  // the taskbar's XAML island went above us
+    bool covered = tb_covered(M.wnd);
     bool shown = !IsWindowVisible(M.wnd);
     if (moved || covered || shown) SetWindowPos(M.wnd, HWND_TOP, p.x, p.y, M.w, M.h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     M.x = x;
