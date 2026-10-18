@@ -993,6 +993,7 @@ static UINT monitor_dpi(HMONITOR m)
 static void force_foreground(HWND h)
 {
     if (GetForegroundWindow() == h) return;
+    BringWindowToTop(h);
     SetForegroundWindow(h);
     if (GetForegroundWindow() != h) {
         HWND fg = GetForegroundWindow();
@@ -1194,7 +1195,15 @@ static void slide_below_taskbar(void)
 {
     if (!U.slide || U.app_mode) return;
     HWND tray = taskbar_on_monitor(U.mon);
-    if (tray) SetWindowPos(g_hwnd, tray, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    if (!tray) return;
+    SetWindowPos(g_hwnd, tray, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    // The taskbar itself can sit below regular windows; following it would bury the launcher too.
+    for (HWND w = GetWindow(g_hwnd, GW_HWNDPREV); w; w = GetWindow(w, GW_HWNDPREV)) {
+        if (IsWindowVisible(w) && !(GetWindowLongW(w, GWL_EXSTYLE) & WS_EX_TOPMOST)) {
+            SetWindowPos(g_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            break;
+        }
+    }
 }
 
 // Fullscreen app over the taskbar: open as a regular window so the shell brings the taskbar back.
@@ -1308,7 +1317,12 @@ static void ui_show(void)
     } else {
         ShowWindow(g_hwnd, SW_SHOW);
         force_foreground(g_hwnd);
-        if (GetForegroundWindow() != g_hwnd) log_msg("show: could not take foreground");
+        if (GetForegroundWindow() != g_hwnd) {
+            // Without the foreground a regular (non-topmost) window would open behind everything: stay on top.
+            log_msg("show: could not take foreground");
+            if (U.app_mode) set_app_window_mode(false);
+            SetWindowPos(g_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
     }
     if (U.app_mode) taskbar_button_remove();
     slide_below_taskbar();
