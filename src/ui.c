@@ -1201,6 +1201,7 @@ static void slide_below_taskbar(void)
     for (HWND w = GetWindow(g_hwnd, GW_HWNDPREV); w; w = GetWindow(w, GW_HWNDPREV)) {
         if (IsWindowVisible(w) && !(GetWindowLongW(w, GWL_EXSTYLE) & WS_EX_TOPMOST)) {
             SetWindowPos(g_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            SetWindowPos(tray, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);  // taskbar back over the launcher
             break;
         }
     }
