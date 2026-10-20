@@ -28,10 +28,11 @@ typedef struct TbButton {
 
 static struct {
     bool enabled;
+    bool search;  // clicks on the taskbar's search open the launcher (the hook thread swallows them)
     HANDLE thread, wake;
     SRWLOCK lock;
-    struct { HWND taskbar; RECT r; } found[TB_MAX];
-    int nfound;
+    struct { HWND taskbar; RECT r; } found[TB_MAX], search_found[TB_MAX];
+    int nfound, nsearch;
     volatile LONG menu_for;
     volatile LONG reset;
     volatile f64 fast_until;
@@ -51,6 +52,23 @@ static bool tb_hit(POINT pt)
     for (LONG i = 0; i < n && i < TB_MAX; i++)
         if (PtInRect(&g_tb_hit[i], pt)) return true;
     return false;
+}
+
+// A press on the search of a taskbar (Windows 11: icon, icon and label, box; Windows 10: icon or box) that nothing covers.
+// Called from the mouse hook: no UI Automation here, only the rectangles the taskbar thread found.
+static bool tb_search_hit(POINT pt)
+{
+    if (!TB.search) return false;
+    HWND bar = NULL;
+    AcquireSRWLockShared(&TB.lock);
+    for (int i = 0; i < TB.nsearch; i++)
+        if (PtInRect(&TB.search_found[i].r, pt)) bar = TB.search_found[i].taskbar;
+    ReleaseSRWLockShared(&TB.lock);
+    if (!bar) return false;
+    HWND w = WindowFromPoint(pt);
+    DWORD pid = 0;
+    if (w) GetWindowThreadProcessId(w, &pid);
+    return w && GetAncestor(w, GA_ROOT) == bar && pid != GetCurrentProcessId();
 }
 
 static int tb_taskbars(HWND *out)
@@ -92,47 +110,98 @@ static DWORD WINAPI tb_thread(void *param)
         log_msg("taskbar: UI Automation unavailable");
         return 0;
     }
-    IUIAutomationCondition *cond = NULL;
+    IUIAutomationCondition *cond = NULL, *scond = NULL;
     VARIANT v;
     VariantInit(&v);
     v.vt = VT_BSTR;
     v.bstrVal = SysAllocString(L"StartButton");
     IUIAutomation_CreatePropertyCondition(uia, UIA_AutomationIdPropertyId, v, &cond);
     VariantClear(&v);
+    // Windows 11 calls every kind of its search SearchButton; Windows 10 has a window of its own
+    static const struct { bool cls; const WCHAR *val; } k_search[] = {
+        { false, L"SearchButton" },
+        { false, L"SearchBoxButton" },
+        { true, L"TrayDummySearchControl" },
+    };
+    IUIAutomationCondition *sc[countof(k_search)] = { 0 };
+    int nsc = 0;
+    for (int i = 0; i < (int)countof(k_search); i++) {
+        v.vt = VT_BSTR;
+        v.bstrVal = SysAllocString(k_search[i].val);
+        if (SUCCEEDED(IUIAutomation_CreatePropertyCondition(uia, k_search[i].cls ? UIA_ClassNamePropertyId : UIA_AutomationIdPropertyId, v, &sc[nsc])) && sc[nsc]) nsc++;
+        VariantClear(&v);
+    }
+    if (nsc) IUIAutomation_CreateOrConditionFromNativeArray(uia, sc, nsc, &scond);
+    for (int i = 0; i < nsc; i++) IUIAutomationCondition_Release(sc[i]);
     HWINEVENTHOOK hook = SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE, NULL, tb_winevent, 0, 0,
                                          WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
 
     HWND bars[TB_MAX] = { 0 };
-    IUIAutomationElement *els[TB_MAX] = { 0 };
+    IUIAutomationElement *els[TB_MAX] = { 0 }, *sels[TB_MAX] = { 0 };
     RECT last[TB_MAX];
     int last_n = -1;
     f64 last_post = 0;
-    f64 retry_at = 0;
+    f64 retry_at = 0, sretry_at = 0;
     memset(last, 0, sizeof last);
     for (;;) {
         f64 now = time_now();
         bool fast = now < TB.fast_until;
-        MsgWaitForMultipleObjects(1, &TB.wake, FALSE, !TB.enabled ? INFINITE : fast ? 15 : g_tb_centered ? 500 : 1000, QS_ALLINPUT);
+        bool active = TB.enabled || TB.search;
+        MsgWaitForMultipleObjects(1, &TB.wake, FALSE, !active ? INFINITE : fast ? 15 : g_tb_centered ? 500 : 1000, QS_ALLINPUT);
         MSG msg;
         while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) DispatchMessageW(&msg);
-        if (!TB.enabled) continue;
-        if (!fast) g_tb_centered = tb_read_centered();
         if (InterlockedExchange(&TB.reset, 0)) {
-            for (int i = 0; i < TB_MAX; i++) SAFE_RELEASE(els[i]);
+            for (int i = 0; i < TB_MAX; i++) {
+                SAFE_RELEASE(els[i]);
+                SAFE_RELEASE(sels[i]);
+            }
             memset(bars, 0, sizeof bars);
-            retry_at = 0;
+            retry_at = sretry_at = 0;
             last_n = -1;
         }
+        if (!TB.enabled && !TB.search) continue;
+        if (!fast) g_tb_centered = tb_read_centered();
 
         HWND cur[TB_MAX];
         int n = tb_taskbars(cur);
-        RECT rs[TB_MAX];
-        HWND hs[TB_MAX];
-        int nf = 0;
+        RECT rs[TB_MAX], srs[TB_MAX];
+        HWND hs[TB_MAX], shs[TB_MAX];
+        int nf = 0, ns = 0;
         for (int i = 0; i < n; i++) {
             if (bars[i] != cur[i]) {
                 SAFE_RELEASE(els[i]);
+                SAFE_RELEASE(sels[i]);
                 bars[i] = cur[i];
+            }
+            if (TB.search) {
+                if (!sels[i] && scond && time_now() >= sretry_at) {
+                    IUIAutomationElement *root = NULL;
+                    if (SUCCEEDED(IUIAutomation_ElementFromHandle(uia, cur[i], &root)) && root) {
+                        IUIAutomationElement_FindFirst(root, TreeScope_Descendants, scond, &sels[i]);
+                        IUIAutomationElement_Release(root);
+                    }
+                    if (!sels[i]) sretry_at = time_now() + 3.0;  // search turned off in the taskbar settings
+                }
+                RECT r;
+                BOOL off = FALSE;
+                UIA_HWND sh = NULL;
+                if (sels[i] && SUCCEEDED(IUIAutomationElement_get_CurrentBoundingRectangle(sels[i], &r))) {
+                    IUIAutomationElement_get_CurrentIsOffscreen(sels[i], &off);
+                    IUIAutomationElement_get_CurrentNativeWindowHandle(sels[i], &sh);
+                    if (sh && !IsWindowVisible((HWND)sh)) off = TRUE;
+                    if (!off && r.right > r.left && r.bottom > r.top) {
+                        shs[ns] = cur[i];
+                        srs[ns++] = r;
+                    }
+                } else if (sels[i]) {
+                    SAFE_RELEASE(sels[i]);
+                }
+            } else {
+                SAFE_RELEASE(sels[i]);
+            }
+            if (!TB.enabled) {
+                SAFE_RELEASE(els[i]);
+                continue;
             }
             if (!els[i] && cond && time_now() >= retry_at) {
                 IUIAutomationElement *root = NULL;
@@ -154,8 +223,16 @@ static DWORD WINAPI tb_thread(void *param)
         }
         for (int i = n; i < TB_MAX; i++) {
             SAFE_RELEASE(els[i]);
+            SAFE_RELEASE(sels[i]);
             bars[i] = NULL;
         }
+        AcquireSRWLockExclusive(&TB.lock);
+        TB.nsearch = ns;
+        for (int i = 0; i < ns; i++) {
+            TB.search_found[i].taskbar = shs[i];
+            TB.search_found[i].r = srs[i];
+        }
+        ReleaseSRWLockExclusive(&TB.lock);
 
         LONG m = InterlockedExchange(&TB.menu_for, 0);
         if (m > 0) {
@@ -171,6 +248,7 @@ static DWORD WINAPI tb_thread(void *param)
                 }
         }
 
+        if (!TB.enabled) continue;
         bool changed = nf != last_n;
         for (int i = 0; i < nf && !changed; i++)
             if (memcmp(&rs[i], &last[i], sizeof(RECT))) changed = true;
@@ -693,9 +771,37 @@ static void tb_explorer_restarted(void)
     for (int i = 0; i < TB.n; i++) tb_destroy(&TB.b[i]);
     TB.n = 0;
     tb_publish_hits();
+    AcquireSRWLockExclusive(&TB.lock);
+    TB.nsearch = 0;
+    ReleaseSRWLockExclusive(&TB.lock);
     InterlockedExchange(&TB.reset, 1);
     TB.fast_until = time_now() + 3.0;
     if (TB.wake) SetEvent(TB.wake);
+}
+
+static void tb_thread_start(void)
+{
+    if (!TB.thread) {
+        InitializeSRWLock(&TB.lock);
+        TB.wake = CreateEventW(NULL, FALSE, FALSE, NULL);
+        TB.thread = CreateThread(NULL, 0, tb_thread, NULL, 0, NULL);
+    }
+    InterlockedExchange(&TB.reset, 1);
+    SetEvent(TB.wake);
+}
+
+static void tb_set_search(bool on)
+{
+    TB.search = on;
+    hook_search_clicks(on);
+    if (on) {
+        tb_thread_start();
+    } else {
+        AcquireSRWLockExclusive(&TB.lock);
+        TB.nsearch = 0;
+        ReleaseSRWLockExclusive(&TB.lock);
+        if (TB.wake) SetEvent(TB.wake);
+    }
 }
 
 static void tb_set_enabled(bool on)
@@ -704,13 +810,7 @@ static void tb_set_enabled(bool on)
     if (on) {
         window_class(TB_CLASS, tb_wndproc, CS_DBLCLKS, NULL, NULL);
         TB.light = taskbar_light();
-        if (!TB.thread) {
-            InitializeSRWLock(&TB.lock);
-            TB.wake = CreateEventW(NULL, FALSE, FALSE, NULL);
-            TB.thread = CreateThread(NULL, 0, tb_thread, NULL, 0, NULL);
-        }
-        InterlockedExchange(&TB.reset, 1);
-        SetEvent(TB.wake);
+        tb_thread_start();
     } else {
         for (int i = 0; i < TB.n; i++) tb_destroy(&TB.b[i]);
         TB.n = 0;

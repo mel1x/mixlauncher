@@ -663,8 +663,11 @@ static void st_draw_footer(void)
         const WCHAR *ul = upd_label(ub, countof(ub));
         int st = upd_state();
         bool busy = st == UPD_DOWNLOADING || st == UPD_INSTALLING;
-        f32 lfs = S(12.5f), ulw = text_width(FONT_TEXT, lfs, ul, -1), ux = (f32)U.st.fb[FB_ACCOUNT][2] + SR(8);
+        f32 lfs = S(12.5f), ulw = text_width(FONT_TEXT, lfs, ul, -1);
         f32 uw = floorf(SR(8) + SR(16) + SR(7) + ulw + SR(10)), uh = SR(28), uy = floorf(cy - uh * 0.5f);
+        // centered in the window, unless a long account name or the buttons on the right are in the way
+        f32 lo = (f32)U.st.fb[FB_ACCOUNT][2] + SR(8), hi = (f32)U.st.fb[FB_DOWNLOADS][0] - SR(8) - uw;
+        f32 ux = floorf(CLAMP(((f32)U.W - uw) * 0.5f, lo, MAX(lo, hi)));
         f32 hov = U.update_hover_t * (busy ? 0.f : 1.f);
         r_rect(ux, uy, uw, uh, color_alpha(t->accent, 0.16f + 0.10f * hov), SR(4));
         if (st == UPD_DOWNLOADING) {

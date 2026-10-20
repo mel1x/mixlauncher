@@ -3,7 +3,9 @@
 // Functions called from modules included before the one that defines them (see the include order in main.c).
 
 static bool tb_hit(POINT pt);
+static bool tb_search_hit(POINT pt);
 static void tb_set_enabled(bool on);
+static void tb_set_search(bool on);
 static void tb_icon_changed(void);
 static void tb_set_open(HMONITOR mon);
 static void media_set_enabled(bool on);

@@ -5,7 +5,7 @@ enum {
     SID_DATADIR, SID_ADMIN, SID_EVERYTHING, SID_ABOUT,
     SID_ASPEED, SID_AOPEN, SID_ACLOSE, SID_ASCALE, SID_ACASCADE, SID_AROW, SID_ASTAGGER, SID_ASELECT, SID_ASCROLL, SID_AMENU,
     SID_APAGE, SID_APREVIEW, SID_ARESET, SID_TASKBAR, SID_TBREPLACE, SID_TBICON, SID_TBFILE, SID_MEDIA, SID_MEDIAPOS, SID_MEDIACTL, SID_MEDIAHIDE, SID_MEDIASCROLL, SID_LANG,
-    SID_STYLE, SID_MATCHHL, SID_UPDCHECK, SID_UPDNOW, SID_REDUCED, SID_RMGOTO, SID_POSITION, SID_STARTPOS, SID__COUNT
+    SID_STYLE, SID_MATCHHL, SID_UPDCHECK, SID_UPDNOW, SID_REDUCED, SID_RMGOTO, SID_POSITION, SID_STARTPOS, SID_TBSEARCH, SID__COUNT
 };
 enum { PG_GENERAL, PG_TASKBAR, PG_APPEARANCE, PG_ANIM, PG_SEARCH, PG_ADVANCED, PG_ABOUT, PG__COUNT };
 
@@ -68,6 +68,10 @@ static const SItem k_sitems[] = {
     { .page = PG_TASKBAR, .kind = SK_BUTTON, .id = SID_TBFILE, .dep = SID_TBICON, .dep_val = TBI_CUSTOM, .title = { L"Свой значок", L"Custom icon" },
       .desc = { L"PNG, ICO или JPG. Лучше квадратный, от 48×48, с прозрачным фоном", L"PNG, ICO or JPG. Square, 48×48 or larger, with a transparent background works best" },
       .opt = { { L"Выбрать…", L"Choose…" } }, .glyph = 0xE8E5 },
+    { .page = PG_TASKBAR, .kind = SK_TOGGLE, .id = SID_TBSEARCH, .group = { L"Поиск", L"Search" },
+      .title = { L"Открывать поиск лаунчера по бейджу", L"Taskbar search opens the launcher" },
+      .desc = { L"Клик по поиску на панели задач Windows 10 и 11 - значку, значку с надписью или полю - открывает лаунчер вместо поиска Windows",
+                L"Clicking the search on the Windows 10 and 11 taskbar - an icon, an icon with a label or a box - opens the launcher instead of Windows search" } },
     { .page = PG_TASKBAR, .kind = SK_TOGGLE, .id = SID_MEDIA, .group = { L"Сейчас играет", L"Now playing" },
       .title = { L"Медиа на панели задач", L"Media on the taskbar" },
       .desc = { L"Обложка, название и исполнитель из любого плеера: Spotify, браузера, Медиаплеера. Клик открывает плеер",
@@ -371,6 +375,7 @@ static int sval_applied(int id)
     case SID_TASKBAR: return g_cfg.taskbar_button;
     case SID_TBREPLACE: return g_cfg.taskbar_replace_icon;
     case SID_TBICON: return g_cfg.taskbar_icon;
+    case SID_TBSEARCH: return g_cfg.taskbar_search;
     case SID_MEDIA: return g_cfg.media_widget;
     case SID_MEDIAPOS: return g_cfg.media_position;
     case SID_MEDIACTL: return g_cfg.media_controls;
@@ -629,6 +634,11 @@ static void sapply(const SItem *it, int v)
         g_cfg.taskbar_replace_icon = v;
         config_set("taskbar_replace_icon", v ? "1" : "0");
         tb_icon_changed();
+        break;
+    case SID_TBSEARCH:
+        g_cfg.taskbar_search = v;
+        config_set("taskbar_search", v ? "1" : "0");
+        tb_set_search(v != 0);
         break;
     case SID_MEDIA:
         g_cfg.media_widget = v;

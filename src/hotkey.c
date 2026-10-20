@@ -3,6 +3,7 @@
 #define WM_HOOK_MOUSE (WM_APP + 102)
 #define WM_HOOK_WATCHDOG (WM_APP + 104)
 #define WM_HOOK_VISIBLE (WM_APP + 105)
+#define WM_HOOK_SEARCH (WM_APP + 106)
 #define ML_INJECT_MAGIC ((ULONG_PTR)0x4D4C4E43u)
 
 static struct {
@@ -12,6 +13,8 @@ static struct {
     bool watchdog_on;
     volatile LONG bind;
     volatile LONG ui_visible;
+    volatile LONG search_clicks;  // the taskbar's search opens the launcher
+    bool swallow_lup;
     HWND volatile capture;
     bool tap_down;
     bool tap_armed;
@@ -238,6 +241,16 @@ static LRESULT CALLBACK ll_mouse(int code, WPARAM wp, LPARAM lp)
 {
     if (code == HC_ACTION && wp != WM_MOUSEMOVE) {
         if (K.tap_down) K.tap_armed = false;
+        // A press on the taskbar's search toggles the launcher instead; its release goes nowhere either.
+        if (wp == WM_LBUTTONUP && K.swallow_lup) {
+            K.swallow_lup = false;
+            return 1;
+        }
+        if (wp == WM_LBUTTONDOWN && K.search_clicks && tb_search_hit(((const MSLLHOOKSTRUCT *)lp)->pt)) {
+            K.swallow_lup = true;
+            post_toggle();
+            return 1;
+        }
         bool press = wp == WM_LBUTTONDOWN || wp == WM_RBUTTONDOWN || wp == WM_MBUTTONDOWN || wp == WM_XBUTTONDOWN;
         if (press && K.ui_visible) {
             const MSLLHOOKSTRUCT *m = (const MSLLHOOKSTRUCT *)lp;
@@ -250,7 +263,7 @@ static LRESULT CALLBACK ll_mouse(int code, WPARAM wp, LPARAM lp)
 
 static void mouse_hook_update(void)
 {
-    bool want = K.tap_down || K.ui_visible;
+    bool want = K.tap_down || K.ui_visible || K.search_clicks || K.swallow_lup;
     if (want && !K.mouse_hook) K.mouse_hook = SetWindowsHookExW(WH_MOUSE_LL, ll_mouse, GetModuleHandleW(NULL), 0);
     if (!want && K.mouse_hook) {
         UnhookWindowsHookEx(K.mouse_hook);
@@ -382,6 +395,10 @@ static DWORD WINAPI hook_thread(void *param)
             InterlockedExchange(&K.ui_visible, msg.wParam ? 1 : 0);
             mouse_hook_update();
             break;
+        case WM_HOOK_SEARCH:
+            InterlockedExchange(&K.search_clicks, msg.wParam ? 1 : 0);
+            mouse_hook_update();
+            break;
         case WM_TIMER:
             if (K.fallback_timer && msg.wParam == K.fallback_timer) {
                 KillTimer(NULL, K.fallback_timer);
@@ -394,6 +411,11 @@ static DWORD WINAPI hook_thread(void *param)
             }
             if (!K.tap_down) {
                 hook_install(false);
+                // a hook that once ran too long is dropped silently: the search clicks keep theirs for good
+                if (K.mouse_hook && K.search_clicks && !K.swallow_lup) {
+                    UnhookWindowsHookEx(K.mouse_hook);
+                    K.mouse_hook = NULL;
+                }
                 mouse_hook_update();
             }
             break;
@@ -456,6 +478,11 @@ static void hook_watchdog_sync(void)
 static void hook_set_visible(bool visible)
 {
     if (K.tid) PostThreadMessageW(K.tid, WM_HOOK_VISIBLE, visible ? 1 : 0, 0);
+}
+
+static void hook_search_clicks(bool on)
+{
+    if (K.tid) PostThreadMessageW(K.tid, WM_HOOK_SEARCH, on ? 1 : 0, 0);
 }
 
 static bool hotkey_is_win_tap(void) { return vk_mod_bit(g_cfg.hk.vk) == HK_WIN && !K.capture; }

@@ -540,6 +540,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     window_icons(g_hwnd);  // on the taskbar over a fullscreen app (app mode)
     if (!g_pinned) tray_add();
     if (g_cfg.taskbar_button && !g_pinned) tb_set_enabled(true);
+    if (g_cfg.taskbar_search && !g_pinned) tb_set_search(true);
     if (g_cfg.media_widget && !g_pinned) media_set_enabled(true);
     elevation_housekeeping_start();
     upd_init(opt_update_as);

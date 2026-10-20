@@ -41,6 +41,7 @@ typedef struct Config {
     bool  taskbar_replace_icon;
     int   taskbar_icon;
     WCHAR taskbar_icon_path[MAX_PATH];
+    bool  taskbar_search;
     bool  media_widget;
     int   media_position;
     bool  media_controls;
@@ -120,6 +121,8 @@ static const char k_default_config_ru[] =
     "; Её значок: diamond (ромб) | grid (сетка) | lines (строки) | custom (свой файл PNG/ICO/JPG из taskbar_icon_path)\r\n"
     "taskbar_icon = diamond\r\n"
     "taskbar_icon_path =\r\n"
+    "; Клик по поиску на панели задач Windows 10/11 открывает лаунчер (1/0)\r\n"
+    "taskbar_search = 0\r\n"
     "\r\n"
     "; «Сейчас играет» на панели задач: обложка, название и кнопки управления музыкой и видео (1/0)\r\n"
     "media_widget = 1\r\n"
@@ -206,6 +209,8 @@ static const char k_default_config_en[] =
     "; Its icon: diamond | grid | lines | custom (a PNG/ICO/JPG file from taskbar_icon_path)\r\n"
     "taskbar_icon = diamond\r\n"
     "taskbar_icon_path =\r\n"
+    "; Clicking the search on the Windows 10/11 taskbar opens the launcher (1/0)\r\n"
+    "taskbar_search = 0\r\n"
     "\r\n"
     "; Now playing on the taskbar: cover, title and playback buttons for music and video (1/0)\r\n"
     "media_widget = 1\r\n"
@@ -456,6 +461,7 @@ static bool config_value(const char *k, char *out, size_t cap)
     else if (!strcmp(k, "taskbar_replace_icon")) snprintf(out, cap, "%d", g_cfg.taskbar_replace_icon ? 1 : 0);
     else if (!strcmp(k, "taskbar_icon")) snprintf(out, cap, "%s", k_tbi_names[CLAMP(g_cfg.taskbar_icon, 0, TBI__COUNT - 1)]);
     else if (!strcmp(k, "taskbar_icon_path")) w_to_utf8(g_cfg.taskbar_icon_path, -1, out, (int)cap);
+    else if (!strcmp(k, "taskbar_search")) snprintf(out, cap, "%d", g_cfg.taskbar_search ? 1 : 0);
     else if (!strcmp(k, "media_widget")) snprintf(out, cap, "%d", g_cfg.media_widget ? 1 : 0);
     else if (!strcmp(k, "media_position")) snprintf(out, cap, "%s", g_cfg.media_position ? "right" : "left");
     else if (!strcmp(k, "media_controls")) snprintf(out, cap, "%d", g_cfg.media_controls ? 1 : 0);
@@ -571,6 +577,7 @@ static void config_load(void)
             for (int i = 0; i < TBI__COUNT; i++)
                 if (!_stricmp(v, k_tbi_names[i])) g_cfg.taskbar_icon = i;
         } else if (!_stricmp(k, "taskbar_icon_path")) utf8_to_w(v, -1, g_cfg.taskbar_icon_path, countof(g_cfg.taskbar_icon_path));
+        else if (!_stricmp(k, "taskbar_search")) g_cfg.taskbar_search = parse_bool(v);
         else if (!_stricmp(k, "media_widget")) g_cfg.media_widget = parse_bool(v);
         else if (!_stricmp(k, "media_position")) g_cfg.media_position = !_stricmp(v, "right") ? 1 : 0;
         else if (!_stricmp(k, "media_controls")) g_cfg.media_controls = parse_bool(v);
