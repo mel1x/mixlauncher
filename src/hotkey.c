@@ -149,6 +149,12 @@ static void post_toggle(void)
     PostMessageW(g_hwnd, WM_APP_TOGGLE, 0, 0);
 }
 
+static void post_search(void)
+{
+    watchdog_set(false);
+    PostMessageW(g_hwnd, WM_APP_SEARCH, 0, 0);
+}
+
 static LRESULT CALLBACK ll_keyboard(int code, WPARAM wp, LPARAM lp)
 {
     if (code != HC_ACTION) return CallNextHookEx(K.hook, code, wp, lp);
@@ -248,7 +254,7 @@ static LRESULT CALLBACK ll_mouse(int code, WPARAM wp, LPARAM lp)
         }
         if (wp == WM_LBUTTONDOWN && K.search_clicks && tb_search_hit(((const MSLLHOOKSTRUCT *)lp)->pt)) {
             K.swallow_lup = true;
-            post_toggle();
+            post_search();
             return 1;
         }
         bool press = wp == WM_LBUTTONDOWN || wp == WM_RBUTTONDOWN || wp == WM_MBUTTONDOWN || wp == WM_XBUTTONDOWN;

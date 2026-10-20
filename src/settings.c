@@ -64,7 +64,7 @@ static const SItem k_sitems[] = {
       .desc = { L"Наш значок вместо логотипа Windows. Выключено - кнопка выглядит как обычно",
                 L"Our icon instead of the Windows logo. Off keeps the button looking as usual" } },
     { .page = PG_TASKBAR, .kind = SK_CHOICE, .id = SID_TBICON, .dep = SID_TBREPLACE, .dep_val = 1, .title = { L"Значок кнопки", L"Button icon" },
-      .opt = { { L"Ромб", L"Diamond" }, { L"Сетка", L"Grid" }, { L"Строки", L"Lines" }, { L"Свой", L"Custom" } } },
+      .opt = { { L"Ромб", L"Diamond" }, { L"Сетка", L"Grid" }, { L"Лепестки", L"Petals" }, { L"Слои", L"Layers" }, { L"Точки", L"Dots" }, { L"Свой", L"Custom" } } },
     { .page = PG_TASKBAR, .kind = SK_BUTTON, .id = SID_TBFILE, .dep = SID_TBICON, .dep_val = TBI_CUSTOM, .title = { L"Свой значок", L"Custom icon" },
       .desc = { L"PNG, ICO или JPG. Лучше квадратный, от 48×48, с прозрачным фоном", L"PNG, ICO or JPG. Square, 48×48 or larger, with a transparent background works best" },
       .opt = { { L"Выбрать…", L"Choose…" } }, .glyph = 0xE8E5 },

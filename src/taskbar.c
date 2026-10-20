@@ -435,13 +435,31 @@ static void tb_shape(int style, f32 fx, f32 fy, f32 u, f32 dim, const f32 *fg, f
             f32 m = CLAMP(0.5f - sd_box(fx - sx * off, fy - sy * off, t, t, 1.6f * u), 0.f, 1.f);
             if (m > 0.f) px_over(c, a, fg, m * (d == 0 ? 1.f : dim));
         }
-    } else if (style == TBI_LINES) {
-        f32 m = CLAMP(0.5f - (fabsf(sd_box(fx, fy + 5.2f * u, 9.5f * u, 3.1f * u, 3.1f * u)) - 0.8f * u), 0.f, 1.f);
+    } else if (style == TBI_PETALS) {
+        // four quarter discs around the center, the top left one bright
+        f32 g = 1.2f * u, rad = 9.3f * u;
+        for (int d = 0; d < 4; d++) {
+            f32 sx = (d & 1) ? 1.f : -1.f, sy = (d & 2) ? 1.f : -1.f;
+            f32 qx = (fx - sx * g) * sx, qy = (fy - sy * g) * sy;
+            f32 sd = MAX(sqrtf(qx * qx + qy * qy) - rad, MAX(-qx, -qy));
+            f32 m = CLAMP(0.5f - sd, 0.f, 1.f);
+            if (m > 0.f) px_over(c, a, fg, m * (d == 0 ? 1.f : dim));
+        }
+    } else if (style == TBI_LAYERS) {
+        // a card behind another, the front one bright
+        f32 half = 7.1f * u, off = 3.4f * u, rad = 3.2f * u;
+        f32 m = CLAMP(0.5f - sd_box(fx + off, fy + off, half, half, rad), 0.f, 1.f);
+        if (m > 0.f) px_over(c, a, fg, m * dim);
+        m = CLAMP(0.5f - sd_box(fx - off, fy - off, half, half, rad), 0.f, 1.f);
         if (m > 0.f) px_over(c, a, fg, m);
-        m = CLAMP(0.5f - sd_box(fx + 1.5f * u, fy - 1.8f * u, 8.f * u, 1.f * u, 1.f * u), 0.f, 1.f);
-        if (m > 0.f) px_over(c, a, fg, m * (dim + 0.13f));
-        m = CLAMP(0.5f - sd_box(fx + 3.5f * u, fy - 6.f * u, 6.f * u, 1.f * u, 1.f * u), 0.f, 1.f);
-        if (m > 0.f) px_over(c, a, fg, m * (dim - 0.07f));
+    } else if (style == TBI_DOTS) {
+        // nine dots, the middle one bright
+        f32 step = 8.f * u, rad = 2.6f * u;
+        for (int d = 0; d < 9; d++) {
+            f32 qx = fx - (f32)(d % 3 - 1) * step, qy = fy - (f32)(d / 3 - 1) * step;
+            f32 m = CLAMP(0.5f - (sqrtf(qx * qx + qy * qy) - rad), 0.f, 1.f);
+            if (m > 0.f) px_over(c, a, fg, m * (d == 4 ? 1.f : dim));
+        }
     } else {
         static const f32 k_dots[4][2] = { { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } };
         f32 half = 3.3f * u, rad = 1.2f * u, off = 6.5f * u;

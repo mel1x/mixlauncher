@@ -185,6 +185,9 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_APP_SHOW:
         ui_show();
         return 0;
+    case WM_APP_SEARCH:
+        ui_search_clicked();
+        return 0;
     case WM_APP_APPS_READY:
         on_apps_ready((AppList *)lp);
         return 0;

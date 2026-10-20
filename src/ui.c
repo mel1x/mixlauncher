@@ -56,6 +56,7 @@ static struct {
 
     WCHAR q[Q_MAX + 1];
     int qlen, caret, anchor;
+    bool search_mode, want_search;  // the Start styles opened from the taskbar's search: results even with no query
     f32 q_scroll;
     bool caret_on;
     bool text_drag;
@@ -182,6 +183,9 @@ static struct {
     f64 last_reindex;
 } U;
 
+// Showing results: a query is typed, or the search was opened empty.
+static bool q_active(void) { return U.qlen || U.search_mode; }
+
 static bool g_pinned;
 static bool g_other_monitor;
 
@@ -219,6 +223,11 @@ static void w10_draw_overlay(void);
 static bool w10_animate(f32 dt);
 static f32 list_x0(void);
 static f32 list_x1(void);
+static int w10_act_at(int x, int y);
+static void w10_act_run(int i);
+static void w10_draw_preview(void);
+static bool st_search(void);
+static void st_place_rows(void);
 
 static bool tag_hit_has(const WCHAR *full);
 
@@ -330,7 +339,7 @@ static bool backdrop_apply(HWND h)
     return mode == BACKDROP_BLUR && ok;
 }
 
-#define ROW_H (LS()->row_h)
+#define ROW_H (st_on() && q_active() ? 56.f : LS()->row_h)  // the Windows 11 search: room for the icon plates
 #define HEADER_H (LS()->header_h)
 #define LIST_PAD 6.f
 #define ICON_LOGICAL (LS()->icon)
@@ -440,10 +449,12 @@ static void rebuild_rows(bool keep_sel)
     U.row_count = 0;
     U.files_end_y = -1;
     U.content_h = SR(LIST_PAD);
-    if (U.qlen == 0 && st_on()) {
+    if (!q_active() && st_on()) {
         st_build_home();
-    } else if (U.qlen == 0 && w10_on()) {
+    } else if (!q_active() && w10_on()) {
         w10_build_home();
+    } else if (U.qlen == 0 && U.search_mode) {
+        row_info(TR("Введите запрос", "Type to search"));
     } else if (U.qlen == 0) {
         if (!U.apps) row_info(TR("Индексирую приложения…", "Indexing applications…"));
         if (U.frequent_count) {
@@ -494,6 +505,7 @@ static void rebuild_rows(bool keep_sel)
     }
     U.content_h += SR(LIST_PAD);
     if (w10_on()) w10_place_rows();
+    else if (st_search()) st_place_rows();
 
     if (keep_sel && row_selectable(old)) U.sel = old;
     else if (keep_sel && old >= U.row_count) U.sel = first_selectable(U.row_count - 1, -1);
@@ -1293,7 +1305,9 @@ static void ui_show(void)
     HWND fg = GetForegroundWindow();
     U.prev_fg = fg != g_hwnd ? fg : NULL;
 
-    bool keep = U.qlen && (now - U.hide_time) < (f64)g_cfg.keep_query_seconds;
+    U.search_mode = U.want_search && (st_on() || w10_on());
+    U.want_search = false;
+    bool keep = U.qlen && !U.search_mode && (now - U.hide_time) < (f64)g_cfg.keep_query_seconds;
     if (!keep) {  // before placing: the Windows 10 style sizes itself by the query
         U.qlen = 0;
         U.q[0] = 0;
@@ -1457,9 +1471,39 @@ static void prtsc_handoff_tick(void)
     }
 }
 
+// The Start styles between their home and an empty search, without closing.
+static void ui_set_search_mode(bool on)
+{
+    U.search_mode = on;
+    U.st.all_view = false;
+    if (U.qlen) edit_replace(0, U.qlen, L"", 0);
+    else on_query_changed();
+    ui_invalidate();
+}
+
+static bool ui_empty_search(void) { return U.search_mode && !U.qlen; }
+
+// From the taskbar's search: the Start styles open straight on an empty search, or switch to it while open.
+// Another click on an empty search closes it, like the other styles.
+static void ui_search_clicked(void)
+{
+    bool start = st_on() || w10_on();
+    if (U.visible && !U.closing) {
+        if (start && !ui_empty_search()) ui_set_search_mode(true);
+        else ui_hide();
+        return;
+    }
+    U.want_search = true;
+    if (U.visible && U.closing && start && !ui_empty_search()) ui_set_search_mode(true);
+    ui_show();
+    U.want_search = false;
+}
+
 static void ui_toggle(void)
 {
-    if (U.visible && !U.closing) ui_hide();
+    // Win on an empty search goes to the launcher's home instead of closing it
+    if (U.visible && !U.closing && ui_empty_search() && (st_on() || w10_on())) ui_set_search_mode(false);
+    else if (U.visible && !U.closing) ui_hide();
     else ui_show();
 }
 
@@ -1652,6 +1696,11 @@ static void draw_row(Row *r, f32 y, bool selected)
     const LStyle *ls = LS();
     f32 x0 = r->x, x1 = r->x + r->w;
     if (r->kind == ROW_HEADER) {
+        if (st_search()) {
+            f32 fs = S(14);
+            text_draw(FONT_TEXT_SEMIBOLD, fs, x0 + SR(8), y + r->h - SR(10), r->text, -1, t->text);
+            return;
+        }
         f32 fs = S(11.5f);
         text_draw(FONT_TEXT_SEMIBOLD, fs, x0 + SR(12), y + r->h - SR(10), r->text, -1, color_mix(t->faint, t->dim, 0.6f));
         return;
@@ -1695,12 +1744,26 @@ static void draw_row(Row *r, f32 y, bool selected)
     f32 sub_fs = S(12.5f);
     f32 sub_base = floorf(cy + font_cap_height(FONT_TEXT, sub_fs) * 0.5f + 0.5f);
     f32 uv[4];
+    // the Windows 11 search: every icon on a square plate, the name alone (the pane on the right tells the rest)
+    bool plate = st_search();
+    if (plate) {
+        f32 pz = SR(40), px = x0 + SR(8), py = floorf(cy - pz * 0.5f + 0.5f);
+        bool armed = r->kind == ROW_APP && U.armed == r->app;
+        r_rect(px, py, pz, pz, armed ? color_alpha(t->danger, 0.16f) : t->dark ? RGBA(255, 255, 255, 14) : RGBA(0, 0, 0, 10), SR(4));
+        r_rect_ex(px, py, pz, pz, t->dark ? RGBA(255, 255, 255, 12) : RGBA(0, 0, 0, 14), SR(4), 1.f, 0);
+        isz = SR(24);
+        ix = floorf(px + (pz - isz) * 0.5f);
+        iy = floorf(py + (pz - isz) * 0.5f);
+        tx = px + pz + SR(12);
+    }
 
     if (r->kind == ROW_APP) {
         App *a = r->app;
         u32 sub_col = t->faint;
         const WCHAR *sub = row_note(r, &sub_col);
-        if (a->kind == APP_CMD) {
+        if (a->kind == APP_CMD && plate) {
+            text_draw_icon(a->glyph, S(15), ix + isz * 0.5f, iy + isz * 0.5f, U.armed == a ? t->danger : t->text);
+        } else if (a->kind == APP_CMD) {
             bool armed = U.armed == a;
             r_rect(ix, iy, isz, isz, armed ? color_alpha(t->danger, 0.16f) : t->tile, SR(ls->tile_r));
             r_rect_ex(ix, iy, isz, isz, t->key_border, SR(ls->tile_r), 1.f, 0);
@@ -1711,13 +1774,13 @@ static void draw_row(Row *r, f32 y, bool selected)
         }
         f32 sw = text_width(FONT_TEXT, sub_fs, sub, -1);
         f32 avail = right - tx;
-        bool show_sub = (selected && !w10_on()) || a->kind == APP_CMD || ls->all_notes;
+        bool show_sub = !plate && ((selected && !w10_on()) || a->kind == APP_CMD || ls->all_notes);
         draw_name(fs, tx, base, show_sub ? avail - sw - SR(16) : avail, a->name, a->len, a->norm, a->ws, t->text);
         if (ls->all_notes && a->kind != APP_CMD) {
             f32 away = CLAMP(fabsf(U.list_y0 - floorf(U.scroll + 0.5f) + U.hl_y - y) / r->h, 0.f, 1.f);
             if (!row_selectable(U.sel)) away = 1.f;
             text_draw(FONT_TEXT, sub_fs, right - sw, sub_base, sub, -1, color_alpha(t->faint, away));
-        } else if (a->kind == APP_CMD) {
+        } else if (a->kind == APP_CMD && !plate) {
             f32 away = CLAMP(fabsf(U.list_y0 - floorf(U.scroll + 0.5f) + U.hl_y - y) / r->h, 0.f, 1.f);
             if (!row_selectable(U.sel)) away = 1.f;
             text_draw(FONT_TEXT, sub_fs, right - sw, sub_base, sub, -1, color_alpha(sub_col, away));
@@ -1727,12 +1790,17 @@ static void draw_row(Row *r, f32 y, bool selected)
         if (icon_get(f->icon_key, ICON_KIND_FILE, f->full, uv)) r_icon(ix, iy, isz, isz, uv[0], uv[1], uv[2], uv[3], 1.f);
         else if (icon_failed(f->icon_key)) draw_placeholder_icon(ix, iy, isz, f->name);
         f32 avail = right - tx, gap = SR(16);
+        if (plate) {  // the name, and where it is under it
+            draw_name(fs, tx, floorf(cy - SR(3) + 0.5f), avail, f->name, -1, NULL, NULL, t->text);
+            text_draw_fit(FONT_TEXT, sub_fs, tx, floorf(cy + SR(15) + 0.5f), avail, f->dir, -1, t->faint, true);
+            return;
+        }
         f32 nw = text_width(FONT_TEXT, fs, f->name, -1);
         f32 dw = text_width(FONT_TEXT, sub_fs, f->dir, -1);
-        f32 name_max = nw + gap + dw <= avail ? nw : MAX(avail * 0.55f, avail - dw - gap);
+        f32 name_max = plate ? avail : nw + gap + dw <= avail ? nw : MAX(avail * 0.55f, avail - dw - gap);
         f32 drawn = draw_name(fs, tx, base, name_max, f->name, -1, NULL, NULL, t->text);
         f32 dir_max = avail - drawn - gap;
-        if (dir_max > SR(40) && f->dir[0]) {
+        if (dir_max > SR(40) && f->dir[0] && !plate) {
             f32 dwn = MIN(dw, dir_max);
             text_draw_fit(FONT_TEXT, sub_fs, right - dwn, sub_base, dir_max, f->dir, -1, t->faint, true);
         }
@@ -1839,7 +1907,7 @@ static void draw_footer(f32 y0)
 static void search_band(f32 *y0, f32 *y1)
 {
     *y0 = 0;
-    *y1 = w10_on() && !U.qlen ? 0 : U.search_h;  // Windows 10 shows the query only once typing starts
+    *y1 = w10_on() && !q_active() ? 0 : U.search_h;  // Windows 10 shows the query only once typing starts
 }
 
 // The query field: text from x0 to x1, centered on cy. The Start style puts it in a rounded box.
@@ -1956,7 +2024,7 @@ static void ui_draw(void)
     }
     u32 note_col;
     Row *nr_row = sel_row();
-    bool quiet = nr_row && (nr_row->cell || (w10_on() && nr_row->kind == ROW_APP && nr_row->app->kind != APP_CMD));  // Windows 10 lists no "Application"
+    bool quiet = nr_row && (nr_row->cell || st_search() || (w10_on() && nr_row->kind == ROW_APP && nr_row->app->kind != APP_CMD));  // Windows 10 lists no "Application"
     const WCHAR *note = quiet ? NULL : row_note(nr_row, &note_col);
     if (note) {
         U.sub_text = note;
@@ -1982,6 +2050,7 @@ static void ui_draw(void)
 
     f32 fy = U.list_y1;
     if (st_on()) {
+        if (st_search()) w10_draw_preview();
         st_draw_footer();
     } else if (w10_on()) {
         w10_draw_overlay();

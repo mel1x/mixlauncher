@@ -25,8 +25,8 @@ static bool w10_on(void) { return g_cfg.style == STYLE_WIN10; }
 
 
 // The list pane: the apps column, or the results column of the search pane.
-static f32 list_x0(void) { return w10_on() && !U.qlen ? SR(W10_RAIL) : 0; }
-static f32 list_x1(void) { return !w10_on() ? (f32)U.W : U.qlen ? SR(U.w10.wide ? W10_RESULTS_2K : W10_RESULTS) : SR(W10_RAIL + W10_COL); }
+static f32 list_x0(void) { return w10_on() && !q_active() ? SR(W10_RAIL) : 0; }
+static f32 list_x1(void) { return st_search() ? SR(ST_RESULTS) : !w10_on() ? (f32)U.W : q_active() ? SR(U.w10.wide ? W10_RESULTS_2K : W10_RESULTS) : SR(W10_RAIL + W10_COL); }
 
 static f32 w10_pane_x(void) { return SR(W10_RAIL + W10_COL + 24); }
 
@@ -41,7 +41,7 @@ static int w10_units(void)
 static void w10_metrics(void)
 {
     f32 search_w = U.w10.wide ? W10_SEARCH_W_2K : W10_SEARCH_W;
-    U.W = (int)SR(U.qlen ? search_w : (f32)CLAMP(g_cfg.start10_width, (int)W10_MIN_W, 4000));
+    U.W = (int)SR(q_active() ? search_w : (f32)CLAMP(g_cfg.start10_width, (int)W10_MIN_W, 4000));
     U.H = (int)SR((f32)CLAMP(g_cfg.start10_height, 420, 2000));
     U.list_y0 = SR(4);
     U.list_y1 = (f32)U.H;
@@ -67,7 +67,7 @@ static void w10_fit_size(void)
 
 static void w10_place_rows(void)
 {
-    U.list_y0 = U.qlen ? U.search_h + 1 : SR(4);
+    U.list_y0 = q_active() ? U.search_h + 1 : SR(4);
     f32 x = list_x0() + SR(4), w = list_x1() - x - SR(4);
     for (int i = 0; i < U.row_count; i++) {
         U.rows[i].x = x;
@@ -173,7 +173,7 @@ static f32 w10_max_tscroll(void) { return MAX(0.f, U.w10.tiles_h + SR(16) - U.li
 
 static int w10_tile_at(int x, int y)
 {
-    if (U.qlen || U.w10.rail_open || (f32)y >= U.list_y1) return -1;
+    if (q_active() || U.w10.rail_open || (f32)y >= U.list_y1) return -1;
     f32 cy = (f32)y + U.w10.tscroll;
     for (int i = 0; i < U.w10.tile_count; i++) {
         Row *r = &U.w10.tiles[i];
@@ -217,7 +217,7 @@ static void w10_rail_click(int i)
 
 static int w10_act_at(int x, int y)
 {
-    if (!U.qlen) return -1;
+    if (!q_active()) return -1;
     for (int i = 0; i < U.w10.act_n; i++)
         if (in_rect4(U.w10.act[i], x, y)) return i;
     return -1;
@@ -241,7 +241,7 @@ static int w10_edge_at(int x, int y)
 {
     if (U.w10.rail_open || U.cm.open || U.tg.open) return 0;
     int g = (int)SR(6), e = 0;
-    if (x >= U.W - g && !U.qlen) e |= EDGE_SIDE;  // the search pane has a fixed width
+    if (x >= U.W - g && !q_active()) e |= EDGE_SIDE;  // the search pane has a fixed width
     if (w10_bottom_anchored() ? y < g : y >= U.H - g) e |= EDGE_FREE;
     return e;
 }
@@ -381,11 +381,11 @@ static void w10_tile_drop(void)
 
 static bool w10_mouse_move(int x, int y)
 {
-    if (U.w10.press_tile >= 0 && !U.qlen) {
+    if (U.w10.press_tile >= 0 && !q_active()) {
         w10_tile_drag(x, y);
         if (U.w10.tdrag) return true;
     }
-    if (U.qlen) {
+    if (q_active()) {
         int a = w10_act_at(x, y);
         if (a != U.w10.act_hover) {
             U.w10.act_hover = a;
@@ -406,12 +406,12 @@ static bool w10_mouse_move(int x, int y)
         ui_invalidate();
     }
     bool over_rail = (f32)x < SR(W10_RAIL) + (SR(W10_RAIL_OPEN) - SR(W10_RAIL)) * U.w10.rail_t;
-    return rh >= 0 || over_rail || t >= 0 || (!U.qlen && (f32)x >= list_x1());
+    return rh >= 0 || over_rail || t >= 0 || (!q_active() && (f32)x >= list_x1());
 }
 
 static bool w10_mouse_down(int x, int y)
 {
-    if (U.qlen) {
+    if (q_active()) {
         U.w10.act_press = w10_act_at(x, y);
         return (f32)x >= list_x1() && (f32)y >= U.list_y0;
     }
@@ -433,7 +433,7 @@ static bool w10_mouse_down(int x, int y)
         ui_invalidate();
         return true;
     }
-    return !U.qlen && (f32)x >= list_x1() && (f32)y < U.list_y1;
+    return !q_active() && (f32)x >= list_x1() && (f32)y < U.list_y1;
 }
 
 static bool w10_mouse_up(int x, int y)
@@ -476,7 +476,7 @@ static bool w10_rclick(int x, int y)
 
 static bool w10_wheel(int delta)
 {
-    if (U.qlen || (f32)U.mouse_x < list_x1()) return false;
+    if (q_active() || (f32)U.mouse_x < list_x1()) return false;
     U.w10.tscroll_target = CLAMP(U.w10.tscroll_target - (f32)delta / WHEEL_DELTA * SR(W10_UNIT) * 2.f, 0.f, w10_max_tscroll());
     U.animating = true;
     ui_invalidate();
@@ -523,7 +523,7 @@ static void w10_draw_chrome(void)
     r_rect(0, 0, (f32)U.W, (f32)U.H, color_alpha(w10_bg(), 0.86f), 0);
     f32 y0, y1;
     search_band(&y0, &y1);
-    if (U.qlen) {
+    if (q_active()) {
         r_rect(0, y0, (f32)U.W, y1 - y0, t->dark ? RGBA(255, 255, 255, 8) : RGBA(255, 255, 255, 150), 0);
         r_rect(0, y1, (f32)U.W, 1, t->sep, 0);
         draw_search();
@@ -613,14 +613,29 @@ static void w10_add_act(int cmd)
 static void w10_draw_preview(void)
 {
     Theme *t = &U.th;
-    f32 x0 = list_x1(), y0 = U.list_y0, w = (f32)U.W - x0;
-    r_rect(x0, y0, w, (f32)U.H - y0, t->dark ? RGBA(255, 255, 255, 7) : RGBA(255, 255, 255, 110), 0);
+    bool card = st_on();  // Windows 11: a rounded card beside the list, the name on top, the icon on a wide plate
+    f32 x0 = list_x1(), y0 = U.list_y0, w = (f32)U.W - x0, rad = 0;
+    if (card) {
+        x0 += SR(4);
+        y0 += SR(8);
+        w = (f32)U.W - SR(16) - x0;
+        rad = SR(8);
+        r_rect(x0, y0, w, U.list_y1 - SR(12) - y0, t->dark ? RGBA(255, 255, 255, 10) : RGBA(255, 255, 255, 170), rad);
+    } else {
+        r_rect(x0, y0, w, (f32)U.H - y0, t->dark ? RGBA(255, 255, 255, 7) : RGBA(255, 255, 255, 110), 0);
+    }
     U.w10.act_n = 0;
     Row *r = sel_row();
     if (!r) return;
-    f32 cx = floorf(x0 + w * 0.5f), y = y0 + SR(36), box = SR(64), isz = (f32)ui_icon_px();
-    f32 bx = floorf(cx - box * 0.5f);
-    r_rect(bx, y, box, box, t->dark ? RGBA(255, 255, 255, 16) : RGBA(0, 0, 0, 12), 0);
+    f32 cx = floorf(x0 + w * 0.5f), y = y0 + SR(36), box = SR(64), isz = (f32)ui_icon_px(), bw = box;
+    if (card) {
+        y = y0 + SR(20) + SR(46);  // under the name and the kind
+        box = SR(112);
+        bw = w - SR(20) * 2;
+    }
+    f32 bx = floorf(cx - bw * 0.5f);
+    r_rect(bx, y, bw, box, t->dark ? RGBA(255, 255, 255, card ? 8 : 16) : RGBA(0, 0, 0, card ? 6 : 12), rad * 0.75f);
+    if (card) r_rect_ex(bx, y, bw, box, t->dark ? RGBA(255, 255, 255, 14) : RGBA(0, 0, 0, 16), rad * 0.75f, 1.f, 0);
     f32 ix = floorf(cx - isz * 0.5f), iy = floorf(y + (box - isz) * 0.5f), uv[4];
     const WCHAR *name, *kind, *where = NULL;
     if (r->kind == ROW_APP) {
@@ -650,21 +665,35 @@ static void w10_draw_preview(void)
         w10_add_act(CM_COPY);
         w10_add_act(CM_PROPS);
     }
-    f32 pad = SR(24), tw = w - pad * 2, fs = S(18), sfs = S(12.5f);
-    y += box + SR(30);
-    f32 nw = MIN(text_width(FONT_DISPLAY, fs, name, -1), tw);
-    text_draw_fit(FONT_DISPLAY, fs, floorf(cx - nw * 0.5f), y, tw, name, -1, t->text, false);
-    y += SR(22);
-    f32 kw = text_width(FONT_TEXT, sfs, kind, -1);
-    text_draw(FONT_TEXT, sfs, floorf(cx - kw * 0.5f), y, kind, -1, t->dim);
-    if (where && where[0]) {
-        y += SR(18);
-        f32 ww = MIN(text_width(FONT_TEXT, sfs, where, -1), tw);
-        text_draw_fit(FONT_TEXT, sfs, floorf(cx - ww * 0.5f), y, tw, where, -1, t->faint, true);
+    f32 pad = card ? SR(20) : SR(24), tw = w - pad * 2, fs = S(18), sfs = S(12.5f);
+    if (card) {
+        f32 nfs = S(15), ty = y0 + pad + font_cap_height(FONT_TEXT_SEMIBOLD, nfs);
+        text_draw_fit(FONT_TEXT_SEMIBOLD, nfs, x0 + pad, floorf(ty + 0.5f), tw, name, -1, t->text, false);
+        ty += SR(21);
+        if (where && where[0]) {
+            f32 kw = text_width(FONT_TEXT, sfs, kind, -1);
+            text_draw(FONT_TEXT, sfs, x0 + pad, floorf(ty + 0.5f), kind, -1, t->dim);
+            text_draw_fit(FONT_TEXT, sfs, x0 + pad + kw + SR(10), floorf(ty + 0.5f), tw - kw - SR(10), where, -1, t->faint, true);
+        } else {
+            text_draw(FONT_TEXT, sfs, x0 + pad, floorf(ty + 0.5f), kind, -1, t->dim);
+        }
+        y += box + SR(12);
+    } else {
+        y += box + SR(30);
+        f32 nw = MIN(text_width(FONT_DISPLAY, fs, name, -1), tw);
+        text_draw_fit(FONT_DISPLAY, fs, floorf(cx - nw * 0.5f), y, tw, name, -1, t->text, false);
+        y += SR(22);
+        f32 kw = text_width(FONT_TEXT, sfs, kind, -1);
+        text_draw(FONT_TEXT, sfs, floorf(cx - kw * 0.5f), y, kind, -1, t->dim);
+        if (where && where[0]) {
+            y += SR(18);
+            f32 ww = MIN(text_width(FONT_TEXT, sfs, where, -1), tw);
+            text_draw_fit(FONT_TEXT, sfs, floorf(cx - ww * 0.5f), y, tw, where, -1, t->faint, true);
+        }
+        y += SR(20);
+        r_rect(x0 + pad, y, tw, 1, t->sep, 0);
+        y += SR(8);
     }
-    y += SR(20);
-    r_rect(x0 + pad, y, tw, 1, t->sep, 0);
-    y += SR(8);
     static const struct { int cmd; u32 glyph; } k_acts[] = { { CM_OPEN, 0xE8A7 }, { CM_RUNAS, 0xE7EF }, { CM_REVEAL, 0xE838 }, { CM_COPY, 0xE8C8 }, { CM_PROPS, 0xE946 } };
     f32 ah = SR(36), afs = S(13.5f);
     for (int i = 0; i < U.w10.act_n; i++) {
@@ -682,7 +711,7 @@ static void w10_draw_preview(void)
         U.w10.act[i][1] = (int)y;
         U.w10.act[i][2] = (int)(ax + aw);
         U.w10.act[i][3] = (int)(y + ah);
-        if (U.w10.act_hover == i) r_rect(ax, y, aw, ah, U.w10.act_press == i ? color_alpha(t->sel, 0.7f) : t->sel, 0);
+        if (U.w10.act_hover == i) r_rect(ax, y, aw, ah, U.w10.act_press == i ? color_alpha(t->sel, 0.7f) : t->sel, card ? SR(4) : 0);
         f32 acy = y + ah * 0.5f;
         text_draw_icon(glyph, S(14), ax + SR(18), acy, t->text);
         text_draw_fit(FONT_TEXT, afs, ax + SR(40), floorf(acy + font_cap_height(FONT_TEXT, afs) * 0.5f + 0.5f), aw - SR(48), label, -1, t->text, false);
@@ -694,7 +723,7 @@ static void w10_draw_preview(void)
 static void w10_draw_overlay(void)
 {
     Theme *t = &U.th;
-    if (U.qlen) {
+    if (q_active()) {
         w10_draw_preview();
         memset(U.w10.rail, 0, sizeof U.w10.rail);  // no rail while searching
         return;

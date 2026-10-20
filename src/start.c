@@ -16,6 +16,21 @@ enum { FB_ACCOUNT, FB_DOWNLOADS, FB_EXPLORER, FB_SETTINGS, FB_POWER, FB__COUNT }
 
 static bool st_on(void) { return g_cfg.style == STYLE_START; }
 
+#define ST_RESULTS 304.f  // the results column of the search; the chosen one is shown on the right
+
+// Searching, with results to show: the list on the left and the pane about the chosen one.
+// An empty query or no results take the whole width, the hint centered.
+static bool st_search(void) { return st_on() && q_active() && first_selectable(0, 1) >= 0; }
+
+static void st_place_rows(void)
+{
+    f32 x = SR(16), w = SR(ST_RESULTS) - x - SR(8);
+    for (int i = 0; i < U.row_count; i++) {
+        U.rows[i].x = x;
+        U.rows[i].w = w;
+    }
+}
+
 static f32 st_grid_x(void) { return floorf(((f32)U.W - SR(ST_TILE_W) * ST_COLS) * 0.5f); }
 
 static void st_metrics(void)
@@ -418,6 +433,13 @@ static bool st_title_at(int x, int y) { return y >= U.list_y0 && y < U.list_y1 &
 // Hover over the footer buttons and the section button; true when the pointer is on one.
 static bool st_mouse_move(int x, int y)
 {
+    if (st_search()) {
+        int a = w10_act_at(x, y);
+        if (a != U.w10.act_hover) {
+            U.w10.act_hover = a;
+            ui_invalidate();
+        }
+    }
     int f = st_footer_at(x, y);
     bool t = st_title_at(x, y);
     if (f != U.st.fb_hover || t != U.st.title_hover) {
@@ -431,6 +453,10 @@ static bool st_mouse_move(int x, int y)
 
 static bool st_mouse_down(int x, int y)
 {
+    if (st_search()) {
+        U.w10.act_press = w10_act_at(x, y);
+        if ((f32)x >= list_x1() && (f32)y >= U.list_y0 && (f32)y < U.list_y1) return true;
+    }
     U.st.fb_press = st_footer_at(x, y);
     U.st.title_press = st_title_at(x, y);
     return U.st.fb_press >= 0 || U.st.title_press;
@@ -438,10 +464,14 @@ static bool st_mouse_down(int x, int y)
 
 static bool st_mouse_up(int x, int y)
 {
-    int f = U.st.fb_press;
+    int f = U.st.fb_press, ap = U.w10.act_press;
     bool t = U.st.title_press;
-    U.st.fb_press = -1;
+    U.st.fb_press = U.w10.act_press = -1;
     U.st.title_press = false;
+    if (ap >= 0) {
+        if (w10_act_at(x, y) == ap) w10_act_run(ap);
+        return true;
+    }
     if (f >= 0) {
         if (st_footer_at(x, y) == f) st_footer_click(f);
         return true;
@@ -479,12 +509,12 @@ static void st_move_vertical(int dir)
 
 static bool st_key(WPARAM vk)
 {
-    if (vk == VK_ESCAPE && U.st.all_view && !U.qlen && !U.armed) {
+    if (vk == VK_ESCAPE && U.st.all_view && !q_active() && !U.armed) {
         st_set_all_view(false);
         return true;
     }
     Row *r = sel_row();
-    if (!r || r->cell != CELL_TILE || U.qlen) return false;
+    if (!r || r->cell != CELL_TILE || q_active()) return false;
     switch (vk) {
     case VK_LEFT:
     case VK_RIGHT: move_sel(vk == VK_RIGHT ? 1 : -1); return true;
@@ -523,7 +553,9 @@ static void st_draw_highlight(f32 off)
     Row *r = &U.rows[U.sel];
     f32 in = r->cell == CELL_TILE ? SR(4) : 0;
     f32 x = floorf(U.hl_x + in + 0.5f), y = floorf(off + U.hl_y + in * 0.5f + 0.5f);
-    r_rect(x, y, floorf(U.hl_w - in * 2 + 0.5f), floorf(U.hl_h - in + 0.5f), U.th.sel, SR(LS()->sel_r));
+    f32 h = floorf(U.hl_h - in + 0.5f);
+    r_rect(x, y, floorf(U.hl_w - in * 2 + 0.5f), h, U.th.sel, SR(LS()->sel_r));
+    if (st_search() && !r->cell) r_rect(x, floorf(y + h * 0.5f - SR(8)), SR(3), SR(16), U.th.accent, SR(1.5f));
 }
 
 static void st_draw_title(Row *r, f32 y)

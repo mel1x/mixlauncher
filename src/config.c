@@ -9,8 +9,8 @@ static const char *const k_style_names[STYLE__COUNT] = { "standard", "raycast", 
 enum { POS_CENTER, POS_BOTTOM_LEFT, POS_BOTTOM_CENTER, POS__COUNT };
 static const char *const k_pos_names[POS__COUNT] = { "center", "bottom-left", "bottom-center" };
 
-enum { TBI_DIAMOND, TBI_GRID, TBI_LINES, TBI_CUSTOM, TBI__COUNT };
-static const char *const k_tbi_names[TBI__COUNT] = { "diamond", "grid", "lines", "custom" };
+enum { TBI_DIAMOND, TBI_GRID, TBI_PETALS, TBI_LAYERS, TBI_DOTS, TBI_CUSTOM, TBI__COUNT };
+static const char *const k_tbi_names[TBI__COUNT] = { "diamond", "grid", "petals", "layers", "dots", "custom" };
 
 enum { HK_CTRL = 1, HK_ALT = 2, HK_SHIFT = 4, HK_WIN = 8 };
 #define VK_ANYWIN 0x07  // unassigned VK code, used for "either Win key"
@@ -118,7 +118,7 @@ static const char k_default_config_ru[] =
     "taskbar_button = 1\r\n"
     "; Рисовать на ней наш значок вместо значка Windows (1/0)\r\n"
     "taskbar_replace_icon = 1\r\n"
-    "; Её значок: diamond (ромб) | grid (сетка) | lines (строки) | custom (свой файл PNG/ICO/JPG из taskbar_icon_path)\r\n"
+    "; Её значок: diamond (ромб) | grid (сетка) | petals (лепестки) | layers (слои) | dots (точки) | custom (свой файл PNG/ICO/JPG из taskbar_icon_path)\r\n"
     "taskbar_icon = diamond\r\n"
     "taskbar_icon_path =\r\n"
     "; Клик по поиску на панели задач Windows 10/11 открывает лаунчер (1/0)\r\n"
@@ -206,7 +206,7 @@ static const char k_default_config_en[] =
     "taskbar_button = 1\r\n"
     "; Draw our icon on it instead of the Windows logo (1/0)\r\n"
     "taskbar_replace_icon = 1\r\n"
-    "; Its icon: diamond | grid | lines | custom (a PNG/ICO/JPG file from taskbar_icon_path)\r\n"
+    "; Its icon: diamond | grid | petals | layers | dots | custom (a PNG/ICO/JPG file from taskbar_icon_path)\r\n"
     "taskbar_icon = diamond\r\n"
     "taskbar_icon_path =\r\n"
     "; Clicking the search on the Windows 10/11 taskbar opens the launcher (1/0)\r\n"

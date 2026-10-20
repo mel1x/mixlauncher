@@ -481,6 +481,7 @@ enum {
     WM_APP_UPDATE,
     WM_APP_AUTOSTART,
     WM_APP_PRTSC,
+    WM_APP_SEARCH,
 };
 
 static HWND g_hwnd;
