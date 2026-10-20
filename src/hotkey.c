@@ -1,30 +1,30 @@
-#define WM_HOOK_MASK (WM_APP + 100)
-#define WM_HOOK_REINSTALL (WM_APP + 101)
-#define WM_HOOK_MOUSE (WM_APP + 102)
-#define WM_HOOK_WATCHDOG (WM_APP + 104)
-#define WM_HOOK_VISIBLE (WM_APP + 105)
-#define WM_HOOK_SEARCH (WM_APP + 106)
-#define ML_INJECT_MAGIC ((ULONG_PTR)0x4D4C4E43u)
+// The hotkey: a low-level keyboard hook on a time-critical thread of its own. It swallows the bound key (and,
+// for Win, masks the tap from the Start menu with a dummy vkE8), watches clicks outside the open launcher and
+// on the taskbar's search, and keeps itself alive: a raw input watchdog re-installs a hook Windows dropped.
+
+// thread messages to the hook thread
+enum { WM_HOOK_MASK = WM_APP + 100, WM_HOOK_REINSTALL, WM_HOOK_MOUSE, WM_HOOK_WATCHDOG, WM_HOOK_VISIBLE, WM_HOOK_SEARCH };
+#define ML_INJECT_MAGIC ((ULONG_PTR)0x4D4C4E43u)  // our own injected keys
 
 static struct {
     DWORD tid;
     HHOOK hook, mouse_hook;
     HWND watchdog;
     bool watchdog_on;
-    volatile LONG bind;
+    volatile LONG bind;           // the Hotkey, mods << 8 | vk
     volatile LONG ui_visible;
     volatile LONG search_clicks;  // the taskbar's search opens the launcher
     bool swallow_lup;
-    HWND volatile capture;
-    bool tap_down;
+    HWND volatile capture;        // the settings' hotkey recorder gets every key
+    bool tap_down;                // a modifier-only hotkey (Win, rctrl) is down; armed while nothing else came
     bool tap_armed;
     DWORD tap_vk;
     DWORD swallow_vk;
     DWORD swallow_time;
-    bool toggle_pending;
+    bool toggle_pending;          // a tap toggles once our masking keys have gone through
     DWORD pending_vk;
     UINT_PTR fallback_timer;
-    u32 hook_presses;
+    u32 hook_presses;             // presses of the bound key seen by the hook and by raw input
     u32 raw_presses;
     u32 reinstalls;
     bool prtsc_handoff;
@@ -100,13 +100,7 @@ static void inject_keys(INPUT *in, int n)
 
 static void watchdog_set(bool on);
 
-static bool own_foreground(void)
-{
-    HWND fg = GetForegroundWindow();
-    DWORD pid = 0;
-    if (fg) GetWindowThreadProcessId(fg, &pid);
-    return pid == GetCurrentProcessId();
-}
+static bool own_foreground(void) { return window_is_ours(GetForegroundWindow()); }
 
 static bool window_elevated(DWORD pid)
 {
@@ -330,12 +324,7 @@ static void watchdog_set(bool on)
     K.raw_presses = K.hook_presses;
 }
 
-static void watchdog_sync(HWND fg)
-{
-    DWORD pid = 0;
-    if (fg) GetWindowThreadProcessId(fg, &pid);
-    watchdog_set(pid != GetCurrentProcessId());
-}
+static void watchdog_sync(HWND fg) { watchdog_set(!window_is_ours(fg)); }
 
 static void CALLBACK foreground_changed(HWINEVENTHOOK h, DWORD ev, HWND hwnd, LONG obj, LONG child, DWORD tid, DWORD time)
 {
@@ -417,7 +406,8 @@ static DWORD WINAPI hook_thread(void *param)
             }
             if (!K.tap_down) {
                 hook_install(false);
-                // a hook that once ran too long is dropped silently: the search clicks keep theirs for good
+                // Windows silently drops a hook that once took too long: renew it every minute, the mouse hook too
+                // while it only watches the search clicks
                 if (K.mouse_hook && K.search_clicks && !K.swallow_lup) {
                     UnhookWindowsHookEx(K.mouse_hook);
                     K.mouse_hook = NULL;
@@ -444,6 +434,11 @@ static DWORD WINAPI hook_thread(void *param)
 
 static void hook_set_hotkey(Hotkey h) { InterlockedExchange(&K.bind, (LONG)((h.mods << 8) | h.vk)); }
 
+static void hook_post(UINT msg, WPARAM wp)
+{
+    if (K.tid) PostThreadMessageW(K.tid, msg, wp, 0);
+}
+
 static void hook_start(Hotkey h)
 {
     hook_set_hotkey(h);
@@ -459,36 +454,11 @@ static void hook_start(Hotkey h)
 
 static void hook_capture(HWND h) { InterlockedExchangePointer((void *volatile *)&K.capture, h); }
 
-static bool hook_running(void) { return K.tid && K.hook; }
-
-static void hook_reinstall(void)
-{
-    if (K.tid) PostThreadMessageW(K.tid, WM_HOOK_REINSTALL, 0, 0);
-}
-
-static void hook_rearm(void)
-{
-    if (K.tid) PostThreadMessageW(K.tid, WM_HOOK_REINSTALL, 1, 0);
-}
-
-static void hook_watchdog_off(void)
-{
-    if (K.tid) PostThreadMessageW(K.tid, WM_HOOK_WATCHDOG, 0, 0);
-}
-
-static void hook_watchdog_sync(void)
-{
-    if (K.tid) PostThreadMessageW(K.tid, WM_HOOK_WATCHDOG, 1, 0);
-}
-
-static void hook_set_visible(bool visible)
-{
-    if (K.tid) PostThreadMessageW(K.tid, WM_HOOK_VISIBLE, visible ? 1 : 0, 0);
-}
-
-static void hook_search_clicks(bool on)
-{
-    if (K.tid) PostThreadMessageW(K.tid, WM_HOOK_SEARCH, on ? 1 : 0, 0);
-}
+static void hook_reinstall(void) { hook_post(WM_HOOK_REINSTALL, 0); }  // after sleep: a fresh hook, tap state reset
+static void hook_rearm(void) { hook_post(WM_HOOK_REINSTALL, 1); }      // a fresh hook, a tap in progress kept
+static void hook_watchdog_off(void) { hook_post(WM_HOOK_WATCHDOG, 0); }
+static void hook_watchdog_sync(void) { hook_post(WM_HOOK_WATCHDOG, 1); }
+static void hook_set_visible(bool visible) { hook_post(WM_HOOK_VISIBLE, visible); }
+static void hook_search_clicks(bool on) { hook_post(WM_HOOK_SEARCH, on); }
 
 static bool hotkey_is_win_tap(void) { return vk_mod_bit(g_cfg.hk.vk) == HK_WIN && !K.capture; }

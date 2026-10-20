@@ -25,25 +25,25 @@ static void draw_sidebar_buttons(const Theme *t, const SColors *c)
                 f32 pw = floorf(bw * (f32)UPD.progress / 1000.f);
                 r_set_clip(b[0], b[1], b[0] + pw, b[3]);
                 r_rect(b[0], b[1], bw, bh, color_alpha(t->accent, 0.22f), SSR(8));
-                r_set_clip(0, 0, (f32)SW.W, (f32)SW.H);
+                r_clip_all();
             }
             glyph = st == UPD_ERROR ? 0xE72C : 0xE896;
             icol = fg = st == UPD_ERROR ? t->danger : t->text;
         } else {
-            lbl = ss((Str){ L"Поддержать автора", L"Support the author" });
+            lbl = TR("Поддержать автора", "Support the author");
             if (hv > 0) r_rect(b[0], b[1], bw, bh, color_alpha(c->nav_hover, hv), SSR(8));
             glyph = 0xEB51;
             icol = color_mix(t->faint, t->dim, hv);
             fg = color_mix(t->dim, t->text, hv);
         }
         text_draw_icon(glyph, SSC(15), ix + isz * 0.5f, cy, icol);
-        text_draw_fit(FONT_TEXT, fs, ix + isz + SSR(12), baseline_for(FONT_TEXT, fs, cy), b[2] - ix - isz - SSR(18), lbl, -1, fg, false);
+        text_draw_fit(FONT_TEXT, fs, ix + isz + SSR(12), text_baseline(FONT_TEXT, fs, cy), b[2] - ix - isz - SSR(18), lbl, -1, fg, false);
     }
 }
 
 static void settings_draw(void)
 {
-    const Theme *t = &U.th;
+    const Theme *t = &TH;
     SColors c = scolors(t->dark);
     if (!SW.mica) r_rect(0, 0, (f32)SW.W, (f32)SW.H, c.bg, 0);
     SW.scroll = CLAMP(SW.scroll, 0.f, max_scroll_s());
@@ -64,7 +64,7 @@ static void settings_draw(void)
         SBox *b = &SW.cards[i];
         if (b->h < 1) continue;
         r_rect(b->x, b->y + off, b->w, b->h, c.card, SSR(10));
-        r_rect_ex(b->x, b->y + off, b->w, b->h, c.card_border, SSR(10), 1.f, 0);
+        r_border(b->x, b->y + off, b->w, b->h, c.card_border, SSR(10));
     }
     for (int i = 0; i < SW.nheads; i++) {
         if (SW.head_a[i] <= 0.f) continue;
@@ -84,8 +84,7 @@ static void settings_draw(void)
         draw_srow(r, off, t, &c);
         if (part) r_set_clip(0, top_h(), (f32)SW.W, (f32)SW.H);
     }
-    R.opacity = pe;
-    r_set_clip(0, 0, (f32)SW.W, (f32)SW.H);
+    r_clip_all();
     R.opacity = 1.f;
 
     f32 sep_k = CLAMP(SW.scroll / SSR(16), 0.f, 1.f);
@@ -247,14 +246,7 @@ static void settings_render(void)
     settings_layout();
     SW.animating = settings_animate(dt);
     R.scale = 1.f;
-    r_begin();
-    settings_draw();
-    if (F.overflow) {
-        font_reset_atlas();
-        r_begin();
-        settings_draw();
-        F.overflow = false;
-    }
+    r_draw(settings_draw);
     r_end_and_present();
     r_use(&R.main);
     SW.dirty = false;
@@ -521,7 +513,7 @@ static void settings_mouse_down(int mx, int my)
         if (h.idx == DON_OUT || h.idx == DON_CLOSE) {
             don_close();
         } else if (h.idx == DON_LINK) {
-            open_path(DON_LINK_URL);
+            launch_open(DON_LINK_URL, OPEN_PATH);
             confetti_burst();
         } else if (h.idx >= 0) {
             don_copy(h.idx);
@@ -570,7 +562,7 @@ static void settings_mouse_up(int mx, int my)
 static void settings_apply_theme(void)
 {
     if (!SW.hwnd) return;
-    dwm_set(SW.hwnd, DWA_DARK, U.th.dark);
+    dwm_set(SW.hwnd, DWA_DARK, TH.dark);
     settings_invalidate();
 }
 
@@ -674,8 +666,7 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             tip_track();
             settings_invalidate();
         }
-        TRACKMOUSEEVENT tme = { sizeof tme, TME_LEAVE, h, 0 };
-        TrackMouseEvent(&tme);
+        track_mouse_leave(h);
         return 0;
     }
     case WM_MOUSELEAVE:
@@ -735,7 +726,7 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_CHAR:
         if (SW.editing >= 0) {
             WCHAR c = (WCHAR)wp;
-            edit_insert(&c, 1);
+            edit_splice(SW.edit_caret, SW.edit_caret, &c, 1);
             SW.caret_on = true;
             settings_invalidate();
         }
@@ -809,30 +800,20 @@ static void settings_open(void)
     SW.tip_on = false;
     memset(&SW.rec, 0, sizeof SW.rec);
 
-    POINT pt;
-    GetCursorPos(&pt);
-    HMONITOR mon = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
-    if (g_pinned || g_other_monitor) {
-        HMONITOR io[2] = { mon, NULL };
-        EnumDisplayMonitors(NULL, NULL, find_other_monitor, (LPARAM)io);
-        if (io[1]) mon = io[1];
-    }
-    MONITORINFO mi;
-    mi.cbSize = sizeof mi;
-    GetMonitorInfoW(mon, &mi);
+    HMONITOR mon = open_monitor();
     SW.dpi = monitor_dpi(mon);
     SW.s = (f32)SW.dpi / 96.f;
     // WS_CAPTION: system open/minimize animations; no WS_SYSMENU, so DWM draws no caption buttons.
     DWORD style = WS_POPUP | WS_THICKFRAME | WS_CAPTION | WS_MINIMIZEBOX;
     DWORD ex = WS_EX_NOREDIRECTIONBITMAP | WS_EX_APPWINDOW;
-    RECT wa = mi.rcWork;
+    RECT wa = monitor_work(mon);
     int w = MIN((int)SSR(900), (int)(wa.right - wa.left) - 40), h = MIN((int)SSR(640), (int)(wa.bottom - wa.top) - 40);
     int x = wa.left + ((wa.right - wa.left) - w) / 2, y = wa.top + ((wa.bottom - wa.top) - h) / 2;
-    SW.hwnd = CreateWindowExW(ex, SETTINGS_CLASS, ss((Str){ L"Настройки MixLauncher", L"MixLauncher Settings" }), style, x, y, w, h, NULL, NULL,
+    SW.hwnd = CreateWindowExW(ex, SETTINGS_CLASS, TR("Настройки MixLauncher", "MixLauncher Settings"), style, x, y, w, h, NULL, NULL,
                               GetModuleHandleW(NULL), NULL);
     if (!SW.hwnd) return;
     window_icons(SW.hwnd);
-    dwm_set(SW.hwnd, DWA_DARK, U.th.dark);
+    dwm_set(SW.hwnd, DWA_DARK, TH.dark);
     dwm_set(SW.hwnd, DWA_CORNER, DWC_ROUND);
     dwm_set(SW.hwnd, DWA_NO_TRANSITIONS, g_cfg.reduced_motion);  // the system open and minimize animations
     SW.mica = dwm_backdrop(SW.hwnd, DWB_MICA);

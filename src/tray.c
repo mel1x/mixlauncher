@@ -55,14 +55,7 @@ static void app_icon_render(u32 *out, int S, bool tile)
 
 static HICON app_icon_create(int S, bool tile)
 {
-    BITMAPINFO bi;
-    memset(&bi, 0, sizeof bi);
-    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bi.bmiHeader.biWidth = S;
-    bi.bmiHeader.biHeight = -S;
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    bi.bmiHeader.biCompression = BI_RGB;
+    BITMAPINFO bi = dib32(S, S);
     void *bits = NULL;
     HBITMAP color = CreateDIBSection(NULL, &bi, DIB_RGB_COLORS, &bits, NULL, 0);
     if (!color) return NULL;
@@ -79,52 +72,66 @@ static HICON app_icon_create(int S, bool tile)
     return icon;
 }
 
-static bool app_icon_write_ico(const WCHAR *path)
+// One icon image as an .ico entry: a bottom-up DIB with an empty mask, or (big sizes) a PNG, which takes a
+// fraction of the room and which Windows reads in icons since Vista.
+static bool ico_image(int S, Buf *out)
 {
-    static const int sizes[] = { 16, 20, 24, 32, 40, 48, 64, 96, 128 };
-    Buf b = { 0 };
-    u16 hdr[3] = { 0, 1, (u16)countof(sizes) };
-    buf_put(&b, hdr, 6);
-    u32 offset = 6 + 16 * countof(sizes);
-    u32 sizes_bytes[countof(sizes)];
-    for (int i = 0; i < countof(sizes); i++) {
-        int S = sizes[i];
-        u32 mask_row = (u32)((S + 31) / 32) * 4;
-        sizes_bytes[i] = 40 + (u32)S * S * 4 + mask_row * S;
-        u8 e[16];
-        memset(e, 0, sizeof e);
-        e[0] = (u8)(S >= 256 ? 0 : S);
-        e[1] = (u8)(S >= 256 ? 0 : S);
-        e[4] = 1;
-        e[6] = 32;
-        memcpy(e + 8, &sizes_bytes[i], 4);
-        memcpy(e + 12, &offset, 4);
-        buf_put(&b, e, 16);
-        offset += sizes_bytes[i];
-    }
-    for (int i = 0; i < countof(sizes); i++) {
-        int S = sizes[i];
+    u32 *px = (u32 *)malloc((size_t)S * S * 4);
+    if (!px) return false;
+    app_icon_render(px, S, S >= 32);  // small sizes go without the tile, like the tray
+    bool ok = true;
+    if (S >= 64) {
+        ok = wic_png(px, S, S, out);
+    } else {
         BITMAPINFOHEADER bh;
         memset(&bh, 0, sizeof bh);
         bh.biSize = 40;
         bh.biWidth = S;
-        bh.biHeight = S * 2;
+        bh.biHeight = S * 2;  // the color rows and the mask rows
         bh.biPlanes = 1;
         bh.biBitCount = 32;
-        buf_put(&b, &bh, 40);
-        u32 *px = (u32 *)malloc((size_t)S * S * 4);
-        if (!px) return false;
-        app_icon_render(px, S, S >= 32);  // small sizes go without the tile, like the tray
-        for (int y = S - 1; y >= 0; y--) buf_put(&b, px + y * S, (size_t)S * 4);
-        free(px);
-        u32 mask_row = (u32)((S + 31) / 32) * 4;
-        u8 zero[64];
-        memset(zero, 0, sizeof zero);
-        for (int y = 0; y < S; y++) buf_put(&b, zero, mask_row);
+        buf_put(out, &bh, 40);
+        for (int y = S - 1; y >= 0; y--) buf_put(out, px + y * S, (size_t)S * 4);
+        static const u8 zero[64];
+        for (int y = 0; y < S; y++) buf_put(out, zero, (size_t)(S + 31) / 32 * 4);
     }
-    bool ok = write_file_atomic(path, b.data, (DWORD)b.len);
-    free(b.data);
+    free(px);
     return ok;
+}
+
+// --write-icon: res\mixlauncher.ico, every size the shell asks for.
+static bool app_icon_write_ico(const WCHAR *path)
+{
+    static const int sizes[] = { 16, 20, 24, 32, 40, 48, 64, 96, 128 };
+    Buf img[countof(sizes)];
+    memset(img, 0, sizeof img);
+    bool ok = true;
+    for (int i = 0; i < countof(sizes) && ok; i++) ok = ico_image(sizes[i], &img[i]);
+    Buf b = { 0 };
+    u16 hdr[3] = { 0, 1, (u16)countof(sizes) };
+    buf_put(&b, hdr, 6);
+    u32 offset = 6 + 16 * countof(sizes);
+    for (int i = 0; i < countof(sizes); i++) {
+        u8 e[16];
+        u32 size = (u32)img[i].len;
+        memset(e, 0, sizeof e);
+        e[0] = e[1] = (u8)(sizes[i] >= 256 ? 0 : sizes[i]);
+        e[4] = 1;   // planes
+        e[6] = 32;  // bits per pixel
+        memcpy(e + 8, &size, 4);
+        memcpy(e + 12, &offset, 4);
+        buf_put(&b, e, 16);
+        offset += size;
+    }
+    for (int i = 0; i < countof(sizes); i++) {
+        buf_put(&b, img[i].data, img[i].len);
+        free(img[i].data);
+    }
+    if (!ok) {
+        free(b.data);
+        return false;
+    }
+    return buf_save(&b, path);
 }
 
 static NOTIFYICONDATAW g_nid;
@@ -133,17 +140,16 @@ static HICON g_icon_small, g_icon_big;
 
 // Gives a window our icons, without the plate, on the taskbar too. The taskbar ties a window to the Start menu
 // shortcut of its exe and shows that icon instead (the exe's, plate and all); a window AppUserModelID of its
-// own unties it. Explorer also runs below our (elevated) integrity level, so it is let ask for the icon.
+// own unties it. Explorer runs below our (elevated) level: WM_GETICON is let through UIPI.
 static void window_icons(HWND h)
 {
     IPropertyStore *ps = NULL;
     if (SUCCEEDED(SHGetPropertyStoreForWindow(h, &IID_IPropertyStore, (void **)&ps)) && ps) {
-        static const PROPERTYKEY app_id = { { 0x9f4c2855, 0x9f79, 0x4b39, { 0xa8, 0xd0, 0xe1, 0xd4, 0x2d, 0xe1, 0xd5, 0xf3 } }, 5 };
         PROPVARIANT v;
         memset(&v, 0, sizeof v);
         v.vt = VT_LPWSTR;
         v.pwszVal = (LPWSTR)L"mel1x.MixLauncher.Window";
-        IPropertyStore_SetValue(ps, &app_id, &v);
+        IPropertyStore_SetValue(ps, &ML_PKEY_AppUserModel_ID, &v);
         IPropertyStore_Commit(ps);
         IPropertyStore_Release(ps);
     }

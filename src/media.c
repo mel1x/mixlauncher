@@ -1,3 +1,6 @@
+// "Now playing" on the taskbar: a worker reads the current media session through WinRT (title, artist, cover,
+// what can be pressed) and the UI thread draws a layered child window of the taskbar from it.
+
 #define MW_CLASS L"MixLauncherMediaWidget"
 #define MW_TIMER_ANIM 1
 #define MW_TIMER_SYNC 2
@@ -20,8 +23,8 @@ typedef struct MText {
 } MText;
 
 static struct {
-    bool enabled;
-    HANDLE thread, wake;
+    bool enabled, started;
+    HANDLE wake;
     SRWLOCK lock;
     MediaInfo pub;
     u32 *pub_art;
@@ -56,10 +59,7 @@ static struct {
     int toggle_status;
     f64 toggle_until;
     f64 last_anim;
-    HDC dc;
-    HBITMAP bmp;
-    u32 *bits;
-    int bmp_w, bmp_h;
+    Layer layer;
 } M = { .hover = MP_NONE, .press = MP_NONE, .text_a = 1 };
 
 // Worker: WinRT through raw vtables (there are no C headers for Windows.Media.Control)
@@ -73,10 +73,6 @@ static struct {
     const WCHAR *(WINAPI *string_buf)(ML_HSTRING, UINT32 *);
     HRESULT (WINAPI *stream_over)(IUnknown *, REFIID, void **);
 } RTF;
-
-static const GUID ML_IID_IGSMTCSessionManagerStatics = { 0x2050c4ee, 0x11a0, 0x57de, { 0xae, 0xd7, 0xc9, 0x7c, 0x70, 0x33, 0x82, 0x45 } };
-static const GUID ML_IID_IAsyncInfo = { 0x00000036, 0x0000, 0x0000, { 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 } };
-static const GUID ML_IID_IStream = { 0x0000000c, 0x0000, 0x0000, { 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 } };
 
 // Every call we need has the shape (this, out*). Slots count from the start of the vtable:
 // IInspectable takes 0..5, so an interface's first method is slot 6.
@@ -161,11 +157,9 @@ static IUnknown *media_manager(void)
     return mgr;
 }
 
+// The cover cut to a centered square and scaled to n x n; *hash tells a new picture from the same one again.
 static u32 *media_decode_art(IUnknown *thumb, int n, u64 *hash)
 {
-    static const GUID clsid = { 0xcacaf262, 0x9370, 0x4615, { 0xa1, 0x3b, 0x9f, 0x55, 0x39, 0xda, 0x4c, 0x0a } };
-    static const GUID iid = { 0xec5ec8a9, 0xc395, 0x4314, { 0x9c, 0x77, 0x54, 0xd7, 0xa9, 0x35, 0xff, 0x70 } };
-    static const GUID pbgra = { 0x6fddc324, 0x4e03, 0x4bfe, { 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x10 } };
     if (!thumb || n <= 0 || n > 512 || !RTF.stream_over) return NULL;
     IUnknown *op = NULL, *ras = NULL;
     IStream *stm = NULL;
@@ -173,14 +167,11 @@ static u32 *media_decode_art(IUnknown *thumb, int n, u64 *hash)
     IWICBitmapDecoder *dec = NULL;
     IWICBitmapFrameDecode *frame = NULL;
     IWICBitmapClipper *clip = NULL;
-    IWICBitmapScaler *sc = NULL;
-    IWICFormatConverter *cv = NULL;
     u32 *out = NULL;
     if (FAILED(RT_GET(thumb, RT_STREAMREF_OPEN, &op))) return NULL;
     ras = rt_await(op, 3000);
     if (!ras) return NULL;
-    if (FAILED(RTF.stream_over(ras, &ML_IID_IStream, (void **)&stm)) || !stm) goto done;
-    if (FAILED(CoCreateInstance(&clsid, NULL, CLSCTX_INPROC_SERVER, &iid, (void **)&f)) || !f) goto done;
+    if (FAILED(RTF.stream_over(ras, &ML_IID_IStream, (void **)&stm)) || !stm || !(f = wic_factory())) goto done;
     if (FAILED(IWICImagingFactory_CreateDecoderFromStream(f, stm, NULL, WICDecodeMetadataCacheOnDemand, &dec))) goto done;
     if (FAILED(IWICBitmapDecoder_GetFrame(dec, 0, &frame)) || !frame) goto done;
     UINT iw = 0, ih = 0;
@@ -188,22 +179,10 @@ static u32 *media_decode_art(IUnknown *thumb, int n, u64 *hash)
     if (!iw || !ih) goto done;
     UINT side = MIN(iw, ih);
     WICRect r = { (INT)(iw - side) / 2, (INT)(ih - side) / 2, (INT)side, (INT)side };
-    if (FAILED(IWICImagingFactory_CreateBitmapClipper(f, &clip)) ||
-        FAILED(IWICBitmapClipper_Initialize(clip, (IWICBitmapSource *)frame, &r)) ||
-        FAILED(IWICImagingFactory_CreateBitmapScaler(f, &sc)) ||
-        FAILED(IWICBitmapScaler_Initialize(sc, (IWICBitmapSource *)clip, (UINT)n, (UINT)n, WICBitmapInterpolationModeFant)) ||
-        FAILED(IWICImagingFactory_CreateFormatConverter(f, &cv)) ||
-        FAILED(IWICFormatConverter_Initialize(cv, (IWICBitmapSource *)sc, &pbgra, WICBitmapDitherTypeNone, NULL, 0, WICBitmapPaletteTypeCustom)))
-        goto done;
-    out = (u32 *)malloc((size_t)n * n * 4);
-    if (out && FAILED(IWICFormatConverter_CopyPixels(cv, NULL, (UINT)n * 4, (UINT)(n * n * 4), (BYTE *)out))) {
-        free(out);
-        out = NULL;
-    }
+    if (FAILED(IWICImagingFactory_CreateBitmapClipper(f, &clip)) || FAILED(IWICBitmapClipper_Initialize(clip, (IWICBitmapSource *)frame, &r))) goto done;
+    out = wic_pixels(f, (IWICBitmapSource *)clip, (UINT)n, (UINT)n);
     if (out) *hash = hash_u64((u64)n) ^ (u64)hash_wstr((const WCHAR *)out, n * n * 2);
 done:
-    SAFE_RELEASE(cv);
-    SAFE_RELEASE(sc);
     SAFE_RELEASE(clip);
     SAFE_RELEASE(frame);
     SAFE_RELEASE(dec);
@@ -240,26 +219,16 @@ static void media_read(IUnknown *ses, MediaInfo *in, IUnknown **thumb)
     }
 }
 
+// Where the Widgets button is: the widget sits right of it on the left of a centered taskbar.
 static bool media_widgets_button(IUIAutomation **uia, IUIAutomationElement **el, f64 *retry, RECT *out)
 {
     memset(out, 0, sizeof *out);
-    if (!*uia && FAILED(CoCreateInstance(&ML_CLSID_CUIAutomation, NULL, CLSCTX_INPROC_SERVER, &ML_IID_IUIAutomation, (void **)uia))) return false;
+    if (!*uia && !(*uia = uia_create())) return false;
     if (!*el) {
         if (time_now() < *retry) return false;
         *retry = time_now() + 10.0;
-        HWND tb = FindWindowW(L"Shell_TrayWnd", NULL);
-        IUIAutomationElement *root = NULL;
-        IUIAutomationCondition *cond = NULL;
-        VARIANT v;
-        VariantInit(&v);
-        v.vt = VT_BSTR;
-        v.bstrVal = SysAllocString(L"WidgetsButton");
-        IUIAutomation_CreatePropertyCondition(*uia, UIA_AutomationIdPropertyId, v, &cond);
-        VariantClear(&v);
-        if (tb && cond && SUCCEEDED(IUIAutomation_ElementFromHandle(*uia, tb, &root)) && root) {
-            IUIAutomationElement_FindFirst(root, TreeScope_Descendants, cond, el);
-            IUIAutomationElement_Release(root);
-        }
+        IUIAutomationCondition *cond = uia_cond(*uia, UIA_AutomationIdPropertyId, L"WidgetsButton");
+        *el = uia_find(*uia, FindWindowW(L"Shell_TrayWnd", NULL), cond);
         SAFE_RELEASE(cond);
         if (!*el) return false;
     }
@@ -274,6 +243,8 @@ static bool media_widgets_button(IUIAutomation **uia, IUIAutomationElement **el,
     return true;
 }
 
+// Polls the current session (fast for a moment after a button press) and publishes what changed to the UI
+// thread (M.pub, WM_APP_MEDIA). Runs the playback commands it is sent.
 static DWORD WINAPI media_thread(void *param)
 {
     (void)param;
@@ -398,6 +369,7 @@ static void mtext_free(MText *t)
     memset(t, 0, sizeof *t);
 }
 
+// A line of text as a coverage strip (the widget is drawn on the CPU, not through the glyph atlas).
 static void mtext_make(MText *t, int font, f32 size, const WCHAR *s)
 {
     mtext_free(t);
@@ -417,62 +389,19 @@ static void mtext_make(MText *t, int font, f32 size, const WCHAR *s)
     pen = 0;
     for (int i = 0; i < len;) {
         u32 cp = utf16_next(s, len, &i);
-        GlyphMap *g = glyph_map(font, cp == '\t' ? ' ' : cp);
-        f32 adv = g->adv * size;
-        Face *f = cp == ' ' || cp == '\t' ? NULL : face_get(g->face);
-        if (f) {
-            u16 glyph = g->glyph;
-            FLOAT a = 0;
-            DW_GLYPH_OFFSET off = { 0, 0 };
-            DW_GLYPH_RUN run;
-            memset(&run, 0, sizeof run);
-            run.fontFace = f->face;
-            run.fontEmSize = size;
-            run.glyphCount = 1;
-            run.glyphIndices = &glyph;
-            run.glyphAdvances = &a;
-            run.glyphOffsets = &off;
-            DWGlyphRunAnalysis *ana = NULL;
-            UINT32 tex = DW_TEXTURE_CLEARTYPE_3x1;
-            f32 ox = (f32)pad + pen, oy = (f32)t->base;
-            HRESULT hr = E_FAIL;
-            if (F.v2) {
-                hr = F.dw->lpVtbl->CreateGlyphRunAnalysis2(F.dw, &run, NULL, DW_RENDERING_MODE_NATURAL_SYMMETRIC, DW_MEASURING_MODE_NATURAL,
-                                                           DW_GRID_FIT_MODE_DEFAULT, DW_TEXT_ANTIALIAS_MODE_GRAYSCALE, ox, oy, &ana);
-                tex = DW_TEXTURE_ALIASED_1x1;
-            }
-            if (FAILED(hr)) {
-                hr = F.dw->lpVtbl->CreateGlyphRunAnalysis(F.dw, &run, 1.0f, NULL, DW_RENDERING_MODE_NATURAL_SYMMETRIC, DW_MEASURING_MODE_NATURAL,
-                                                          ox, oy, &ana);
-                tex = DW_TEXTURE_CLEARTYPE_3x1;
-            }
-            if (SUCCEEDED(hr) && ana) {
-                RECT b = { 0, 0, 0, 0 };
-                ana->lpVtbl->GetAlphaTextureBounds(ana, tex, &b);
-                if (b.right <= b.left && tex == DW_TEXTURE_ALIASED_1x1) {
-                    tex = DW_TEXTURE_CLEARTYPE_3x1;
-                    ana->lpVtbl->GetAlphaTextureBounds(ana, tex, &b);
+        if (cp == '\t') cp = ' ';
+        GlyphMap *g = glyph_map(font, cp);
+        Face *f = cp == ' ' ? NULL : face_get(g->face);
+        RECT b;
+        if (f && glyph_alpha(f, g->glyph, size, (f32)pad + pen, (f32)t->base, &b, tmp, sizeof tmp)) {
+            int w = b.right - b.left;
+            for (int y = MAX(b.top, 0); y < MIN(b.bottom, t->h); y++)
+                for (int x = MAX(b.left, 0); x < MIN(b.right, t->w); x++) {
+                    u8 *d = &t->cov[(size_t)y * t->w + x];
+                    *d = (u8)MIN(255, *d + tmp[(size_t)(y - b.top) * w + (x - b.left)]);
                 }
-                int w = b.right - b.left, h = b.bottom - b.top, bpp = tex == DW_TEXTURE_CLEARTYPE_3x1 ? 3 : 1;
-                if (w > 0 && h > 0 && w * h * bpp <= (int)sizeof tmp &&
-                    SUCCEEDED(ana->lpVtbl->CreateAlphaTexture(ana, tex, &b, tmp, (UINT32)(w * h * bpp)))) {
-                    for (int y = 0; y < h; y++) {
-                        int ty = b.top + y;
-                        if (ty < 0 || ty >= t->h) continue;
-                        for (int x = 0; x < w; x++) {
-                            int tx = b.left + x;
-                            if (tx < 0 || tx >= t->w) continue;
-                            const u8 *p = tmp + ((size_t)y * w + x) * bpp;
-                            int v = bpp == 1 ? p[0] : (p[0] + p[1] + p[2]) / 3;
-                            u8 *d = &t->cov[(size_t)ty * t->w + tx];
-                            *d = (u8)MIN(255, *d + v);
-                        }
-                    }
-                }
-                ana->lpVtbl->Release(ana);
-            }
         }
-        pen += adv;
+        pen += g->adv * size;
     }
 }
 
@@ -574,16 +503,6 @@ static f32 media_icon(int part, bool playing, f32 fx, f32 fy)
     return CLAMP(0.5f - d, 0.f, 1.f);
 }
 
-static void media_free_bitmap(void)
-{
-    if (M.dc) DeleteDC(M.dc);
-    if (M.bmp) DeleteObject(M.bmp);
-    M.dc = NULL;
-    M.bmp = NULL;
-    M.bits = NULL;
-    M.bmp_w = M.bmp_h = 0;
-}
-
 static bool media_playing(void)
 {
     if (M.toggle_local && time_now() < M.toggle_until) return M.toggle_status == MS_PLAYING;
@@ -611,26 +530,10 @@ static void media_render_cols(int xa, int xb)
 {
     int w = M.w, h = M.h;
     if (w <= 0 || h <= 0) return;
-    if (!M.bmp || M.bmp_w != w || M.bmp_h != h) {
+    if (!M.layer.bmp || M.layer.w != w || M.layer.h != h) {
         xa = 0;
         xb = w;
-        media_free_bitmap();
-        BITMAPINFO bi;
-        memset(&bi, 0, sizeof bi);
-        bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-        bi.bmiHeader.biWidth = w;
-        bi.bmiHeader.biHeight = -h;
-        bi.bmiHeader.biPlanes = 1;
-        bi.bmiHeader.biBitCount = 32;
-        M.dc = CreateCompatibleDC(NULL);
-        M.bmp = CreateDIBSection(M.dc, &bi, DIB_RGB_COLORS, (void **)&M.bits, NULL, 0);
-        if (!M.bmp) {
-            media_free_bitmap();
-            return;
-        }
-        SelectObject(M.dc, M.bmp);
-        M.bmp_w = w;
-        M.bmp_h = h;
+        if (!layer_fit(&M.layer, w, h)) return;
     }
 
     bool light = M.light, playing = media_playing();
@@ -653,7 +556,7 @@ static void media_render_cols(int xa, int xb)
     f32 tx0 = M.text_x, tx1 = M.text_x + M.text_w, fade = MS(12);
     f32 text_a = content * M.text_a;
 
-    u32 *px = M.bits;
+    u32 *px = M.layer.bits;
     for (int y = 0; y < h; y++) {
         for (int x = MAX(xa, 0); x < MIN(xb, w); x++) {
             f32 fx = (f32)x + 0.5f, fy = (f32)y + 0.5f;
@@ -711,16 +614,10 @@ static void media_render_cols(int xa, int xb)
                 }
             }
 
-            if (a < 1.f / 255.f) a = 1.f / 255.f;  // alpha 0 would let clicks through to the taskbar
-            u32 A = (u32)(a * 255.f + 0.5f);
-            u32 R = (u32)(CLAMP(col[0], 0.f, a) * 255.f + 0.5f), G = (u32)(CLAMP(col[1], 0.f, a) * 255.f + 0.5f), B = (u32)(CLAMP(col[2], 0.f, a) * 255.f + 0.5f);
-            px[y * w + x] = (A << 24) | (R << 16) | (G << 8) | B;
+            px[y * w + x] = px_pack(col, a);
         }
     }
-    SIZE sz = { w, h };
-    POINT src = { 0, 0 };
-    BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
-    if (M.wnd) UpdateLayeredWindow(M.wnd, NULL, NULL, &sz, M.dc, &src, 0, &bf, ULW_ALPHA);
+    layer_show(&M.layer, M.wnd);
 }
 
 static void media_render(void) { media_render_cols(0, M.w); }
@@ -836,7 +733,7 @@ static bool media_create(void)
     if (M.wnd && IsWindow(M.wnd) && M.taskbar == tb) return true;
     if (M.wnd && IsWindow(M.wnd)) DestroyWindow(M.wnd);
     M.wnd = NULL;
-    media_free_bitmap();
+    layer_free(&M.layer);
     M.taskbar = tb;
     M.visible = false;
     M.vis_t = 0;
@@ -938,10 +835,9 @@ static BOOL CALLBACK media_find_window(HWND h, LPARAM lp)
     if (!IsWindowVisible(h) || GetWindow(h, GW_OWNER) || (GetWindowLongW(h, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) || !GetWindowTextLengthW(h)) return TRUE;
     IPropertyStore *ps = NULL;
     if (SUCCEEDED(SHGetPropertyStoreForWindow(h, &IID_IPropertyStore, (void **)&ps)) && ps) {
-        static const PROPERTYKEY key = { { 0x9f4c2855, 0x9f79, 0x4b39, { 0xa8, 0xd0, 0xe1, 0xd4, 0x2d, 0xe1, 0xd5, 0xf3 } }, 5 };
         PROPVARIANT v;
         PropVariantInit(&v);
-        bool hit = SUCCEEDED(IPropertyStore_GetValue(ps, &key, &v)) && v.vt == VT_LPWSTR && v.pwszVal && !_wcsicmp(v.pwszVal, mf->app);
+        bool hit = SUCCEEDED(IPropertyStore_GetValue(ps, &ML_PKEY_AppUserModel_ID, &v)) && v.vt == VT_LPWSTR && v.pwszVal && !_wcsicmp(v.pwszVal, mf->app);
         PropVariantClear(&v);
         IPropertyStore_Release(ps);
         if (hit) {
@@ -996,8 +892,7 @@ static void media_menu_pick(int cmd)
         settings_open_at(SID_MEDIA);
         break;
     case MM_HIDE:
-        g_cfg.media_widget = false;
-        config_set("media_widget", "0");
+        cfg_set(CF_MEDIA_WIDGET, 0);
         media_set_enabled(false);
         settings_invalidate();
         break;
@@ -1063,8 +958,7 @@ static LRESULT CALLBACK media_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         int p = media_part_at(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
         if (!M.hover_any) {
             M.hover_any = true;
-            TRACKMOUSEEVENT tme = { sizeof tme, TME_LEAVE, h, 0 };
-            TrackMouseEvent(&tme);
+            track_mouse_leave(h);
             media_kick();
         }
         if (p != M.hover) {
@@ -1126,7 +1020,7 @@ static void media_explorer_restarted(void)
     if (!M.enabled) return;
     if (M.wnd && IsWindow(M.wnd)) DestroyWindow(M.wnd);
     M.wnd = NULL;
-    media_free_bitmap();
+    layer_free(&M.layer);
     M.taskbar = NULL;
     media_sync();
 }
@@ -1144,10 +1038,11 @@ static void media_set_enabled(bool on)
     if (on) {
         window_class(MW_CLASS, media_wndproc, CS_DBLCLKS, NULL, NULL);
         M.light = taskbar_light();
-        if (!M.thread) {
+        if (!M.started) {
+            M.started = true;
             InitializeSRWLock(&M.lock);
             M.wake = CreateEventW(NULL, FALSE, FALSE, NULL);
-            M.thread = CreateThread(NULL, 0, media_thread, NULL, 0, NULL);
+            thread_start(media_thread, NULL);
         }
         SetEvent(M.wake);
         media_sync();
@@ -1156,7 +1051,7 @@ static void media_set_enabled(bool on)
         M.wnd = NULL;
         M.want = false;
         M.vis_t = 0;
-        media_free_bitmap();
+        layer_free(&M.layer);
         AcquireSRWLockExclusive(&M.lock);
         memset(&M.pub, 0, sizeof M.pub);
         free(M.pub_art);
@@ -1213,13 +1108,13 @@ static int media_dump(const WCHAR *out, int dpi, bool light, const WCHAR *mode)
     media_render();
     int w = M.w, hh = (int)floorf(48.f * M.s + 0.5f), y0 = (hh - M.h) / 2;
     u32 *img = (u32 *)malloc((size_t)w * hh * 4);
-    if (!img || !M.bits) return 1;
+    if (!img || !M.layer.bits) return 1;
     u32 bg = light ? 0xF3F3F3 : 0x1C1C1C;
     for (int y = 0; y < hh; y++)
         for (int x = 0; x < w; x++) {
             u32 d = alpha ? 0 : bg;
             if (y >= y0 && y < y0 + M.h) {
-                u32 p = M.bits[(y - y0) * w + x], a = p >> 24, r = 0;
+                u32 p = M.layer.bits[(y - y0) * w + x], a = p >> 24, r = 0;
                 for (int k = 0; k < 24; k += 8)
                     r |= (alpha ? (a ? MIN(255u, ((p >> k) & 255) * 255 / a) : 0) : MIN(255u, ((p >> k) & 255) + ((bg >> k) & 255) * (255 - a) / 255)) << k;
                 d = alpha ? r | (a << 24) : r;
@@ -1242,7 +1137,8 @@ static int media_dump(const WCHAR *out, int dpi, bool light, const WCHAR *mode)
     buf_put(&b, &fh, sizeof fh);
     buf_put(&b, &ih, sizeof ih);
     buf_put(&b, img, (size_t)w * hh * 4);
-    write_file_atomic(out, b.data, (DWORD)b.len);
+    free(img);
+    buf_save(&b, out);
     Buf t = { 0 };
     buf_printf(&t, "has=%d status=%d prev=%d toggle=%d next=%d art=%d\n", M.info.has, M.info.status, M.info.can_prev, M.info.can_toggle,
                M.info.can_next, M.art != NULL);
@@ -1254,6 +1150,6 @@ static int media_dump(const WCHAR *out, int dpi, bool light, const WCHAR *mode)
     buf_put(&t, "\n", 1);
     WCHAR txt[MAX_PATH + 8];
     wfmt(txt, countof(txt), L"%s.txt", out);
-    write_file_atomic(txt, t.data, (DWORD)t.len);
+    buf_save(&t, txt);
     return 0;
 }

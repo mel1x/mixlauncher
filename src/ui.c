@@ -1,29 +1,26 @@
-typedef struct Theme {
-    bool dark;
-    u32 bg, bg_solid;
-    u32 text, dim, faint;
-    u32 sel, sep, accent, text_sel;
-    u32 key_bg, key_border, danger, tile;
-} Theme;
+// The launcher: its state (U), the rows it shows, the search behind them and the query field.
+// Window and visibility are in ui_window.c, drawing in ui_draw.c, input in ui_input.c; the Start styles add
+// start.c and start10.c.
 
 enum { ROW_HEADER, ROW_APP, ROW_FILE, ROW_INFO, ROW_VIRTUAL };
 
 // A full-width row, a Start grid tile, a Start section title, its hint, a Windows 10 tile.
 enum { CELL_ROW, CELL_TILE, CELL_TITLE, CELL_HINT, CELL_W10 };
+enum { TILE_SMALL, TILE_MEDIUM, TILE_WIDE, TILE_LARGE, TILE__COUNT };  // Windows 10 tile sizes
 
 typedef struct Row {
     u8 kind, cell, tsize;
     App *app;
     FileItem *file;
     const WCHAR *text;
-    f32 x, y, w, h;
+    f32 x, y, w, h;  // in the list's content, y from its top
 } Row;
 
 typedef struct AppHit {
     App *app;
     f32 score;
-    int raw;
-    bool alt;
+    int raw;   // the match alone, before frecency
+    bool alt;  // matched in the other keyboard layout
 } AppHit;
 
 typedef struct TagHit {
@@ -39,7 +36,7 @@ typedef struct TagHit {
 static struct {
     bool visible;
     bool closing;
-    f32 vis, vis_target;
+    f32 vis, vis_target;  // 0..1, how far it has opened
     int alpha;
     HWND prev_fg;
     bool app_mode;
@@ -49,7 +46,7 @@ static struct {
     f32 slide_off, slide_v;  // offset from the resting place and its velocity, px
     bool no_focus_restore;
     int prtsc_ticks;  // PrtSc hand-off (hotkey.c): the foreground is taken back when the screenshot tool is done
-    int settings_btn[4], update_btn[4];
+    f32 settings_btn[4], update_btn[4];
     bool settings_hover, press_settings, update_hover, press_update;
     f32 update_hover_t;
     f64 hide_time;
@@ -67,15 +64,15 @@ static struct {
     TagHit thits[16];
     int thit_count;
     bool tags_first;
-    bool files_alt;
+    bool files_alt;  // the file search goes in the other layout too
     FileResults *files;
     u32 files_req_id;
     bool files_pending;
-    FileResults **fpages;
+    FileResults **fpages;  // pages fetched while scrolling, each owning its items
     int fpage_count, fpage_cap;
-    FileItem **flist;
+    FileItem **flist;      // every file so far, in order
     int flist_count, flist_cap;
-    int files_shown;
+    int files_shown;       // of flist; the rest of the total is a placeholder row (ROW_VIRTUAL)
     u32 files_total, files_fetched;
     bool files_more_pending;
     f32 files_end_y;
@@ -93,20 +90,20 @@ static struct {
     int press_row;
     f32 content_h;
     f32 scroll, scroll_target, scroll_v;
-    f32 hl_y, hl_h, hl_vy, hl_vh;
+    f32 hl_y, hl_h, hl_vy, hl_vh;  // the highlight on its springs
     f32 hl_x, hl_w, hl_vx, hl_vw;
     f64 open_time;
     f32 settings_hover_t;
-    f32 sb_t, sb_prev;
-    WCHAR hq[Q_MAX + 1], hq_alt[Q_MAX + 1];
+    f32 sb_t, sb_prev;  // the scrollbar: shown while scrolling or hovered
+    WCHAR hq[Q_MAX + 1], hq_alt[Q_MAX + 1];  // the query as highlighted in names
     int hq_len;
     bool hq_has_alt;
     f64 sb_seen;
     bool sb_hot;
-    const WCHAR *sub_text;
+    const WCHAR *sub_text;  // the note at the right of the selected row
     u32 sub_col;
     f32 sub_t;
-    struct {
+    struct {  // the context menu, ctxmenu.c
         bool open, closing;
         f32 t;
         f32 x, y, w, h;
@@ -116,7 +113,7 @@ static struct {
         struct { int cmd; u32 glyph; const WCHAR *label, *keys; bool sep, disabled; f32 y; } it[16];
         WCHAR tag_count[32], tag_list[96];
     } cm;
-    struct {
+    struct {  // the tag dialog, tagdlg.c
         bool open, closing;
         f32 t;
         WCHAR buf[TAG_INPUT_MAX + 1];
@@ -131,38 +128,38 @@ static struct {
     f64 last_frame;
     bool dirty, animating;
 
-    App *armed;
+    App *armed;  // a command that asks for a second Enter
     int mouse_x, mouse_y;
     bool menu_open;
     bool settings_after_hide;
 
-    struct {
+    struct {  // the Windows 11 style, start.c
         bool all_view;      // "All apps" instead of the pinned grid
         App *tiles[36];     // pinned
         int tile_count;
         App *recs[18];      // recommended: the most launched of the rest
         int rec_count;
-        int title_btn[4];   // the section title's button, window coords
+        f32 title_btn[4];   // the section title's button
         bool title_hover, title_press;
         f32 title_hover_t;
-        int fb[5][4];       // footer: account, downloads, explorer, settings, power
+        f32 fb[5][4];       // footer: account, downloads, explorer, settings, power
         int fb_hover, fb_press;
         f32 fb_hover_t[5];
         WCHAR letters[72][2];
         int letter_count;
     } st;
     int tsel;  // Windows 10: the tile under the pointer (sel_row() then returns it), -1 none
-    struct {
+    struct {  // the Windows 10 style, start10.c
         Row tiles[64];
         int tile_count;
         f32 tiles_h, tscroll, tscroll_target;
         int press_tile;
         bool rail_open;
         f32 rail_t;
-        int rail[6][4];     // menu, account, explorer, downloads, settings, power
+        f32 rail[6][4];     // menu, account, explorer, downloads, settings, power
         int rail_hover, rail_press;
         f32 rail_hover_t[6];
-        int act[4][4];      // search: the actions of the selected result
+        f32 act[4][4];      // search: the actions of the selected result
         int act_cmd[4], act_n, act_hover, act_press;
         App *tdrag;         // the tile being dragged to a new cell, and that cell
         int drag_cx, drag_cy;
@@ -178,7 +175,6 @@ static struct {
     f32 s;
     int W, H;
     f32 search_h, footer_h, list_y0, list_y1;
-    Theme th;
     bool backdrop_ok;
     f64 last_reindex;
 } U;
@@ -186,158 +182,10 @@ static struct {
 // Showing results: a query is typed, or the search was opened empty.
 static bool q_active(void) { return U.qlen || U.search_mode; }
 
-static bool g_pinned;
-static bool g_other_monitor;
-
 static void ui_invalidate(void) { U.dirty = true; }
-
-// The Windows 11 (Start menu) style, start.c
-static bool st_on(void);
-static void st_build_home(void);
-static void st_refresh_tiles(void);
-static void st_metrics(void);
-static void st_draw_chrome(void);
-static void st_draw_footer(void);
-static void st_draw_cell(Row *r, f32 y, bool selected);
-static void st_draw_highlight(f32 off);
-static bool st_animate(f32 dt);
-enum { TILE_SMALL, TILE_MEDIUM, TILE_WIDE, TILE_LARGE, TILE__COUNT };
-static int pin_index(const WCHAR *id);
-static int pin_size(int i);
-static void pin_set_size(const WCHAR *id, int size);
-static void pin_set(const WCHAR *id, bool on);
-static void pin_to_top(const WCHAR *id);
-static void st_pins_changed(void);
-static void st_menu_pick(int cmd);
-static void open_settings_from_launcher(void);
-// The Windows 10 style, start10.c
-static bool w10_on(void);
-static void w10_metrics(void);
-static void w10_fit_size(void);
-static void w10_build_home(void);
-static void w10_refresh_tiles(void);
-static void w10_pins_freeze(void);
-static void w10_place_rows(void);
-static void w10_draw_chrome(void);
-static void w10_draw_overlay(void);
-static bool w10_animate(f32 dt);
-static f32 list_x0(void);
-static f32 list_x1(void);
-static int w10_act_at(int x, int y);
-static void w10_act_run(int i);
-static void w10_draw_preview(void);
-static bool st_search(void);
-static void st_place_rows(void);
-
-static bool tag_hit_has(const WCHAR *full);
 
 static f32 S(f32 v) { return v * U.s; }
 static f32 SR(f32 v) { return floorf(v * U.s + 0.5f); }
-
-static bool reg_dword(HKEY root, const WCHAR *key, const WCHAR *name, DWORD *out)
-{
-    DWORD sz = sizeof(DWORD);
-    return RegGetValueW(root, key, name, RRF_RT_REG_DWORD, NULL, out, &sz) == ERROR_SUCCESS;
-}
-
-static bool system_dark(void)
-{
-    DWORD light = 0;
-    if (reg_dword(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"AppsUseLightTheme", &light)) return light == 0;
-    return true;
-}
-
-static void theme_update(void)
-{
-    bool dark = g_cfg.theme == 1 ? true : g_cfg.theme == 2 ? false : system_dark();
-    Theme *t = &U.th;
-    t->dark = dark;
-
-    u32 acc = RGBA(0, 120, 212, 255);
-    BYTE pal[32];
-    DWORD sz = sizeof pal;
-    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent", L"AccentPalette",
-                     RRF_RT_REG_BINARY, NULL, pal, &sz) == ERROR_SUCCESS && sz >= 32) {
-        int i = dark ? 1 : 4;
-        acc = RGBA(pal[i * 4], pal[i * 4 + 1], pal[i * 4 + 2], 255);
-    } else {
-        DWORD c;
-        if (reg_dword(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\DWM", L"AccentColor", &c)) acc = RGBA(c & 255, (c >> 8) & 255, (c >> 16) & 255, 255);
-    }
-    t->accent = acc;
-    if (dark) {
-        t->bg = g_cfg.backdrop == BACKDROP_BLUR ? RGBA(24, 24, 27, 150) : RGBA(28, 28, 30, 90);
-        t->bg_solid = RGBA(32, 32, 34, 250);
-        t->text = RGBA(255, 255, 255, 236);
-        t->dim = RGBA(255, 255, 255, 150);
-        t->faint = RGBA(255, 255, 255, 92);
-        t->sel = RGBA(255, 255, 255, 20);
-        t->sep = RGBA(255, 255, 255, 22);
-        t->key_bg = RGBA(255, 255, 255, 24);
-        t->key_border = RGBA(255, 255, 255, 26);
-        t->danger = RGBA(255, 107, 107, 255);
-        t->tile = RGBA(255, 255, 255, 30);
-    } else {
-        t->bg = g_cfg.backdrop == BACKDROP_BLUR ? RGBA(250, 250, 252, 150) : RGBA(252, 252, 253, 110);
-        t->bg_solid = RGBA(249, 249, 251, 250);
-        t->text = RGBA(0, 0, 0, 228);
-        t->dim = RGBA(0, 0, 0, 140);
-        t->faint = RGBA(0, 0, 0, 90);
-        t->sel = RGBA(0, 0, 0, 13);
-        t->sep = RGBA(0, 0, 0, 20);
-        t->key_bg = RGBA(0, 0, 0, 14);
-        t->key_border = RGBA(0, 0, 0, 22);
-        t->danger = RGBA(196, 43, 28, 255);
-        t->tile = RGBA(0, 0, 0, 22);
-    }
-    t->text_sel = color_alpha(acc, dark ? 0.45f : 0.30f);
-    if (g_hwnd) dwm_set(g_hwnd, DWA_DARK, dark);
-}
-
-enum { SEL_PILL, SEL_FILL, SEL_BAR };
-
-typedef struct LStyle {
-    f32 row_h, header_h, icon, icon_gap;
-    f32 search_h, search_fs, search_icon, name_fs, footer_h;
-    f32 inset, sel_r, tile_r, key_r;
-    int corner;  // DWC_*
-    u8 sel;
-    bool footer_tint, all_notes;
-} LStyle;
-
-static const LStyle k_lstyles[STYLE__COUNT] = {
-    [STYLE_STANDARD] = { 42, 30, 28, 12, 60, 20, 17, 14, 40, 8, 8, 7, 5, DWC_ROUND, SEL_PILL, false, false },
-    [STYLE_RAYCAST] = { 40, 30, 20, 12, 56, 18, 16, 14, 40, 8, 8, 5, 5, DWC_ROUND, SEL_FILL, true, true },
-    [STYLE_FLUENT] = { 40, 32, 24, 14, 56, 18, 16, 14, 42, 6, 4, 4, 4, DWC_ROUND, SEL_BAR, false, false },
-    [STYLE_COMPACT] = { 32, 26, 20, 10, 48, 16, 15, 13, 36, 6, 6, 5, 4, DWC_ROUND_SMALL, SEL_PILL, false, false },
-    [STYLE_START] = { 44, 34, 32, 14, 66, 14, 14, 14, 66, 39, 4, 4, 4, DWC_ROUND, SEL_PILL, false, false },
-    [STYLE_WIN10] = { 36, 36, 28, 12, 48, 14, 14, 14, 0, 4, 0, 0, 2, DWC_SQUARE, SEL_PILL, false, false },
-};
-
-static const LStyle *LS(void) { return &k_lstyles[CLAMP(g_cfg.style, 0, STYLE__COUNT - 1)]; }
-
-static bool backdrop_apply(HWND h)
-{
-    dwm_set(h, DWA_CORNER, (DWORD)LS()->corner);
-    PFN_SetWindowCompositionAttribute swca = (PFN_SetWindowCompositionAttribute)(void *)GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetWindowCompositionAttribute");
-    int mode = g_cfg.backdrop;
-    if (mode == BACKDROP_ACRYLIC) {
-        if (dwm_backdrop(h, DWB_ACRYLIC)) return true;
-        mode = BACKDROP_BLUR;
-    }
-    dwm_set(h, DWA_BACKDROP, DWB_NONE);
-    MARGINS zero = { 0, 0, 0, 0 };
-    DwmExtendFrameIntoClientArea(h, &zero);
-    ML_ACCENT_POLICY ap = { 0, 0, 0, 0 };
-    if (mode == BACKDROP_BLUR) {
-        ap.accent_state = 4;  // ACCENT_ENABLE_ACRYLICBLURBEHIND
-        ap.accent_flags = 2;
-        ap.gradient_color = U.th.dark ? 0x30201e1eu : 0x30f8f6f6u;
-    }
-    ML_WINCOMPATTR_DATA d = { 19 /*WCA_ACCENT_POLICY*/, &ap, sizeof ap };
-    bool ok = swca && swca(h, &d);
-    return mode == BACKDROP_BLUR && ok;
-}
 
 #define ROW_H (st_on() && q_active() ? 56.f : LS()->row_h)  // the Windows 11 search: room for the icon plates
 #define HEADER_H (LS()->header_h)
@@ -369,15 +217,11 @@ static void ui_metrics(u32 dpi)
 
 static f32 list_height(void) { return U.list_y1 - U.list_y0; }
 
+// ---- rows
+
 static Row *row_add(u8 kind, f32 h)
 {
-    if (U.row_count == U.row_cap) {
-        int nc = U.row_cap ? U.row_cap * 2 : 256;
-        Row *nr = (Row *)realloc(U.rows, sizeof(Row) * nc);
-        if (!nr) return NULL;
-        U.rows = nr;
-        U.row_cap = nc;
-    }
+    if (!GROW(U.rows, U.row_cap, U.row_count + 1, 256)) return NULL;
     Row *r = &U.rows[U.row_count++];
     memset(r, 0, sizeof *r);
     r->kind = kind;
@@ -413,6 +257,7 @@ static void row_file(FileItem *f)
     if (r) r->file = f;
 }
 
+// The first row that ends below y.
 static int row_first_below(f32 y)
 {
     int lo = 0, hi = U.row_count;
@@ -436,6 +281,7 @@ static int first_selectable(int from, int dir)
 #define FILES_STEP 40
 #define FILES_VIRTUAL_MAX 100000
 
+// Rows the file list takes: the ones loaded, or the total Everything reported while more pages are to come.
 static int files_virtual_total(void)
 {
     int n = U.flist_count;
@@ -443,6 +289,10 @@ static int files_virtual_total(void)
     return n;
 }
 
+static bool tag_hit_has(const WCHAR *full);
+
+// Lays out what the launcher shows now: a Start home, the empty view or the results. keep_sel keeps the
+// selected row where it can.
 static void rebuild_rows(bool keep_sel)
 {
     int old = U.sel;
@@ -492,7 +342,6 @@ static void rebuild_rows(bool keep_sel)
                 int total = files_virtual_total();
                 if (total > U.files_shown) wfmt(U.files_header, countof(U.files_header), L"%ls  ·  %d", TR("Файлы", "Files"), (int)U.files_total);
                 else wcopy(U.files_header, countof(U.files_header), TR("Файлы", "Files"));
-                U.files_header[countof(U.files_header) - 1] = 0;
                 row_header(U.files_header);
                 for (int i = 0; i < U.files_shown; i++)
                     if (!U.thit_count || !tag_hit_has(U.flist[i]->full)) row_file(U.flist[i]);
@@ -526,6 +375,7 @@ static void snap_highlight(void)
     U.hl_vy = U.hl_vh = U.hl_vx = U.hl_vw = 0;
 }
 
+// Scrolls a row into view, with its section header (and from the very top for the first one).
 static void ensure_visible(int idx, bool animate)
 {
     if (!row_selectable(idx)) return;
@@ -543,6 +393,8 @@ static void ensure_visible(int idx, bool animate)
     U.animating = true;
 }
 
+// ---- search
+
 static int cmp_hits(const void *a, const void *b)
 {
     const AppHit *x = (const AppHit *)a, *y = (const AppHit *)b;
@@ -550,6 +402,7 @@ static int cmp_hits(const void *a, const void *b)
     return x->app < y->app ? -1 : 1;
 }
 
+// The query trimmed and normalized for matching.
 static int query_norm(WCHAR *out)
 {
     int b = 0, e = U.qlen;
@@ -559,13 +412,15 @@ static int query_norm(WCHAR *out)
     return e - b;
 }
 
+static u64 app_hist_hash(const App *a) { return item_hash_of(app_item_type(a), a->id_hash); }
+
 static void refresh_frecency(void)
 {
     if (!U.apps) return;
     i64 now = unix_now();
     for (int i = 0; i < U.apps->count; i++) {
         App *a = &U.apps->apps[i];
-        a->frec = frec_bonus(hist_frecency(a->kind == APP_CMD ? 'c' : 'a', a->id, now));
+        a->frec = frec_bonus(hist_frecency(app_item_type(a), a->id, app_hist_hash(a), now));
     }
 }
 
@@ -575,6 +430,7 @@ static int cmp_frequent(const void *a, const void *b)
     return x->frec < y->frec ? 1 : x->frec > y->frec ? -1 : 0;
 }
 
+// The empty launcher: the apps used most and the files opened lately.
 static void refresh_empty_view(void)
 {
     U.frequent_count = 0;
@@ -595,15 +451,10 @@ static void refresh_empty_view(void)
         FileItem *f = &U.recent[U.recent_count++];
         memset(f, 0, sizeof *f);
         f->full = wdup(&U.recent_arena, rf[i].path, -1);
-        const WCHAR *slash = wcsrchr(f->full, '\\');
-        bool root = slash && slash[1] == 0;
-        if (slash && !root) {
-            f->name = (WCHAR *)slash + 1;
-            f->dir = wdup(&U.recent_arena, f->full, (int)(slash - f->full));
-        } else {
-            f->name = f->full;
-            f->dir = wdup(&U.recent_arena, L"", 0);
-        }
+        const WCHAR *name;
+        int dl = path_split(f->full, &name);
+        f->name = (WCHAR *)name;
+        f->dir = wdup(&U.recent_arena, f->full, dl);
         f->flags = rf[i].folder ? FI_FOLDER : 0;
         f->icon_key = icon_key_for_file(f->full, rf[i].folder);
     }
@@ -611,17 +462,16 @@ static void refresh_empty_view(void)
     if (w10_on()) w10_refresh_tiles();
 }
 
+#define KW_MIN (SCORE_SUBSTRING - 400)  // a keyword counts from a substring match up, a fuzzy one is too loose
+
+// Scores every app against the query (and the query in the other layout): its name, its hidden keywords and
+// its tags, then the launch history on top.
 static void search_apps(void)
 {
     U.hit_count = 0;
     U.files_alt = false;
     if (!U.apps || !U.qlen) return;
-    if (U.hit_cap < U.apps->count) {
-        AppHit *nh = (AppHit *)realloc(U.hits, sizeof(AppHit) * U.apps->count);
-        if (!nh) return;
-        U.hits = nh;
-        U.hit_cap = U.apps->count;
-    }
+    if (!GROW(U.hits, U.hit_cap, U.apps->count, 256)) return;
     WCHAR qn[Q_MAX + 1], alt[Q_MAX + 1];
     int ql = query_norm(qn);
     if (!ql) return;
@@ -641,37 +491,38 @@ static void search_apps(void)
         int kw_pen = 300 + MIN(a->len, 60) * 2;
         for (int k = 0; k < a->kw_count; k++) {
             int sk = score_query(a->kw[k], a->kw_len[k], a->kw_ws[k], qn, ql);
-            if (sk >= SCORE_SUBSTRING - 400 && sk - kw_pen > sc) {
+            if (sk >= KW_MIN && sk - kw_pen > sc) {
                 sc = sk - kw_pen;
                 is_alt = false;
             }
             if (has_alt) {
                 int sa = score_query(a->kw[k], a->kw_len[k], a->kw_ws[k], alt, ql);
-                if (sa >= SCORE_SUBSTRING - 400 && (sa - kw_pen) * 9 / 10 > sc) {
+                if (sa >= KW_MIN && (sa - kw_pen) * 9 / 10 > sc) {
                     sc = (sa - kw_pen) * 9 / 10;
                     is_alt = true;
                 }
             }
         }
-        if (a->kind == APP_CMD) {
+        if (a->kind == APP_CMD) {  // commands only for a clear match, the risky ones from three letters
             if (sc < SCORE_SUBSTRING - 600 || (a->danger && ql < 3)) sc = 0;
             else sc -= 500;
         }
-        u8 type = a->kind == APP_CMD ? 'c' : 'a';
+        u8 type = app_item_type(a);
+        u64 h = app_hist_hash(a);
         if (TG.n) {
             bool tag_alt;
-            int st = tags_score(tags_find(type, a->id), qn, ql, alt, has_alt, &tag_alt);
+            int st = tags_score(tags_find(type, a->id, h), qn, ql, alt, has_alt, &tag_alt);
             if (st && st + 400 > sc) {  // the user's own word for it beats a name match of the same kind
                 sc = st + 400;
                 is_alt = tag_alt;
             }
         }
         if (sc <= 0) continue;
-        AppHit *h = &U.hits[U.hit_count++];
-        h->app = a;
-        h->alt = is_alt;
-        h->raw = sc;
-        h->score = (f32)sc + a->frec + qmem_bonus(type, a->id, qn, ql, now);
+        AppHit *hit = &U.hits[U.hit_count++];
+        hit->app = a;
+        hit->alt = is_alt;
+        hit->raw = sc;
+        hit->score = (f32)sc + a->frec + qmem_bonus(h, qn, ql, now);
     }
     qsort(U.hits, U.hit_count, sizeof(AppHit), cmp_hits);
     // Other-layout file search only for a clear name match: a loose fuzzy hit must not hide the file results.
@@ -707,12 +558,12 @@ static void search_tags(void)
     int n = 0;
     for (int i = 0; i < TG.n && n < countof(tmp); i++) {
         TagItem *ti = TG.items[i];
-        if (ti->type != 'f' && ti->type != 'd') continue;
+        if (ti->type != IT_FILE && ti->type != IT_DIR) continue;
         bool is_alt;
         int st = tags_score(ti, qn, ql, alt, has_alt, &is_alt);
         if (!st) continue;
         tmp[n].file = &ti->file;
-        tmp[n].score = (f32)(st + 400) + frec_bonus(hist_frecency(ti->type, ti->key, now)) + qmem_bonus(ti->type, ti->key, qn, ql, now);
+        tmp[n].score = (f32)(st + 400) + frec_bonus(hist_frecency(ti->type, ti->key, ti->hash, now)) + qmem_bonus(ti->hash, qn, ql, now);
         n++;
     }
     qsort(tmp, n, sizeof(TagHit), cmp_tag_hits);
@@ -728,6 +579,8 @@ static bool tag_hit_has(const WCHAR *full)
     return false;
 }
 
+// ---- files (everything.c answers through on_files_ready)
+
 static void files_clear(void)
 {
     fileresults_free(U.files);
@@ -742,13 +595,7 @@ static void files_clear(void)
 
 static bool files_append(FileResults *r)
 {
-    if (U.flist_count + r->count > U.flist_cap) {
-        int nc = MAX(U.flist_cap * 2, U.flist_count + r->count + 256);
-        FileItem **nl = (FileItem **)realloc(U.flist, sizeof(FileItem *) * nc);
-        if (!nl) return false;
-        U.flist = nl;
-        U.flist_cap = nc;
-    }
+    if (!GROW(U.flist, U.flist_cap, U.flist_count + r->count, 256)) return false;
     for (int i = 0; i < r->count; i++) U.flist[U.flist_count++] = &r->items[i];
     return true;
 }
@@ -774,12 +621,7 @@ static void request_files(void)
     }
 }
 
-static int cmp_file_score2(const void *a, const void *b)
-{
-    const FileItem *x = (const FileItem *)a, *y = (const FileItem *)b;
-    return x->score < y->score ? 1 : x->score > y->score ? -1 : 0;
-}
-
+// Shows more of the loaded files as the list scrolls toward their end, and asks for the next page in time.
 static void files_load_more(void)
 {
     if (U.files_end_y < 0 || !U.files || U.files->status != EV_OK) return;
@@ -809,23 +651,17 @@ static void on_files_ready(FileResults *r)
         return;
     }
     i64 now = unix_now();
-    for (int i = 0; i < r->count; i++) r->items[i].score += frec_bonus(hist_frecency((r->items[i].flags & FI_FOLDER) ? 'd' : 'f', r->items[i].full, now));
-    qsort(r->items, r->count, sizeof(FileItem), cmp_file_score2);
+    for (int i = 0; i < r->count; i++) {
+        FileItem *f = &r->items[i];
+        u8 type = file_item_type(f);
+        f->score += frec_bonus(hist_frecency(type, f->full, item_hash(type, f->full), now));
+    }
+    qsort(r->items, r->count, sizeof(FileItem), cmp_file_score);
     if (r->page) {
         U.files_more_pending = false;
         U.files_total = r->total;
         U.files_fetched = r->fetched;
-        if (U.fpage_count == U.fpage_cap) {
-            int nc = U.fpage_cap ? U.fpage_cap * 2 : 16;
-            FileResults **np = (FileResults **)realloc(U.fpages, sizeof(FileResults *) * nc);
-            if (!np) {
-                fileresults_free(r);
-                return;
-            }
-            U.fpages = np;
-            U.fpage_cap = nc;
-        }
-        if (!files_append(r)) {
+        if (!GROW(U.fpages, U.fpage_cap, U.fpage_count + 1, 16) || !files_append(r)) {
             fileresults_free(r);
             return;
         }
@@ -867,6 +703,7 @@ static void on_query_changed(void)
     caret_reset();
 }
 
+// A new app list from the indexer (or the cache): the old one goes once nothing points into it.
 static void on_apps_ready(AppList *l)
 {
     AppList *old = U.apps;
@@ -880,6 +717,8 @@ static void on_apps_ready(AppList *l)
     snap_highlight();
     ui_invalidate();
 }
+
+// ---- the query field
 
 static bool is_word_char(WCHAR c) { return c != ' ' && !is_sep(c); }
 
@@ -897,44 +736,25 @@ static int word_right(int i)
     return i;
 }
 
+static bool surrogate_pair_at(int i) { return i > 0 && U.q[i] >= 0xDC00 && U.q[i] <= 0xDFFF && U.q[i - 1] >= 0xD800 && U.q[i - 1] <= 0xDBFF; }
+
 static int char_left(int i)
 {
     if (i <= 0) return 0;
     i--;
-    if (i > 0 && U.q[i] >= 0xDC00 && U.q[i] <= 0xDFFF && U.q[i - 1] >= 0xD800 && U.q[i - 1] <= 0xDBFF) i--;
-    return i;
+    return surrogate_pair_at(i) ? i - 1 : i;
 }
 
 static int char_right(int i)
 {
     if (i >= U.qlen) return U.qlen;
     i++;
-    if (i < U.qlen && U.q[i] >= 0xDC00 && U.q[i] <= 0xDFFF && U.q[i - 1] >= 0xD800 && U.q[i - 1] <= 0xDBFF) i++;
-    return i;
+    return i < U.qlen && surrogate_pair_at(i) ? i + 1 : i;
 }
 
 static void edit_replace(int a, int b, const WCHAR *s, int n)
 {
-    if (a > b) {
-        int t = a;
-        a = b;
-        b = t;
-    }
-    WCHAR clean[Q_MAX + 1];
-    int cn = 0;
-    for (int i = 0; i < n && cn < Q_MAX; i++) {
-        WCHAR c = s[i];
-        if (c == '\r' || c == '\n' || c == '\t') c = ' ';
-        if (c < 0x20 || c == 0x7F) continue;
-        clean[cn++] = c;
-    }
-    int room = Q_MAX - (U.qlen - (b - a));
-    if (cn > room) cn = MAX(room, 0);
-    memmove(U.q + a + cn, U.q + b, (size_t)(U.qlen - b) * sizeof(WCHAR));
-    memcpy(U.q + a, clean, (size_t)cn * sizeof(WCHAR));
-    U.qlen = U.qlen - (b - a) + cn;
-    U.q[U.qlen] = 0;
-    U.caret = U.anchor = a + cn;
+    U.caret = U.anchor = text_splice(U.q, &U.qlen, countof(U.q), a, b, s, n);
     on_query_changed();
 }
 
@@ -945,1242 +765,9 @@ static void edit_move(int pos, bool extend)
     caret_reset();
 }
 
-static void clipboard_set(const WCHAR *s, int n)
-{
-    if (n < 0) n = wlen(s);
-    if (!OpenClipboard(g_hwnd)) return;
-    EmptyClipboard();
-    HGLOBAL g = GlobalAlloc(GMEM_MOVEABLE, (size_t)(n + 1) * sizeof(WCHAR));
-    if (g) {
-        WCHAR *p = (WCHAR *)GlobalLock(g);
-        memcpy(p, s, (size_t)n * sizeof(WCHAR));
-        p[n] = 0;
-        GlobalUnlock(g);
-        if (!SetClipboardData(CF_UNICODETEXT, g)) GlobalFree(g);
-    }
-    CloseClipboard();
-}
-
 static void clipboard_paste(void)
 {
-    if (!OpenClipboard(g_hwnd)) return;
-    HANDLE h = GetClipboardData(CF_UNICODETEXT);
-    if (h) {
-        const WCHAR *p = (const WCHAR *)GlobalLock(h);
-        if (p) {
-            int n = 0;
-            while (p[n] && n < Q_MAX) n++;
-            WCHAR tmp[Q_MAX + 1];
-            memcpy(tmp, p, (size_t)n * sizeof(WCHAR));
-            GlobalUnlock(h);
-            CloseClipboard();
-            edit_replace(U.anchor, U.caret, tmp, n);
-            return;
-        }
-    }
-    CloseClipboard();
-}
-
-static void ui_render(void);
-
-static UINT monitor_dpi(HMONITOR m)
-{
-    typedef HRESULT (WINAPI *PFN_GetDpiForMonitor)(HMONITOR, int, UINT *, UINT *);
-    static PFN_GetDpiForMonitor f;
-    static bool tried;
-    if (!tried) {
-        tried = true;
-        HMODULE shcore = LoadLibraryW(L"shcore.dll");
-        if (shcore) f = (PFN_GetDpiForMonitor)(void *)GetProcAddress(shcore, "GetDpiForMonitor");
-    }
-    UINT x = 96, y = 96;
-    if (!f || FAILED(f(m, 0, &x, &y))) {
-        HDC dc = GetDC(NULL);
-        x = (UINT)GetDeviceCaps(dc, LOGPIXELSX);
-        ReleaseDC(NULL, dc);
-    }
-    return x;
-}
-
-static void force_foreground(HWND h)
-{
-    if (GetForegroundWindow() == h) return;
-    BringWindowToTop(h);
-    SetForegroundWindow(h);
-    if (GetForegroundWindow() != h) {
-        HWND fg = GetForegroundWindow();
-        DWORD fg_tid = fg ? GetWindowThreadProcessId(fg, NULL) : 0, me = GetCurrentThreadId();
-        if (fg_tid && fg_tid != me && AttachThreadInput(me, fg_tid, TRUE)) {
-            BringWindowToTop(h);
-            SetForegroundWindow(h);
-            AttachThreadInput(me, fg_tid, FALSE);
-        }
-    }
-    if (GetForegroundWindow() != h) {
-        // Being the source of the last input event grants foreground rights.
-        INPUT in[2];
-        memset(in, 0, sizeof in);
-        in[0].type = in[1].type = INPUT_KEYBOARD;
-        in[0].ki.wVk = in[1].ki.wVk = 0xE8;
-        in[1].ki.dwFlags = KEYEVENTF_KEYUP;
-        inject_keys(in, 2);
-        SetForegroundWindow(h);
-    }
-    SetFocus(h);
-}
-
-static BOOL CALLBACK find_other_monitor(HMONITOR m, HDC dc, LPRECT r, LPARAM lp)
-{
-    (void)dc;
-    (void)r;
-    HMONITOR *io = (HMONITOR *)lp;
-    if (m != io[0]) {
-        io[1] = m;
-        return FALSE;
-    }
-    return TRUE;
-}
-
-static bool anims_enabled(void);
-static HWND taskbar_on_monitor(HMONITOR mon);
-
-static void ui_place_window(void)
-{
-    POINT pt;
-    GetCursorPos(&pt);
-    HMONITOR mon = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
-    if (g_pinned || g_other_monitor) {
-        HMONITOR io[2] = { mon, NULL };
-        EnumDisplayMonitors(NULL, NULL, find_other_monitor, (LPARAM)io);
-        if (io[1]) mon = io[1];
-    }
-    MONITORINFO mi;
-    mi.cbSize = sizeof mi;
-    GetMonitorInfoW(mon, &mi);
-    UINT dpi = monitor_dpi(mon);
-    if (dpi != U.dpi) {
-        ui_metrics(dpi);
-        icons_reset(ui_icon_px());
-    }
-    RECT wa = mi.rcWork, mr = mi.rcMonitor;
-    if (w10_on()) {  // a resized Windows 10 Start still fits the screen
-        U.w10.wide = mr.right - mr.left >= 2560;
-        w10_metrics();  // the search pane's width or the resized one, for the query it opens with
-        U.H = MIN(U.H, (int)(wa.bottom - wa.top));
-        U.W = MIN(U.W, (int)(wa.right - wa.left));
-        U.list_y1 = (f32)U.H;
-    }
-    int x = wa.left + ((wa.right - wa.left) - U.W) / 2;
-    int y = wa.top + (int)((f32)((wa.bottom - wa.top) - U.H) * 0.28f);
-    U.mon = mon;
-    int pos = launcher_position();
-    U.slide = pos != POS_CENTER;
-    U.slide_dy = 0;
-    if (U.slide) {
-        int m = w10_on() ? 0 : (int)SR(12);  // Windows 10 Start sits right against the taskbar and the screen edge
-        HWND tray = taskbar_on_monitor(mon);
-        RECT tr;
-        bool top = tray && GetWindowRect(tray, &tr) && tr.bottom - mr.top < mr.bottom - tr.top;  // taskbar at the top: slide down from it
-        if (pos == POS_BOTTOM_LEFT) x = wa.left + m;
-        y = top ? wa.top + m : wa.bottom - U.H - m;
-        // Start fully behind the taskbar edge, but never reach into a monitor beyond this one.
-        U.slide_dy = top ? wa.top - (y + U.H) : wa.bottom - y;
-        RECT past = top ? (RECT){ x, mr.top - U.H, x + U.W, mr.top } : (RECT){ x, mr.bottom, x + U.W, mr.bottom + U.H };
-        if (MonitorFromRect(&past, MONITOR_DEFAULTTONULL)) U.slide_dy = top ? mr.top - y : mr.bottom - (y + U.H);
-    }
-    U.win_x = x;
-    U.win_y = y;
-    U.slide_y = anims_enabled() ? U.slide_dy : 0;
-    U.slide_off = (f32)U.slide_y;
-    U.slide_v = 0;
-    SetWindowPos(g_hwnd, U.app_mode ? HWND_NOTOPMOST : HWND_TOPMOST, x, y + U.slide_y, U.W, U.H, SWP_NOACTIVATE);
-    r_resize(U.W, U.H);
-}
-
-#define ROW_STAGGER_MAX 8
-
-static bool anims_enabled(void)
-{
-    if (g_cfg.reduced_motion) return false;
-    BOOL sys = TRUE;
-    SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &sys, 0);
-    return g_cfg.animations && sys;
-}
-
-static f32 anim_sec(int ms) { return g_cfg.reduced_motion ? 0.f : (f32)ms / 1000.f * 100.f / (f32)MAX(g_cfg.anim_speed, 1); }
-
-static f32 anim_omega(int ms)
-{
-    f32 t = anim_sec(ms);
-    return t > 0.001f ? 4.7f / t : 0.f;
-}
-
-static f32 slide_omega(void) { return anim_omega(MAX(g_cfg.anim_open_ms, g_cfg.anim_close_ms)); }
-
-static f32 vis_curve(f32 v, bool opening)
-{
-    v = CLAMP(v, 0.f, 1.f);
-    if (opening) return ease_out_quart(v);
-    return v * v;
-}
-
-// The slide is a spring: U.vis follows its position, so no curve on top.
-static bool slide_spring(void) { return U.slide && U.slide_dy; }
-
-static f32 vis_eased(void) { return slide_spring() ? CLAMP(U.vis, 0.f, 1.f) : vis_curve(U.vis, U.vis_target > 0.5f); }
-
-static void vis_set_direction(bool opening)
-{
-    if (slide_spring()) {  // keeps its position and velocity and just turns around
-        U.vis_target = opening ? 1.f : 0.f;
-        return;
-    }
-    f32 a = vis_eased();
-    U.vis_target = opening ? 1.f : 0.f;
-    U.vis = opening ? 1.f - sqrtf(sqrtf(1.f - a)) : sqrtf(a);
-}
-
-static f32 row_in(int k, f64 now)
-{
-    f32 dur = anim_sec(g_cfg.anim_row_ms);
-    if (!g_cfg.anim_cascade || dur <= 0.f) return 1.f;
-    f32 t = (f32)(now - U.open_time) - anim_sec(g_cfg.anim_stagger_ms) * (f32)MIN(k, ROW_STAGGER_MAX);
-    return ease_out_cubic(t / dur);
-}
-
-static bool rows_cascading(f64 now)
-{
-    return g_cfg.anim_cascade && now - U.open_time < anim_sec(g_cfg.anim_row_ms) + anim_sec(g_cfg.anim_stagger_ms) * ROW_STAGGER_MAX;
-}
-
-static void apply_window_alpha(void)
-{
-    f32 v = vis_eased();
-    if (U.slide) v = MIN(v * 2.f, 1.f);  // the slide carries the motion, the fade only softens its start
-    int a = (int)(v * 255.f + 0.5f);
-    if (a != U.alpha) {
-        U.alpha = a;
-        SetLayeredWindowAttributes(g_hwnd, 0, (BYTE)a, LWA_ALPHA);
-    }
-}
-
-static void apply_window_slide(void)
-{
-    if (!U.slide) return;
-    int y = (int)lroundf(U.slide_off);
-    if (y == U.slide_y) return;
-    U.slide_y = y;
-    SetWindowPos(g_hwnd, NULL, U.win_x, U.win_y + y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-}
-
-static void set_click_through(bool on)
-{
-    LONG_PTR ex = GetWindowLongPtrW(g_hwnd, GWL_EXSTYLE);
-    LONG_PTR nx = on ? (ex | WS_EX_TRANSPARENT) : (ex & ~(LONG_PTR)WS_EX_TRANSPARENT);
-    if (nx != ex) SetWindowLongPtrW(g_hwnd, GWL_EXSTYLE, nx);
-}
-
-// Never hand focus to these: activating the taskbar while Win is down opens Start.
-static bool is_shell_window(HWND h)
-{
-    WCHAR cls[64];
-    if (!h || !GetClassNameW(h, cls, countof(cls))) return true;
-    static const WCHAR *shell[] = { L"Shell_TrayWnd", L"Shell_SecondaryTrayWnd", L"Progman", L"WorkerW",
-                                    L"Windows.UI.Core.CoreWindow", L"XamlExplorerHostIslandWindow",
-                                    L"TopLevelWindowForOverflowXamlIsland", L"NotifyIconOverflowWindow" };
-    for (int i = 0; i < countof(shell); i++)
-        if (!wcscmp(cls, shell[i])) return true;
-    return false;
-}
-
-static HWND taskbar_on_monitor(HMONITOR mon)
-{
-    HWND h = FindWindowW(L"Shell_TrayWnd", NULL);
-    if (h && MonitorFromWindow(h, MONITOR_DEFAULTTONULL) == mon) return h;
-    for (h = NULL; (h = FindWindowExW(NULL, h, L"Shell_SecondaryTrayWnd", NULL)) != NULL;)
-        if (MonitorFromWindow(h, MONITOR_DEFAULTTONULL) == mon) return h;
-    return NULL;
-}
-
-// Right under the taskbar in z-order, so the slide comes out from beneath it.
-static void slide_below_taskbar(void)
-{
-    if (!U.slide || U.app_mode) return;
-    HWND tray = taskbar_on_monitor(U.mon);
-    if (!tray) return;
-    SetWindowPos(g_hwnd, tray, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-    // The taskbar itself can sit below regular windows; following it would bury the launcher too.
-    for (HWND w = GetWindow(g_hwnd, GW_HWNDPREV); w; w = GetWindow(w, GW_HWNDPREV)) {
-        if (IsWindowVisible(w) && !(GetWindowLongW(w, GWL_EXSTYLE) & WS_EX_TOPMOST)) {
-            SetWindowPos(g_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-            SetWindowPos(tray, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);  // taskbar back over the launcher
-            break;
-        }
-    }
-}
-
-// Fullscreen app over the taskbar: open as a regular window so the shell brings the taskbar back.
-static bool taskbar_covered(HMONITOR mon)
-{
-    HWND tray = taskbar_on_monitor(mon);
-    if (!tray || !IsWindowVisible(tray)) return false;
-    RECT r;
-    GetWindowRect(tray, &r);
-    POINT c = { (r.left + r.right) / 2, (r.top + r.bottom) / 2 };
-    HWND at = WindowFromPoint(c);
-    HWND root = at ? GetAncestor(at, GA_ROOT) : NULL;
-    if (!root || root == tray || root == g_hwnd) return false;
-    return !(GetWindowLongW(root, GWL_EXSTYLE) & WS_EX_TOPMOST);
-}
-
-static void set_app_window_mode(bool app)
-{
-    U.app_mode = app;
-    LONG_PTR ex = GetWindowLongPtrW(g_hwnd, GWL_EXSTYLE);
-    LONG_PTR nx = app ? (ex & ~(LONG_PTR)WS_EX_TOOLWINDOW) : (ex | WS_EX_TOOLWINDOW);
-    if (nx != ex) SetWindowLongPtrW(g_hwnd, GWL_EXSTYLE, nx);
-    SetWindowPos(g_hwnd, app ? HWND_NOTOPMOST : HWND_TOPMOST, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | (nx != ex ? SWP_FRAMECHANGED : 0));
-}
-
-static void taskbar_button_remove(void)
-{
-    static ITaskbarList *tbl;
-    static bool tried;
-    static const GUID clsid = { 0x56fdf344, 0xfd6d, 0x11d0, { 0x95, 0x8a, 0x00, 0x60, 0x97, 0xc9, 0xa0, 0x90 } };
-    static const GUID iid = { 0x56fdf342, 0xfd6d, 0x11d0, { 0x95, 0x8a, 0x00, 0x60, 0x97, 0xc9, 0xa0, 0x90 } };
-    if (!tried) {
-        tried = true;
-        if (SUCCEEDED(CoCreateInstance(&clsid, NULL, CLSCTX_INPROC_SERVER, &iid, (void **)&tbl)) && tbl) {
-            if (FAILED(ITaskbarList_HrInit(tbl))) {
-                ITaskbarList_Release(tbl);
-                tbl = NULL;
-            }
-        }
-    }
-    if (tbl) ITaskbarList_DeleteTab(tbl, g_hwnd);
-}
-
-static void ui_hide_finish(void)
-{
-    // settings from the launcher open once it has faded out, while it still has the foreground
-    if (U.settings_after_hide) {
-        U.settings_after_hide = false;
-        settings_open();
-    }
-    U.cm.open = U.cm.closing = false;
-    U.visible = false;
-    U.closing = false;
-    U.vis = U.vis_target = 0;
-    ShowWindow(g_hwnd, SW_HIDE);
-    set_click_through(false);
-    set_app_window_mode(false);
-    hook_watchdog_sync();
-}
-
-static void ui_show(void)
-{
-    if (U.visible && !U.closing) {
-        force_foreground(g_hwnd);
-        return;
-    }
-    if (U.visible && U.closing) {
-        U.closing = false;
-        U.settings_after_hide = false;
-        vis_set_direction(true);
-        U.open_time = 0;
-        hook_set_visible(true);
-        set_click_through(false);
-        if (!g_pinned) force_foreground(g_hwnd);
-        slide_below_taskbar();
-        tb_set_open(U.mon);
-        U.caret_on = true;
-        SetTimer(g_hwnd, TIMER_CARET, GetCaretBlinkTime(), NULL);
-        U.animating = true;
-        return;
-    }
-    f64 now = time_now();
-    hook_watchdog_off();
-    hook_set_visible(true);
-    HWND fg = GetForegroundWindow();
-    U.prev_fg = fg != g_hwnd ? fg : NULL;
-
-    U.search_mode = U.want_search && (st_on() || w10_on());
-    U.want_search = false;
-    bool keep = U.qlen && !U.search_mode && (now - U.hide_time) < (f64)g_cfg.keep_query_seconds;
-    if (!keep) {  // before placing: the Windows 10 style sizes itself by the query
-        U.qlen = 0;
-        U.q[0] = 0;
-        U.caret = U.anchor = 0;
-    } else {
-        U.anchor = 0;
-        U.caret = U.qlen;
-    }
-
-    bool was_dark = U.th.dark;
-    theme_update();
-    if (was_dark != U.th.dark) U.backdrop_ok = backdrop_apply(g_hwnd);
-    ui_place_window();
-    set_app_window_mode(taskbar_covered(MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST)));
-    // Take the keyboard while still transparent, so keys typed right after Win land here.
-    SetLayeredWindowAttributes(g_hwnd, 0, 0, LWA_ALPHA);
-    SendMessageW(g_hwnd, WM_NCACTIVATE, TRUE, -1);  // acrylic from the first frame, see WM_NCACTIVATE
-    U.alpha = 0;
-    set_click_through(false);
-    if (g_pinned) {
-        ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
-    } else {
-        ShowWindow(g_hwnd, SW_SHOW);
-        force_foreground(g_hwnd);
-        if (GetForegroundWindow() != g_hwnd) {
-            // Without the foreground a regular (non-topmost) window would open behind everything: stay on top.
-            log_msg("show: could not take foreground");
-            if (U.app_mode) set_app_window_mode(false);
-            SetWindowPos(g_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        }
-    }
-    if (U.app_mode) taskbar_button_remove();
-    slide_below_taskbar();
-    tb_set_open(U.mon);
-
-    U.st.all_view = false;
-    U.st.fb_hover = U.st.fb_press = -1;
-    U.st.title_press = false;
-    U.tsel = U.w10.press_tile = U.w10.rail_hover = U.w10.rail_press = U.w10.act_hover = U.w10.act_press = -1;
-    U.w10.rail_open = false;
-    U.w10.rail_t = 0;
-    U.w10.tscroll = U.w10.tscroll_target = 0;
-    U.st.title_hover = false;
-    refresh_frecency();
-    refresh_empty_view();
-    U.q_scroll = 0;
-    if (U.qlen) {
-        search_apps();
-        request_files();
-    }
-    rebuild_rows(false);
-    U.scroll = U.scroll_target = U.scroll_v = 0;
-    snap_highlight();
-    U.armed = NULL;
-    U.cm.open = U.cm.closing = false;
-    U.cm.press = -1;
-    U.tg.press = -1;
-    U.sub_text = NULL;
-    U.sub_t = 0;
-    U.caret_on = true;
-    U.visible = true;
-    U.closing = false;
-    U.vis = anims_enabled() ? 0.f : 1.f;
-    U.slide_v = -slide_omega() * U.slide_off;  // starts fast and decelerates, like Start
-    U.open_time = anims_enabled() ? now : 0;
-    U.settings_hover_t = 0;
-    U.sb_t = U.sb_prev = 0;
-    U.sb_seen = 0;
-    U.sb_hot = false;
-    U.vis_target = 1;
-    U.press_row = -1;
-    POINT cur;
-    GetCursorPos(&cur);
-    ScreenToClient(g_hwnd, &cur);
-    U.mouse_x = cur.x;
-    U.mouse_y = cur.y;
-    U.dirty = true;
-    ui_render();
-    SetTimer(g_hwnd, TIMER_CARET, GetCaretBlinkTime(), NULL);
-    SetTimer(g_hwnd, TIMER_REHOOK, 60, NULL);
-    if (now - U.last_reindex > 180.0) {
-        U.last_reindex = now;
-        apps_request_reindex();
-    }
-}
-
-static void prtsc_handoff_end(void)
-{
-    if (!K.prtsc_from) return;
-    K.prtsc_from = NULL;
-    KillTimer(g_hwnd, TIMER_PRTSC);
-}
-
-static void ui_hide(void)
-{
-    if (!U.visible || U.closing) return;
-    U.hide_time = time_now();
-    U.armed = NULL;
-    U.text_drag = false;
-    U.tg.open = U.tg.closing = false;
-    KillTimer(g_hwnd, TIMER_CARET);
-    bool restore = !U.no_focus_restore;
-    U.no_focus_restore = false;
-    if (K.prtsc_from == g_hwnd) prtsc_handoff_end();
-    hook_set_visible(false);
-    tb_set_open(NULL);
-    if (restore && !g_pinned && GetForegroundWindow() == g_hwnd && U.prev_fg && IsWindow(U.prev_fg) &&
-        IsWindowVisible(U.prev_fg) && !is_shell_window(U.prev_fg))
-        SetForegroundWindow(U.prev_fg);
-    history_save();
-    if (!anims_enabled() || U.vis <= 0.f) {
-        ui_hide_finish();
-        return;
-    }
-    U.closing = true;
-    vis_set_direction(false);
-    U.animating = true;
-    set_click_through(true);
-    ui_invalidate();
-}
-
-static void prtsc_handoff(void)
-{
-    U.prtsc_ticks = 0;
-    SetTimer(g_hwnd, TIMER_PRTSC, 600, NULL);
-}
-
-// A screenshot tool's overlay over our window, even one that has not taken the foreground (yet).
-static bool prtsc_covered(HWND h)
-{
-    RECT r;
-    if (!GetWindowRect(h, &r)) return false;
-    POINT c = { (r.left + r.right) / 2, (r.top + r.bottom) / 2 };
-    HWND top = GetAncestor(WindowFromPoint(c), GA_ROOT);
-    DWORD pid = 0;
-    if (top) GetWindowThreadProcessId(top, &pid);
-    return top && pid != GetCurrentProcessId();
-}
-
-// The tool either never took the foreground or gave it back to the window we handed it to: return it to ours.
-static void prtsc_handoff_tick(void)
-{
-    SetTimer(g_hwnd, TIMER_PRTSC, 250, NULL);
-    HWND from = K.prtsc_from, fg = GetForegroundWindow();
-    DWORD pid = 0;
-    if (fg) GetWindowThreadProcessId(fg, &pid);
-    if (!from || !IsWindow(from) || !IsWindowVisible(from) || (from == g_hwnd && (!U.visible || U.closing)) ||
-        pid == GetCurrentProcessId()) {
-        prtsc_handoff_end();
-        return;
-    }
-    if (fg == K.prtsc_to && !prtsc_covered(from)) {
-        prtsc_handoff_end();
-        force_foreground(from);
-    } else if (++U.prtsc_ticks > 4 * 120) {
-        prtsc_handoff_end();
-        if (from == g_hwnd) {
-            U.no_focus_restore = true;
-            ui_hide();
-        }
-    }
-}
-
-// The Start styles between their home and an empty search, without closing.
-static void ui_set_search_mode(bool on)
-{
-    U.search_mode = on;
-    U.st.all_view = false;
-    if (U.qlen) edit_replace(0, U.qlen, L"", 0);
-    else on_query_changed();
-    ui_invalidate();
-}
-
-static bool ui_empty_search(void) { return U.search_mode && !U.qlen; }
-
-// From the taskbar's search: the Start styles open straight on an empty search, or switch to it while open.
-// Another click on an empty search closes it, like the other styles.
-static void ui_search_clicked(void)
-{
-    bool start = st_on() || w10_on();
-    if (U.visible && !U.closing) {
-        if (start && !ui_empty_search()) ui_set_search_mode(true);
-        else ui_hide();
-        return;
-    }
-    U.want_search = true;
-    if (U.visible && U.closing && start && !ui_empty_search()) ui_set_search_mode(true);
-    ui_show();
-    U.want_search = false;
-}
-
-static void ui_toggle(void)
-{
-    // Win on an empty search goes to the launcher's home instead of closing it
-    if (U.visible && !U.closing && ui_empty_search() && (st_on() || w10_on())) ui_set_search_mode(false);
-    else if (U.visible && !U.closing) ui_hide();
-    else ui_show();
-}
-
-static Row *sel_row(void)
-{
-    if (w10_on() && U.tsel >= 0 && U.tsel < U.w10.tile_count) return &U.w10.tiles[U.tsel];
-    return row_selectable(U.sel) ? &U.rows[U.sel] : NULL;
-}
-
-static const WCHAR *row_path(Row *r)
-{
-    if (!r) return NULL;
-    if (r->kind == ROW_FILE) return r->file->full;
-    if (r->kind == ROW_APP && r->app->kind == APP_SHELL) return r->app->path;
-    return NULL;
-}
-
-static void ui_activate(int act)
-{
-    Row *r = sel_row();
-    if (!r) return;
-    LaunchJob j;
-    memset(&j, 0, sizeof j);
-    j.act = act;
-    WCHAR qn[Q_MAX + 1];
-    int ql = query_norm(qn);
-    if (r->kind == ROW_APP) {
-        App *a = r->app;
-        if (a->kind == APP_CMD) {
-            if (act != ACT_OPEN) return;
-            if (a->danger && U.armed != a) {
-                U.armed = a;
-                ui_invalidate();
-                return;
-            }
-            j.cmd = a->cmd;
-            history_record('c', a->id, qn, ql);
-        } else {
-            if ((act == ACT_REVEAL || act == ACT_PROPERTIES) && !a->path) return;
-            j.is_app = true;
-            j.target = wdup_heap(a->id);
-            j.path = wdup_heap(a->path);
-            if (act != ACT_PROPERTIES) history_record('a', a->id, qn, ql);
-        }
-    } else {
-        FileItem *f = r->file;
-        j.target = wdup_heap(f->full);
-        j.dir = wdup_heap(f->dir);
-        j.hist_type = (f->flags & FI_FOLDER) ? 'd' : 'f';
-        j.hist_key = wdup_heap(f->full);
-        if (act != ACT_PROPERTIES && !(f->full[0] == '\\' && f->full[1] == '\\')) history_record(j.hist_type, f->full, qn, ql);
-    }
-    AllowSetForegroundWindow(ASFW_ANY);
-    ui_hide();
-    launch_submit(&j);
-}
-
-static void ui_copy_path(void)
-{
-    Row *r = sel_row();
-    if (!r) return;
-    const WCHAR *p = row_path(r);
-    clipboard_set(p ? p : r->app->name, -1);
-}
-
-static void move_sel(int delta)
-{
-    if (U.sel < 0) return;
-    int dir = delta > 0 ? 1 : -1, steps = abs(delta), i = U.sel;
-    while (steps-- > 0) {
-        int n = first_selectable(i + dir, dir);
-        if (n < 0) break;
-        i = n;
-    }
-    if (i != U.sel) {
-        U.sel = i;
-        U.armed = NULL;
-        ensure_visible(i, true);
-        ui_invalidate();
-    }
-}
-
-static void jump_section(int dir)
-{
-    int i = U.sel;
-    if (i < 0) return;
-    if (dir > 0) {
-        for (int k = i + 1; k < U.row_count; k++)
-            if (U.rows[k].kind == ROW_HEADER) {
-                int n = first_selectable(k + 1, 1);
-                if (n >= 0) {
-                    U.sel = n;
-                    ensure_visible(n, true);
-                }
-                break;
-            }
-    } else {
-        int h = -1;
-        for (int k = i; k >= 0; k--)
-            if (U.rows[k].kind == ROW_HEADER) {
-                h = k;
-                break;
-            }
-        for (int k = h - 1; k >= 0; k--)
-            if (U.rows[k].kind == ROW_HEADER) {
-                int n = first_selectable(k + 1, 1);
-                if (n >= 0) {
-                    U.sel = n;
-                    ensure_visible(n, true);
-                }
-                break;
-            }
-    }
-    U.armed = NULL;
-    ui_invalidate();
-}
-
-static void draw_placeholder_icon(f32 x, f32 y, f32 sz, const WCHAR *name)
-{
-    r_rect(x, y, sz, sz, U.th.tile, SR(LS()->tile_r));
-    if (name && name[0]) {
-        WCHAR c[2] = { (WCHAR)towupper(name[0]), 0 };
-        f32 fs = sz * 0.5f;
-        f32 w = text_width(FONT_TEXT_SEMIBOLD, fs, c, 1);
-        text_draw(FONT_TEXT_SEMIBOLD, fs, floorf(x + (sz - w) * 0.5f), y + sz * 0.5f + font_cap_height(FONT_TEXT_SEMIBOLD, fs) * 0.5f, c, 1, U.th.dim);
-    }
-}
-
-static const WCHAR *row_note(Row *r, u32 *col)
-{
-    *col = U.th.faint;
-    if (!r || r->kind != ROW_APP) return NULL;
-    if (r->app->kind != APP_CMD) return TR("Приложение", "Application");
-    if (U.armed == r->app) {
-        *col = U.th.danger;
-        return TR("Нажмите Enter ещё раз для подтверждения", "Press Enter again to confirm");
-    }
-    return TR("Команда", "Command");
-}
-
-static void hl_prepare(void)
-{
-    U.hq_len = g_cfg.match_highlight ? query_norm(U.hq) : 0;
-    U.hq_has_alt = U.hq_len && layout_convert(U.hq, U.hq_len, U.hq_alt);
-}
-
-// The name with the query matches in bold and the rest a little dimmer; plain (and elided) when it does not fit.
-static f32 draw_name(f32 fs, f32 x, f32 base, f32 max_w, const WCHAR *s, int len, const WCHAR *norm, const u8 *ws, u32 col)
-{
-    static u8 mask[512], wsb[512];
-    static WCHAR nb[512];
-    if (len < 0) len = wlen(s);
-    bool hl = U.hq_len && len > 0 && len < (int)countof(mask);
-    if (hl) {
-        if (!norm || !ws) {
-            norm_str(nb, s, len);
-            word_starts(s, len, wsb);
-            norm = nb;
-            ws = wsb;
-        }
-        int k = match_mask(norm, len, ws, U.hq, U.hq_len, mask);
-        if (!k && U.hq_has_alt) k = match_mask(norm, len, ws, U.hq_alt, U.hq_len, mask);
-        hl = k > 0;
-    }
-    if (hl) {
-        f32 w = 0;
-        for (int i = 0; i < len;) {
-            int j = i;
-            while (j < len && mask[j] == mask[i]) j++;
-            w += text_width(mask[i] ? FONT_TEXT_SEMIBOLD : FONT_TEXT, fs, s + i, j - i);
-            i = j;
-        }
-        hl = w <= max_w;
-    }
-    if (!hl) return text_draw_fit(FONT_TEXT, fs, x, base, max_w, s, len, col, false);
-    u32 rest = color_mix(U.th.dim, col, 0.6f);
-    f32 pen = x;
-    for (int i = 0; i < len;) {
-        int j = i;
-        while (j < len && mask[j] == mask[i]) j++;
-        pen = text_draw(mask[i] ? FONT_TEXT_SEMIBOLD : FONT_TEXT, fs, pen, base, s + i, j - i, mask[i] ? col : rest);
-        i = j;
-    }
-    return pen - x;
-}
-
-static void draw_row(Row *r, f32 y, bool selected)
-{
-    Theme *t = &U.th;
-    const LStyle *ls = LS();
-    f32 x0 = r->x, x1 = r->x + r->w;
-    if (r->kind == ROW_HEADER) {
-        if (st_search()) {
-            f32 fs = S(14);
-            text_draw(FONT_TEXT_SEMIBOLD, fs, x0 + SR(8), y + r->h - SR(10), r->text, -1, t->text);
-            return;
-        }
-        f32 fs = S(11.5f);
-        text_draw(FONT_TEXT_SEMIBOLD, fs, x0 + SR(12), y + r->h - SR(10), r->text, -1, color_mix(t->faint, t->dim, 0.6f));
-        return;
-    }
-    f32 cy = y + r->h * 0.5f;
-    f32 fs = S(ls->name_fs);
-    f32 base = floorf(cy + font_cap_height(FONT_TEXT, fs) * 0.5f + 0.5f);
-    if (r->kind == ROW_VIRTUAL) {
-        f32 rh = SR(ROW_H), isz = (f32)ui_icon_px();
-        f32 pulse = 0.75f + 0.25f * sinf((f32)fmod(time_now(), 100.0) * 5.f);
-        int k0 = (int)MAX(0.f, floorf((U.list_y0 - y) / rh)), k1 = (int)ceilf((U.list_y1 - y) / rh);
-        k1 = MIN(k1, (int)(r->h / rh + 0.5f));
-        for (int k = k0; k < k1; k++) {
-            f32 ry = y + rh * (f32)k, rcy = ry + rh * 0.5f;
-            f32 ix = x0 + SR(12), iy = floorf(rcy - isz * 0.5f + 0.5f);
-            u32 c = color_alpha(t->tile, pulse);
-            r_rect(ix, iy, isz, isz, c, SR(ls->tile_r));
-            u32 hsh = (u32)(k + (int)(r->y / rh)) * 2654435761u;
-            f32 w1 = SR(120) + (f32)(hsh % 160u) * U.s, w2 = SR(90) + (f32)((hsh >> 8) % 120u) * U.s;
-            r_rect(ix + isz + SR(12), floorf(rcy - SR(5)), w1, SR(10), c, SR(5));
-            r_rect(x1 - SR(12) - w2, floorf(rcy - SR(4)), w2, SR(8), color_alpha(c, 0.6f), SR(4));
-        }
-        return;
-    }
-    if (r->kind == ROW_INFO) {
-        if (U.row_count == 1) {
-            // centered in the row: the Windows 10 search pane's results column, not the whole window
-            f32 lcy = U.list_y0 + list_height() * 0.5f - SR(6), tw = text_width(FONT_TEXT, fs, r->text, -1), cx = (x0 + x1) * 0.5f;
-            f32 tx = floorf(MAX(x0 + SR(16), cx - tw * 0.5f));
-            text_draw_icon(0xE721, S(26), cx, lcy - SR(20), t->faint);
-            text_draw_fit(FONT_TEXT, fs, tx, floorf(lcy + SR(22) + 0.5f), x1 - SR(16) - tx, r->text, -1, t->dim, false);
-            return;
-        }
-        text_draw_fit(FONT_TEXT, fs, x0 + SR(12), base, x1 - x0 - SR(24), r->text, -1, t->dim, false);
-        return;
-    }
-    f32 isz = (f32)ui_icon_px();
-    f32 ix = x0 + SR(12), iy = floorf(cy - isz * 0.5f + 0.5f);
-    f32 tx = ix + isz + SR(ls->icon_gap);
-    f32 right = x1 - SR(12);
-    f32 sub_fs = S(12.5f);
-    f32 sub_base = floorf(cy + font_cap_height(FONT_TEXT, sub_fs) * 0.5f + 0.5f);
-    f32 uv[4];
-    // the Windows 11 search: every icon on a square plate, the name alone (the pane on the right tells the rest)
-    bool plate = st_search();
-    if (plate) {
-        f32 pz = SR(40), px = x0 + SR(8), py = floorf(cy - pz * 0.5f + 0.5f);
-        bool armed = r->kind == ROW_APP && U.armed == r->app;
-        r_rect(px, py, pz, pz, armed ? color_alpha(t->danger, 0.16f) : t->dark ? RGBA(255, 255, 255, 14) : RGBA(0, 0, 0, 10), SR(4));
-        r_rect_ex(px, py, pz, pz, t->dark ? RGBA(255, 255, 255, 12) : RGBA(0, 0, 0, 14), SR(4), 1.f, 0);
-        isz = SR(24);
-        ix = floorf(px + (pz - isz) * 0.5f);
-        iy = floorf(py + (pz - isz) * 0.5f);
-        tx = px + pz + SR(12);
-    }
-
-    if (r->kind == ROW_APP) {
-        App *a = r->app;
-        u32 sub_col = t->faint;
-        const WCHAR *sub = row_note(r, &sub_col);
-        if (a->kind == APP_CMD && plate) {
-            text_draw_icon(a->glyph, S(15), ix + isz * 0.5f, iy + isz * 0.5f, U.armed == a ? t->danger : t->text);
-        } else if (a->kind == APP_CMD) {
-            bool armed = U.armed == a;
-            r_rect(ix, iy, isz, isz, armed ? color_alpha(t->danger, 0.16f) : t->tile, SR(ls->tile_r));
-            r_rect_ex(ix, iy, isz, isz, t->key_border, SR(ls->tile_r), 1.f, 0);
-            text_draw_icon(a->glyph, MIN(S(14), isz * 0.52f), ix + isz * 0.5f, iy + isz * 0.5f, armed ? t->danger : t->text);
-        } else {
-            if (icon_get(a->id_hash ^ 0xA11, ICON_KIND_APP, a->id, uv)) r_icon(ix, iy, isz, isz, uv[0], uv[1], uv[2], uv[3], 1.f);
-            else draw_placeholder_icon(ix, iy, isz, icon_failed(a->id_hash ^ 0xA11) ? a->name : NULL);
-        }
-        f32 sw = text_width(FONT_TEXT, sub_fs, sub, -1);
-        f32 avail = right - tx;
-        bool show_sub = !plate && ((selected && !w10_on()) || a->kind == APP_CMD || ls->all_notes);
-        draw_name(fs, tx, base, show_sub ? avail - sw - SR(16) : avail, a->name, a->len, a->norm, a->ws, t->text);
-        if (ls->all_notes && a->kind != APP_CMD) {
-            f32 away = CLAMP(fabsf(U.list_y0 - floorf(U.scroll + 0.5f) + U.hl_y - y) / r->h, 0.f, 1.f);
-            if (!row_selectable(U.sel)) away = 1.f;
-            text_draw(FONT_TEXT, sub_fs, right - sw, sub_base, sub, -1, color_alpha(t->faint, away));
-        } else if (a->kind == APP_CMD && !plate) {
-            f32 away = CLAMP(fabsf(U.list_y0 - floorf(U.scroll + 0.5f) + U.hl_y - y) / r->h, 0.f, 1.f);
-            if (!row_selectable(U.sel)) away = 1.f;
-            text_draw(FONT_TEXT, sub_fs, right - sw, sub_base, sub, -1, color_alpha(sub_col, away));
-        }
-    } else {
-        FileItem *f = r->file;
-        if (icon_get(f->icon_key, ICON_KIND_FILE, f->full, uv)) r_icon(ix, iy, isz, isz, uv[0], uv[1], uv[2], uv[3], 1.f);
-        else if (icon_failed(f->icon_key)) draw_placeholder_icon(ix, iy, isz, f->name);
-        f32 avail = right - tx, gap = SR(16);
-        if (plate) {  // the name, and where it is under it
-            draw_name(fs, tx, floorf(cy - SR(3) + 0.5f), avail, f->name, -1, NULL, NULL, t->text);
-            text_draw_fit(FONT_TEXT, sub_fs, tx, floorf(cy + SR(15) + 0.5f), avail, f->dir, -1, t->faint, true);
-            return;
-        }
-        f32 nw = text_width(FONT_TEXT, fs, f->name, -1);
-        f32 dw = text_width(FONT_TEXT, sub_fs, f->dir, -1);
-        f32 name_max = plate ? avail : nw + gap + dw <= avail ? nw : MAX(avail * 0.55f, avail - dw - gap);
-        f32 drawn = draw_name(fs, tx, base, name_max, f->name, -1, NULL, NULL, t->text);
-        f32 dir_max = avail - drawn - gap;
-        if (dir_max > SR(40) && f->dir[0] && !plate) {
-            f32 dwn = MIN(dw, dir_max);
-            text_draw_fit(FONT_TEXT, sub_fs, right - dwn, sub_base, dir_max, f->dir, -1, t->faint, true);
-        }
-    }
-}
-
-static f32 keycap_width(const WCHAR *k) { return MAX(text_width(FONT_TEXT, S(11.5f), k, -1) + SR(6) * 2, SR(20)); }
-
-// A key chip (footer hints, dialog buttons) at x, centered on cy.
-static void draw_keycap(f32 x, f32 cy, const WCHAR *k, u32 col)
-{
-    f32 kfs = S(11.5f), kh = SR(20), w = keycap_width(k), tw = text_width(FONT_TEXT, kfs, k, -1);
-    r_rect(x, floorf(cy - kh * 0.5f), w, kh, U.th.key_bg, SR(LS()->key_r));
-    text_draw(FONT_TEXT, kfs, floorf(x + (w - tw) * 0.5f + 0.5f), floorf(cy + font_cap_height(FONT_TEXT, kfs) * 0.5f + 0.5f), k, -1, col);
-}
-
-static f32 draw_hint(f32 xr, f32 cy, const WCHAR *label, const WCHAR *const *keys, int nkeys, u32 label_col)
-{
-    f32 lfs = S(12.5f);
-    for (int i = nkeys - 1; i >= 0; i--) {
-        f32 kx = floorf(xr - keycap_width(keys[i]));
-        draw_keycap(kx, cy, keys[i], U.th.dim);
-        xr = kx - SR(4);
-    }
-    f32 lw = text_width(FONT_TEXT, lfs, label, -1);
-    xr -= SR(4);
-    text_draw(FONT_TEXT, lfs, floorf(xr - lw), floorf(cy + font_cap_height(FONT_TEXT, lfs) * 0.5f + 0.5f), label, -1, label_col);
-    return xr - lw - SR(18);
-}
-
-static void draw_footer(f32 y0)
-{
-    Theme *t = &U.th;
-    f32 cy = y0 + U.footer_h * 0.5f;
-    f32 xr = (f32)U.W - SR(14);
-    static const WCHAR *k_enter[] = { L"Enter" };
-    static const WCHAR *k_ctrl_enter[] = { L"Ctrl", L"Enter" };
-    static const WCHAR *k_admin[] = { L"Ctrl", L"Shift", L"Enter" };
-    static const WCHAR *k_copy[] = { L"Ctrl", L"C" };
-    static const WCHAR *k_esc[] = { L"Esc" };
-    if (LS()->footer_tint) r_rect(0, y0, (f32)U.W, U.footer_h, t->dark ? RGBA(255, 255, 255, 10) : RGBA(0, 0, 0, 8), 0);
-    const WCHAR *label = TR("Настройки", "Settings");
-    f32 lfs = S(12.5f), lw = text_width(FONT_TEXT, lfs, label, -1);
-    f32 bx = SR(8), bh = SR(28), by = floorf(cy - bh * 0.5f);
-    f32 bw = floorf(SR(8) + SR(16) + SR(7) + lw + SR(10));
-    f32 hov = U.settings_hover_t;
-    r_rect(bx, by, bw, bh, color_alpha(t->sel, hov), SR(LS()->key_r + 1));
-    u32 col = color_mix(t->dim, t->text, hov);
-    text_draw_icon(0xE713, S(14), bx + SR(8) + SR(8), cy, col);
-    text_draw(FONT_TEXT, lfs, bx + SR(8) + SR(16) + SR(7), floorf(cy + font_cap_height(FONT_TEXT, lfs) * 0.5f + 0.5f), label, -1, col);
-    U.settings_btn[0] = (int)bx;
-    U.settings_btn[1] = (int)by;
-    U.settings_btn[2] = (int)(bx + bw);
-    U.settings_btn[3] = (int)(by + bh);
-    f32 min_x = SR(150);
-    memset(U.update_btn, 0, sizeof U.update_btn);
-    if (upd_visible()) {
-        WCHAR ub[64];
-        const WCHAR *ul = upd_label(ub, countof(ub));
-        int st = upd_state();
-        bool busy = st == UPD_DOWNLOADING || st == UPD_INSTALLING;
-        f32 ulw = text_width(FONT_TEXT, lfs, ul, -1), ux = bx + bw + SR(6);
-        f32 uw = floorf(SR(8) + SR(16) + SR(7) + ulw + SR(10)), uh = U.update_hover_t * (busy ? 0.f : 1.f), rad = SR(LS()->key_r + 1);
-        r_rect(ux, by, uw, bh, color_alpha(t->accent, 0.16f + 0.10f * uh), rad);
-        if (st == UPD_DOWNLOADING) {
-            f32 pw = floorf(uw * (f32)UPD.progress / 1000.f);
-            if (pw > 0) {
-                r_set_clip(ux, by, ux + pw, by + bh);
-                r_rect(ux, by, uw, bh, color_alpha(t->accent, 0.22f), rad);
-                r_set_clip(0, 0, (f32)U.W, (f32)U.H);
-            }
-        }
-        u32 ucol = st == UPD_ERROR ? t->danger : t->text;
-        text_draw_icon(st == UPD_ERROR ? 0xE72C : 0xE896, S(14), ux + SR(8) + SR(8), cy, ucol);
-        text_draw(FONT_TEXT, lfs, ux + SR(8) + SR(16) + SR(7), floorf(cy + font_cap_height(FONT_TEXT, lfs) * 0.5f + 0.5f), ul, -1, ucol);
-        U.update_btn[0] = (int)ux;
-        U.update_btn[1] = (int)by;
-        U.update_btn[2] = (int)(ux + uw);
-        U.update_btn[3] = (int)(by + bh);
-        min_x = MAX(min_x, ux + uw + SR(18));
-    }
-    Row *r = sel_row();
-    if (!r) {
-        draw_hint(xr, cy, TR("Закрыть", "Close"), k_esc, 1, t->dim);
-    } else if (r->kind == ROW_APP && r->app->kind == APP_CMD) {
-        bool armed = U.armed == r->app;
-        draw_hint(xr, cy, armed ? TR("Подтвердить", "Confirm") : TR("Выполнить", "Run"), k_enter, 1, armed ? t->danger : t->text);
-    } else {
-        bool app = r->kind == ROW_APP;
-        xr = draw_hint(xr, cy, TR("Открыть", "Open"), k_enter, 1, t->text);
-        if (row_path(r)) {
-            f32 need = SR(230);
-            if (xr - need > min_x) xr = draw_hint(xr, cy, TR("Показать в папке", "Show in folder"), k_ctrl_enter, 2, t->dim);
-        }
-        if (app) {
-            if (xr - SR(250) > min_x) xr = draw_hint(xr, cy, TR("Администратор", "Run as admin"), k_admin, 3, t->dim);
-        } else {
-            if (xr - SR(200) > min_x) xr = draw_hint(xr, cy, TR("Копировать путь", "Copy path"), k_copy, 2, t->dim);
-        }
-    }
-}
-
-// Where the query field sits: a band across the top, or across the bottom (Windows 10, like the taskbar box).
-static void search_band(f32 *y0, f32 *y1)
-{
-    *y0 = 0;
-    *y1 = w10_on() && !q_active() ? 0 : U.search_h;  // Windows 10 shows the query only once typing starts
-}
-
-// The query field: text from x0 to x1, centered on cy. The Start style puts it in a rounded box.
-static void search_field(f32 *x0, f32 *x1, f32 *cy)
-{
-    if (w10_on()) {
-        *x0 = SR(48);
-        *x1 = (f32)U.W - SR(16) - (upd_visible() ? SR(200) : 0);
-        *cy = floorf(U.search_h * 0.5f);
-        return;
-    }
-    if (st_on()) {
-        f32 m = SR(32);
-        *x0 = m + SR(42);
-        *x1 = (f32)U.W - m - SR(16);
-        *cy = floorf(U.search_h * 0.5f + SR(4));
-        return;
-    }
-    *x0 = SR(LS()->inset + 42);
-    *x1 = (f32)U.W - SR(20);
-    *cy = U.search_h * 0.5f;
-}
-
-static void draw_search(void)
-{
-    Theme *t = &U.th;
-    const LStyle *ls = LS();
-    f32 fx0, fx1, cy;
-    search_field(&fx0, &fx1, &cy);
-    text_draw_icon(0xE721, S(ls->search_icon), fx0 - SR(23), cy, U.qlen ? t->text : t->dim);
-    f32 fs = S(ls->search_fs);
-    f32 base = floorf(cy + font_cap_height(FONT_DISPLAY, fs) * 0.5f + 0.5f);
-    f32 sel_top = floorf(cy - fs * 0.62f), sel_h = floorf(fs * 1.24f);
-    if (!U.qlen) {
-        text_draw_fit(FONT_DISPLAY, fs, fx0, base, fx1 - fx0, TR("Поиск приложений и файлов", "Search apps and files"), -1, t->faint, false);
-        if (U.caret_on) r_rect(fx0, sel_top, MAX(1.f, floorf(S(1.5f))), sel_h, t->accent, SR(1));
-        return;
-    }
-    static f32 offs[Q_MAX + 2];
-    text_offsets(FONT_DISPLAY, fs, U.q, U.qlen, offs);
-    f32 width = fx1 - fx0;
-    f32 cx = offs[U.caret];
-    if (cx - U.q_scroll > width - SR(4)) U.q_scroll = cx - width + SR(4);
-    if (cx - U.q_scroll < 0) U.q_scroll = cx;
-    if (offs[U.qlen] - U.q_scroll < width - SR(4)) U.q_scroll = MAX(0.f, offs[U.qlen] - width + SR(4));
-    f32 ox = fx0 - floorf(U.q_scroll);
-    f32 by0, by1;
-    search_band(&by0, &by1);
-    r_set_clip(fx0 - SR(2), by0, fx1, by1);
-    if (U.anchor != U.caret) {
-        int a = MIN(U.anchor, U.caret), b = MAX(U.anchor, U.caret);
-        r_rect(floorf(ox + offs[a]), sel_top, floorf(offs[b] - offs[a] + 0.5f), sel_h, t->text_sel, SR(3));
-    }
-    text_draw(FONT_DISPLAY, fs, ox, base, U.q, U.qlen, t->text);
-    if (U.caret_on) r_rect(floorf(ox + cx), sel_top, MAX(1.f, floorf(S(1.5f))), sel_h, t->accent, SR(1));
-    r_set_clip(0, 0, (f32)U.W, (f32)U.H);
-}
-
-static void ui_draw(void)
-{
-    Theme *t = &U.th;
-    icons_begin_frame();
-    hl_prepare();
-    r_begin();
-    r_rect(0, 0, (f32)U.W, (f32)U.H, U.backdrop_ok ? t->bg : t->bg_solid, 0);
-    if (st_on()) {
-        st_draw_chrome();
-    } else if (w10_on()) {
-        w10_draw_chrome();
-    } else {
-        draw_search();
-        r_rect(0, U.search_h, (f32)U.W, 1, t->sep, 0);
-    }
-
-    r_set_clip(list_x0(), U.list_y0, list_x1(), U.list_y1);
-    f32 off = U.list_y0 - floorf(U.scroll + 0.5f);
-    f64 now = time_now();
-    bool cascade = rows_cascading(now);
-    f32 hl_op = 1.f;
-    // Windows 10: no list highlight while a tile is pointed at, held or dragged
-    if (row_selectable(U.sel) && !(w10_on() && (U.tsel >= 0 || U.w10.press_tile >= 0 || U.w10.tdrag))) {
-        int k = 0;
-        for (int i = 0; cascade && i < U.sel; i++)
-            if (U.rows[i].y + U.rows[i].h >= U.scroll) k++;
-        hl_op = R.opacity = cascade ? row_in(k, now) : 1.f;
-        const LStyle *ls = LS();
-        f32 hy = floorf(off + U.hl_y + 0.5f), hh = floorf(U.hl_h + 0.5f);
-        f32 hx = SR(ls->inset), hw = (f32)U.W - hx * 2, hr = SR(ls->sel_r);
-        if (st_on() || w10_on()) {
-            st_draw_highlight(off);
-        } else if (ls->sel == SEL_PILL) {
-            r_rect(hx, hy, hw, hh, t->sel, hr);
-        } else if (ls->sel == SEL_FILL) {
-            r_rect(hx, hy, hw, hh, t->dark ? RGBA(255, 255, 255, 32) : RGBA(0, 0, 0, 20), hr);
-        } else {
-            r_rect(hx, hy, hw, hh, t->sel, hr);
-            f32 bh = floorf(MIN(hh * 0.4f + fabsf(U.hl_vy) * 0.012f, hh * 0.75f) + 0.5f), bw = SR(3);
-            r_rect(hx + SR(2), floorf(hy + (hh - bh) * 0.5f + 0.5f), bw, bh, t->accent, bw * 0.5f);
-        }
-        R.opacity = 1.f;
-    }
-    f32 top = U.scroll, bottom = U.scroll + list_height();
-    for (int i = row_first_below(top), k = 0; i < U.row_count; i++) {
-        Row *r = &U.rows[i];
-        if (r->y > bottom) break;
-        f32 dy = 0;
-        if (cascade) {
-            f32 e = row_in(k++, now);
-            R.opacity = e;
-            dy = floorf((1.f - e) * S(8) + 0.5f);
-        }
-        if (r->cell) st_draw_cell(r, off + r->y + dy, i == U.sel);
-        else draw_row(r, off + r->y + dy, i == U.sel);
-    }
-    u32 note_col;
-    Row *nr_row = sel_row();
-    bool quiet = nr_row && (nr_row->cell || st_search() || (w10_on() && nr_row->kind == ROW_APP && nr_row->app->kind != APP_CMD));  // Windows 10 lists no "Application"
-    const WCHAR *note = quiet ? NULL : row_note(nr_row, &note_col);
-    if (note) {
-        U.sub_text = note;
-        U.sub_col = note_col;
-    }
-    if (U.sub_text && U.sub_t > 0.f) {
-        f32 nfs = S(12.5f), cy = off + U.hl_y + U.hl_h * 0.5f;
-        f32 nw = text_width(FONT_TEXT, nfs, U.sub_text, -1);
-        R.opacity = hl_op * U.sub_t;
-        f32 nr = st_on() || w10_on() ? U.hl_x + U.hl_w - SR(12) : (f32)U.W - SR(20);
-        text_draw(FONT_TEXT, nfs, floorf(nr - nw), floorf(cy + font_cap_height(FONT_TEXT, nfs) * 0.5f + 0.5f), U.sub_text, -1,
-                  U.sub_col);
-    }
-    R.opacity = 1.f;
-    r_set_clip(0, 0, (f32)U.W, (f32)U.H);
-
-    f32 ms = max_scroll();
-    if (ms > 0 && U.sb_t > 0.f) {
-        f32 lh = list_height() - SR(8), bar_h = MAX(SR(24), lh * lh / U.content_h);
-        f32 by = U.list_y0 + SR(4) + (lh - bar_h) * CLAMP(U.scroll / ms, 0.f, 1.f), bw = U.sb_hot ? SR(5) : SR(3);
-        r_rect(list_x1() - SR(3) - bw, floorf(by), bw, floorf(bar_h), color_alpha(U.sb_hot ? t->dim : t->faint, U.sb_t), bw * 0.5f);
-    }
-
-    f32 fy = U.list_y1;
-    if (st_on()) {
-        if (st_search()) w10_draw_preview();
-        st_draw_footer();
-    } else if (w10_on()) {
-        w10_draw_overlay();
-    } else {
-        r_rect(0, fy, (f32)U.W, 1, t->sep, 0);
-        draw_footer(fy + 1);
-    }
-    cm_draw();
-    tg_draw();
-}
-
-static bool renderer_recover(void)
-{
-    settings_device_lost();
-    pm_close();
-    r_shutdown();
-    if (!r_init(g_hwnd, U.W, U.H)) return false;
-    font_reset_atlas();
-    icons_reset(ui_icon_px());
-    settings_device_restored();
-    return true;
-}
-
-static void animate(f32 dt)
-{
-    bool anim = false;
-    U.scroll_target = CLAMP(U.scroll_target, 0.f, max_scroll());
-    anim |= spring_step(&U.scroll, &U.scroll_v, U.scroll_target, anim_omega(g_cfg.anim_scroll_ms), dt);
-    if (row_selectable(U.sel)) {
-        f32 ty = U.rows[U.sel].y, th = U.rows[U.sel].h;
-        f32 tx = U.rows[U.sel].x, tw = U.rows[U.sel].w;
-        if (fabsf(ty - U.hl_y) > list_height()) {
-            U.hl_y = ty;
-            U.hl_vy = 0;
-            U.hl_x = tx;
-            U.hl_vx = 0;
-        }
-        anim |= spring_step(&U.hl_y, &U.hl_vy, ty, anim_omega(g_cfg.anim_select_ms), dt);
-        anim |= spring_step(&U.hl_h, &U.hl_vh, th, anim_omega(g_cfg.anim_select_ms), dt);
-        anim |= spring_step(&U.hl_x, &U.hl_vx, tx, anim_omega(g_cfg.anim_select_ms), dt);
-        anim |= spring_step(&U.hl_w, &U.hl_vw, tw, anim_omega(g_cfg.anim_select_ms), dt);
-    }
-    anim |= approach(&U.settings_hover_t, U.settings_hover ? 1.f : 0.f, 22.f, dt);
-    anim |= approach(&U.update_hover_t, U.update_hover ? 1.f : 0.f, 22.f, dt);
-    f64 now = time_now();
-    if (U.scroll != U.sb_prev) U.sb_seen = now;
-    U.sb_prev = U.scroll;
-    bool recent = now - U.sb_seen < 0.9;
-    bool sb_on = max_scroll() > 0 && (U.sb_hot || recent);
-    anim |= approach(&U.sb_t, sb_on ? 1.f : 0.f, sb_on ? 20.f : 7.f, dt);
-    if (recent && !U.sb_hot && max_scroll() > 0) anim = true;
-    anim |= approach(&U.sub_t, row_selectable(U.sel) && U.rows[U.sel].kind == ROW_APP && !U.rows[U.sel].cell &&
-                                       !(w10_on() && U.rows[U.sel].app->kind != APP_CMD) ? 1.f : 0.f, 24.f, dt);
-    if (st_on()) anim |= st_animate(dt);
-    if (w10_on()) anim |= w10_animate(dt);
-    anim |= cm_animate(dt);
-    anim |= tg_animate(dt);
-    if (slide_spring()) {
-        // One speed both ways, so a reopen while it closes (or the other way) turns it around mid-flight.
-        f32 target = U.vis_target > 0.5f ? 0.f : (f32)U.slide_dy;
-        anim |= spring_step(&U.slide_off, &U.slide_v, target, slide_omega(), dt);
-        if (U.vis_target < 0.5f && fabsf(target - U.slide_off) < fabsf(target) * 0.04f) {  // faded out already, skip the spring's tail
-            U.slide_off = target;
-            U.slide_v = 0;
-        }
-        U.vis = U.slide_off == target ? U.vis_target : 1.f - U.slide_off / (f32)U.slide_dy;
-    } else if (U.vis != U.vis_target) {
-        f32 open = anim_sec(g_cfg.anim_open_ms), close = anim_sec(g_cfg.anim_close_ms);
-        if (U.vis_target > U.vis) U.vis = open > 0.f ? MIN(U.vis + dt / open, U.vis_target) : U.vis_target;
-        else U.vis = close > 0.f ? MAX(U.vis - dt / close, U.vis_target) : U.vis_target;
-        anim |= U.vis != U.vis_target;
-    }
-    if (!U.closing && rows_cascading(now)) anim = true;
-    if (U.files_end_y >= 0 && U.files_end_y < U.scroll + list_height() && files_virtual_total() > U.files_shown) anim = true;
-    U.animating = anim;
-}
-
-static void ui_render(void)
-{
-    if (!R.ok && !renderer_recover()) {
-        U.dirty = false;
-        U.animating = false;
-        return;
-    }
-    r_use(&R.main);
-    r_wait_frame();
-    f64 now = time_now();
-    f32 dt = (f32)(now - U.last_frame);
-    if (dt > 0.1f || dt <= 0) dt = 1.f / 60.f;
-    U.last_frame = now;
-    animate(dt);
-    files_load_more();
-    f32 v = vis_eased();
-    f32 s0 = (f32)g_cfg.anim_open_scale / 100.f;
-    R.scale = (U.slide || (U.vis >= 1.f && U.vis_target >= 1.f)) ? 1.f : U.closing ? 0.985f + 0.015f * v : s0 + (1.f - s0) * v;
-    ui_draw();
-    if (F.overflow) {
-        font_reset_atlas();
-        ui_draw();
-        F.overflow = false;
-    }
-    apply_window_alpha();
-    apply_window_slide();
-    r_end_and_present();
-    U.dirty = false;
-    if (U.closing && U.vis <= 0.f) ui_hide_finish();
-}
-
-static int row_at(int x, int y)
-{
-    if (y < U.list_y0 || y >= U.list_y1 || (f32)x < list_x0() || (f32)x >= list_x1()) return -1;
-    f32 cy = (f32)y - U.list_y0 + U.scroll;
-    for (int i = row_first_below(cy); i < U.row_count && U.rows[i].y <= cy; i++) {
-        Row *r = &U.rows[i];
-        if (cy < r->y + r->h && (r->cell != CELL_TILE || ((f32)x >= r->x && (f32)x < r->x + r->w))) return i;
-    }
-    return -1;
-}
-
-static int text_index_at(int x)
-{
-    if (!U.qlen) return 0;
-    static f32 offs[Q_MAX + 2];
-    f32 fs = S(LS()->search_fs);
-    text_offsets(FONT_DISPLAY, fs, U.q, U.qlen, offs);
-    f32 fx0, fx1, cy;
-    search_field(&fx0, &fx1, &cy);
-    f32 lx = (f32)x - fx0 + floorf(U.q_scroll);
-    int best = 0;
-    for (int i = 0; i <= U.qlen; i++)
-        if (fabsf(offs[i] - lx) < fabsf(offs[best] - lx)) best = i;
-    return best;
+    WCHAR tmp[Q_MAX + 1];
+    int n = clipboard_get(tmp, countof(tmp));
+    if (n) edit_replace(U.anchor, U.caret, tmp, n);
 }

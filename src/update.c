@@ -7,8 +7,6 @@
 #define UPD_CHECK_EVERY_MS (6 * 3600 * 1000)
 #define TIMER_UPDATE 3
 
-static bool g_pinned;
-
 enum { UPD_IDLE, UPD_CHECKING, UPD_LATEST, UPD_AVAILABLE, UPD_DOWNLOADING, UPD_INSTALLING, UPD_ERROR };
 
 static struct {
@@ -35,6 +33,7 @@ static void upd_set(LONG st)
 
 static int upd_state(void) { return (int)InterlockedCompareExchange(&UPD.state, 0, 0); }
 
+// Installed by the setup (its uninstaller is next to us), not the portable exe.
 static bool upd_installed(void)
 {
     WCHAR p[MAX_PATH];
@@ -157,6 +156,7 @@ static bool json_str(const char *js, const char *key, const char *from, char *ou
     return *p == '"';
 }
 
+// Finds the newest release and its asset for this kind of install (setup or portable).
 static DWORD WINAPI upd_check_thread(void *arg)
 {
     (void)arg;
@@ -206,9 +206,7 @@ static void upd_check(void)
     if (st == UPD_DOWNLOADING || st == UPD_INSTALLING) return;
     if (InterlockedCompareExchange(&UPD.busy, 1, 0)) return;
     if (st != UPD_AVAILABLE) upd_set(UPD_CHECKING);
-    HANDLE t = CreateThread(NULL, 0, upd_check_thread, NULL, 0, NULL);
-    if (t) CloseHandle(t);
-    else {
+    if (!thread_start(upd_check_thread, NULL)) {
         InterlockedExchange(&UPD.busy, 0);
         upd_set(UPD_ERROR);
     }
@@ -263,26 +261,13 @@ static void upd_download(void)
     if (InterlockedCompareExchange(&UPD.busy, 1, 0)) return;
     InterlockedExchange(&UPD.progress, 0);
     upd_set(UPD_DOWNLOADING);
-    HANDLE t = CreateThread(NULL, 0, upd_download_thread, NULL, 0, NULL);
-    if (t) CloseHandle(t);
-    else {
+    if (!thread_start(upd_download_thread, NULL)) {
         InterlockedExchange(&UPD.busy, 0);
         upd_set(UPD_ERROR);
     }
 }
 
-static bool upd_run(const WCHAR *file, const WCHAR *args)
-{
-    SHELLEXECUTEINFOW sei;
-    memset(&sei, 0, sizeof sei);
-    sei.cbSize = sizeof sei;
-    sei.fMask = SEE_MASK_NOASYNC;
-    sei.lpVerb = L"open";
-    sei.lpFile = file;
-    sei.lpParameters = args;
-    sei.nShow = SW_SHOWNORMAL;
-    return ShellExecuteExW(&sei) != 0;
-}
+static bool upd_run(const WCHAR *file, const WCHAR *args) { return shell_run(L"open", file, args, NULL, 0, NULL); }
 
 // UI thread, download ready. The installer closes us itself (--shutdown); the portable exe is swapped in place.
 static void upd_apply(void)

@@ -5,21 +5,21 @@ enum { CMD_NONE, CMD_LOCK, CMD_SLEEP, CMD_RESTART, CMD_SHUTDOWN, CMD_SIGNOUT, CM
 
 typedef struct App {
     WCHAR *name;
-    WCHAR *norm;
+    WCHAR *norm;  // name for matching (norm_str) and its word starts
     u8 *ws;
     int len;
-    WCHAR *id;
-    WCHAR *path;
+    WCHAR *id;    // the Apps folder parsing name (AUMID or path), "cmd:N" for a command
+    WCHAR *path;  // the target file, when there is one
     u64 id_hash;
     u8 kind;
-    u8 cmd;
+    u8 cmd;       // APP_CMD: CMD_*, its glyph, and whether it asks for a second Enter
     bool danger;
     u16 glyph;
-    int kw_count;
+    int kw_count;  // extra words it is found by: the exe name, the package, aliases, command synonyms
     WCHAR *kw[APP_MAX_KW];
     u8 *kw_ws[APP_MAX_KW];
     int kw_len[APP_MAX_KW];
-    f32 frec;
+    f32 frec;     // launch frequency bonus, refreshed on show
 } App;
 
 typedef struct AppList {
@@ -37,9 +37,38 @@ static void applist_free(AppList *l)
     free(l);
 }
 
+// An app as read from the Apps folder or the cache, before applist_build.
 typedef struct RawApp {
     WCHAR *name, *id, *path;
 } RawApp;
+
+typedef struct RawApps {
+    Arena arena;
+    RawApp *items;
+    int n, cap;
+} RawApps;
+
+static void raw_init(RawApps *r)
+{
+    memset(r, 0, sizeof *r);
+    arena_init(&r->arena, 64ull << 20);
+}
+
+static void raw_free(RawApps *r)
+{
+    free(r->items);
+    arena_release(&r->arena);
+}
+
+static bool raw_add(RawApps *r, const WCHAR *name, const WCHAR *id, const WCHAR *path)
+{
+    if (!GROW(r->items, r->cap, r->n + 1, 1024)) return false;
+    RawApp *a = &r->items[r->n++];
+    a->name = wdup(&r->arena, name, -1);
+    a->id = wdup(&r->arena, id, -1);
+    a->path = path && path[0] ? wdup(&r->arena, path, -1) : NULL;
+    return true;
+}
 
 static int cmp_raw_name(const void *a, const void *b)
 {
@@ -60,13 +89,13 @@ static void app_fill_match(Arena *a, App *app)
 
 static bool looks_like_noise(const WCHAR *norm, const WCHAR *path)
 {
-    static const WCHAR *bad_names[] = { L"uninstall", L"деинсталл", L"удалить", L"удаление", L"uninstaller" };
+    static const WCHAR *bad_names[] = { L"uninstall", L"деинсталл", L"удалить", L"удаление" };
     for (int i = 0; i < countof(bad_names); i++)
         if (wcsstr(norm, bad_names[i])) return true;
     if (path) {
         if (wstarts_with_i(path, L"http://") || wstarts_with_i(path, L"https://")) return true;
         const WCHAR *file = PathFindFileNameW(path);
-        if (wstarts_with_i(file, L"unins") || wstarts_with_i(file, L"uninst")) return true;
+        if (wstarts_with_i(file, L"unins")) return true;
         static const WCHAR *doc_ext[] = { L".chm", L".txt", L".pdf", L".htm", L".html", L".rtf", L".md", L".url", L".hlp" };
         int n = wlen(path);
         for (int i = 0; i < countof(doc_ext); i++)
@@ -79,24 +108,26 @@ static bool looks_like_noise(const WCHAR *norm, const WCHAR *path)
     return false;
 }
 
-// "{GUID}\sub\app.exe" -> "C:\Program Files\sub\app.exe"
-static WCHAR *resolve_known_folder_path(Arena *a, const WCHAR *id)
+// "{GUID}\sub\app.exe" -> "C:\Program Files\sub\app.exe". False when the id is no path.
+static bool resolve_known_folder_path(const WCHAR *id, WCHAR *out, int cap)
 {
-    if (!id) return NULL;
-    if (((id[0] >= 'A' && id[0] <= 'Z') || (id[0] >= 'a' && id[0] <= 'z')) && id[1] == ':' && id[2] == '\\') return wdup(a, id, -1);
-    if (id[0] != '{') return NULL;
-    const WCHAR *close = wcschr(id, '}');
-    if (!close || close - id != 37) return NULL;
+    out[0] = 0;
+    if (!id) return false;
+    if (((id[0] >= 'A' && id[0] <= 'Z') || (id[0] >= 'a' && id[0] <= 'z')) && id[1] == ':' && id[2] == '\\') {
+        wcopy(out, cap, id);
+        return true;
+    }
+    const WCHAR *close = id[0] == '{' ? wcschr(id, '}') : NULL;
+    if (!close || close - id != 37) return false;
     WCHAR gs[40];
     memcpy(gs, id, 38 * sizeof(WCHAR));
     gs[38] = 0;
     GUID g;
-    if (FAILED(CLSIDFromString(gs, &g))) return NULL;
     PWSTR base = NULL;
-    if (FAILED(SHGetKnownFolderPath(&g, KF_FLAG_DONT_VERIFY, NULL, &base)) || !base) return NULL;
-    WCHAR *r = wcat3(a, base, L"", close + 1);
+    bool ok = SUCCEEDED(CLSIDFromString(gs, &g)) && SUCCEEDED(SHGetKnownFolderPath(&g, KF_FLAG_DONT_VERIFY, NULL, &base)) && base;
+    if (ok) wfmt(out, cap, L"%s%s", base, close + 1);
     CoTaskMemFree(base);
-    return r;
+    return ok;
 }
 
 // Explorer may hand out a packaged app's name unresolved ("ms-resource:...", e.g. mid-update): resolve it ourselves.
@@ -168,20 +199,27 @@ static const struct {
       0xECAA, false },
 };
 
+static void app_push_kw(Arena *a, App *app, const WCHAR *s, int len)
+{
+    if (app->kw_count >= APP_MAX_KW) return;
+    int j = app->kw_count++;
+    app->kw[j] = (WCHAR *)arena_push(a, (size_t)(len + 1) * sizeof(WCHAR));
+    norm_str(app->kw[j], s, len);
+    app->kw_len[j] = len;
+    app->kw_ws[j] = (u8 *)arena_push(a, (size_t)len + 1);
+    word_starts(s, len, app->kw_ws[j]);
+}
+
+// A hidden keyword, unless it is too short or repeats the name or another keyword.
 static void app_add_kw(Arena *a, App *app, const WCHAR *s, int len)
 {
-    if (len < 3 || app->kw_count >= APP_MAX_KW) return;
-    WCHAR *orig = wdup(a, s, len);
-    WCHAR *norm = (WCHAR *)arena_push(a, (size_t)(len + 1) * sizeof(WCHAR));
-    norm_str(norm, orig, len);
+    WCHAR norm[256];
+    if (len < 3 || len >= countof(norm)) return;
+    norm_str(norm, s, len);
     if (len == app->len && wmem_eq(norm, app->norm, len)) return;
     for (int i = 0; i < app->kw_count; i++)
         if (app->kw_len[i] == len && wmem_eq(app->kw[i], norm, len)) return;
-    int j = app->kw_count++;
-    app->kw[j] = norm;
-    app->kw_len[j] = len;
-    app->kw_ws[j] = (u8 *)arena_push(a, (size_t)len + 1);
-    word_starts(orig, len, app->kw_ws[j]);
+    app_push_kw(a, app, s, len);
 }
 
 static void app_add_hidden_keywords(Arena *a, App *app)
@@ -211,15 +249,18 @@ static void app_add_hidden_keywords(Arena *a, App *app)
         if (wstarts_with_i(app->id, aliases[i].id_prefix)) app_add_kw(a, app, aliases[i].kw, wlen(aliases[i].kw));
 }
 
-static AppList *applist_build(RawApp *raw, int n)
+// Sorted by name, then the commands. The signature tells whether anything changed since the last list.
+static AppList *applist_build(RawApps *r)
 {
+    RawApp *raw = r->items;
+    int n = r->n;
     AppList *l = (AppList *)calloc(1, sizeof(AppList));
     if (!l) return NULL;
     arena_init(&l->arena, 256ull << 20);
     qsort(raw, n, sizeof(RawApp), cmp_raw_name);
     int ncmd = countof(k_commands);
     l->apps = arena_array(&l->arena, App, n + ncmd);
-    u64 sig = 1469598103934665603ull;
+    u64 sig = FNV_BASIS;
     for (int i = 0; i < n; i++) {
         App *app = &l->apps[l->count++];
         app->kind = APP_SHELL;
@@ -229,8 +270,8 @@ static AppList *applist_build(RawApp *raw, int n)
         app->id_hash = hash_wstr_i(app->id, -1);
         app_fill_match(&l->arena, app);
         app_add_hidden_keywords(&l->arena, app);
-        sig = (sig ^ app->id_hash) * 1099511628211ull;
-        sig = (sig ^ hash_wstr(app->name, -1)) * 1099511628211ull;
+        sig = (sig ^ app->id_hash) * FNV_PRIME;
+        sig = (sig ^ hash_wstr(app->name, -1)) * FNV_PRIME;
     }
     l->shell_count = l->count;
     for (int i = 0; i < ncmd; i++) {
@@ -245,18 +286,10 @@ static AppList *applist_build(RawApp *raw, int n)
         app->id = wdup(&l->arena, idbuf, -1);
         app->id_hash = hash_wstr_i(app->id, -1);
         app_fill_match(&l->arena, app);
-        const WCHAR *k = k_commands[i].kw;
-        while (*k && app->kw_count < APP_MAX_KW) {
+        for (const WCHAR *k = k_commands[i].kw; *k;) {
             const WCHAR *e = k;
             while (*e && *e != '|') e++;
-            int len = (int)(e - k);
-            WCHAR *orig = wdup(&l->arena, k, len);
-            int j = app->kw_count++;
-            app->kw_len[j] = len;
-            app->kw[j] = (WCHAR *)arena_push(&l->arena, (size_t)(len + 1) * sizeof(WCHAR));
-            norm_str(app->kw[j], orig, len);
-            app->kw_ws[j] = (u8 *)arena_push(&l->arena, (size_t)len + 1);
-            word_starts(orig, len, app->kw_ws[j]);
+            app_push_kw(&l->arena, app, k, (int)(e - k));  // all of them: the name changes with the language
             k = *e ? e + 1 : e;
         }
     }
@@ -278,71 +311,56 @@ static void apps_relocalize(AppList *l)
     }
 }
 
+// name, id, path: one app per line (the cache, --dump-apps)
+static void apps_write(Buf *b, AppList *l, int n)
+{
+    for (int i = 0; i < n; i++) {
+        App *a = &l->apps[i];
+        buf_put_w(b, a->name);
+        buf_put(b, "\t", 1);
+        buf_put_w(b, a->id);
+        buf_put(b, "\t", 1);
+        if (a->path) buf_put_w(b, a->path);
+        buf_put(b, "\n", 1);
+    }
+}
+
 static void apps_cache_save(AppList *l)
 {
     Buf b = { 0 };
-    buf_put(&b, "# MixLauncher apps v1\n", 22);
-    for (int i = 0; i < l->shell_count; i++) {
-        App *a = &l->apps[i];
-        buf_put_w(&b, a->name);
-        buf_put(&b, "\t", 1);
-        buf_put_w(&b, a->id);
-        buf_put(&b, "\t", 1);
-        if (a->path) buf_put_w(&b, a->path);
-        buf_put(&b, "\n", 1);
-    }
-    WCHAR path[MAX_PATH];
-    data_path(path, L"apps.cache");
-    write_file_atomic(path, b.data, (DWORD)b.len);
-    free(b.data);
+    buf_str(&b, "# MixLauncher apps v1\n");
+    apps_write(&b, l, l->shell_count);
+    buf_save_data(&b, L"apps.cache");
 }
 
 static AppList *apps_cache_load(void)
 {
-    WCHAR path[MAX_PATH];
-    data_path(path, L"apps.cache");
-    char *text = read_file(path, NULL);
+    char *text = data_read(L"apps.cache");
     if (!text) return NULL;
-    Arena tmp;
-    arena_init(&tmp, 64ull << 20);
-    int cap = 1024, n = 0;
-    RawApp *raw = (RawApp *)malloc(sizeof(RawApp) * cap);
+    RawApps raw;
+    raw_init(&raw);
     char *cur = text, *line;
-    WCHAR w[4096];
-    while (raw && (line = next_line(&cur)) != NULL) {
-        if (line[0] == '#' || !line[0]) continue;
-        char *t1 = strchr(line, '\t');
-        if (!t1) continue;
-        char *t2 = strchr(t1 + 1, '\t');
+    WCHAR name[1024], id[1024], path[2048];
+    while ((line = next_line(&cur)) != NULL) {
+        char *t1 = line[0] == '#' ? NULL : strchr(line, '\t');
+        char *t2 = t1 ? strchr(t1 + 1, '\t') : NULL;
         if (!t2) continue;
         *t1 = *t2 = 0;
-        if (n == cap) {
-            cap *= 2;
-            RawApp *nr = (RawApp *)realloc(raw, sizeof(RawApp) * cap);
-            if (!nr) break;
-            raw = nr;
-        }
-        RawApp *r = &raw[n];
-        utf8_to_w(line, -1, w, countof(w));
-        r->name = wdup(&tmp, w, -1);
-        utf8_to_w(t1 + 1, -1, w, countof(w));
-        r->id = wdup(&tmp, w, -1);
-        utf8_to_w(t2 + 1, -1, w, countof(w));
-        r->path = w[0] ? wdup(&tmp, w, -1) : NULL;
-        if (r->name[0] && r->id[0] && !wstarts_with_i(r->name, L"ms-resource:")) n++;
+        utf8_to_w(line, -1, name, countof(name));
+        utf8_to_w(t1 + 1, -1, id, countof(id));
+        utf8_to_w(t2 + 1, -1, path, countof(path));
+        if (name[0] && id[0] && !wstarts_with_i(name, L"ms-resource:") && !raw_add(&raw, name, id, path)) break;
     }
     free(text);
-    AppList *l = (raw && n) ? applist_build(raw, n) : NULL;
-    free(raw);
-    arena_release(&tmp);
+    AppList *l = raw.n ? applist_build(&raw) : NULL;
+    raw_free(&raw);
     return l;
 }
 
-static int g_apps_unresolved;
-
-static AppList *apps_enumerate(void)
+// Everything in the Apps folder (Start's "All apps"): shortcuts, packaged apps, system entries.
+static AppList *apps_enumerate(int *unresolved)
 {
-    g_apps_unresolved = 0;
+    if (unresolved) *unresolved = 0;
     IShellItem *folder = NULL;
     IEnumShellItems *en = NULL;
     if (FAILED(SHGetKnownFolderItem(&ML_FOLDERID_AppsFolder, KF_FLAG_DEFAULT, NULL, &ML_IID_IShellItem, (void **)&folder)) || !folder) {
@@ -355,13 +373,12 @@ static AppList *apps_enumerate(void)
         log_msg("AppsFolder: BindToHandler failed 0x%08lx", hr);
         return NULL;
     }
-    Arena tmp;
-    arena_init(&tmp, 64ull << 20);
-    int cap = 1024, n = 0;
-    RawApp *raw = (RawApp *)malloc(sizeof(RawApp) * cap);
+    RawApps raw;
+    raw_init(&raw);
     IShellItem *it = NULL;
     ULONG fetched = 0;
-    while (raw && IEnumShellItems_Next(en, 1, &it, &fetched) == S_OK && it) {
+    bool ok = true;
+    while (ok && IEnumShellItems_Next(en, 1, &it, &fetched) == S_OK && it) {
         LPWSTR name = NULL, parse = NULL, target = NULL;
         IShellItem_GetDisplayName(it, SIGDN_NORMALDISPLAY, &name);
         IShellItem_GetDisplayName(it, SIGDN_PARENTRELATIVEPARSING, &parse);
@@ -372,27 +389,18 @@ static AppList *apps_enumerate(void)
         }
         const WCHAR *disp = name;
         if (name && parse && wstarts_with_i(name, L"ms-resource:")) {
-            disp = resolve_ms_resource(&tmp, name, parse);
-            if (!disp) g_apps_unresolved++;
+            disp = resolve_ms_resource(&raw.arena, name, parse);
+            if (!disp && unresolved) (*unresolved)++;
         }
         if (disp && parse && disp[0] && parse[0]) {
-            WCHAR *path = target && target[0] ? wdup(&tmp, target, -1) : resolve_known_folder_path(&tmp, parse);
-            if (path && path[0] == ':' && path[1] == ':') path = NULL;
+            WCHAR path[2048];
+            if (target && target[0]) wcopy(path, countof(path), target);
+            else resolve_known_folder_path(parse, path, countof(path));
+            if (path[0] == ':' && path[1] == ':') path[0] = 0;  // a shell namespace item, no file
             WCHAR norm[512];
             int nl = MIN(wlen(disp), 511);
             norm_str(norm, disp, nl);
-            if (!(g_cfg.hide_uninstallers && looks_like_noise(norm, path))) {
-                if (n == cap) {
-                    cap *= 2;
-                    RawApp *nr = (RawApp *)realloc(raw, sizeof(RawApp) * cap);
-                    if (!nr) break;
-                    raw = nr;
-                }
-                raw[n].name = wdup(&tmp, disp, -1);
-                raw[n].id = wdup(&tmp, parse, -1);
-                raw[n].path = path;
-                n++;
-            }
+            if (!(g_cfg.hide_uninstallers && looks_like_noise(norm, path[0] ? path : NULL))) ok = raw_add(&raw, disp, parse, path);
         }
         CoTaskMemFree(name);
         CoTaskMemFree(parse);
@@ -401,20 +409,20 @@ static AppList *apps_enumerate(void)
         it = NULL;
     }
     IEnumShellItems_Release(en);
-    AppList *l = raw ? applist_build(raw, n) : NULL;
-    free(raw);
-    arena_release(&tmp);
+    AppList *l = applist_build(&raw);
+    raw_free(&raw);
     return l;
 }
 
 static HANDLE g_index_event;
-static volatile LONG g_index_busy;
 
 static void apps_request_reindex(void)
 {
     if (g_index_event) SetEvent(g_index_event);
 }
 
+// Lists the apps again on request, when the Start menu folders change, and every 20 minutes. A list that
+// differs from the last one is cached and posted to the window (WM_APP_APPS_READY).
 static DWORD WINAPI indexer_thread(void *param)
 {
     u64 last_sig = (u64)(uintptr_t)param;
@@ -436,26 +444,24 @@ static DWORD WINAPI indexer_thread(void *param)
     }
 
     for (;;) {
-        InterlockedExchange(&g_index_busy, 1);
         f64 t0 = time_now();
-        AppList *l = apps_enumerate();
-        InterlockedExchange(&g_index_busy, 0);
-        if (l) {
-            if (l->signature != last_sig) {
-                last_sig = l->signature;
-                apps_cache_save(l);
-                log_msg("apps indexed: %d in %.0f ms", l->shell_count, (time_now() - t0) * 1000.0);
-                if (!PostMessageW(g_hwnd, WM_APP_APPS_READY, 0, (LPARAM)l)) applist_free(l);
-            } else {
-                applist_free(l);
-            }
+        int unresolved = 0;
+        AppList *l = apps_enumerate(&unresolved);
+        if (l && l->signature != last_sig) {
+            last_sig = l->signature;
+            apps_cache_save(l);
+            log_msg("apps indexed: %d in %.0f ms", l->shell_count, (time_now() - t0) * 1000.0);
+            if (!PostMessageW(g_hwnd, WM_APP_APPS_READY, 0, (LPARAM)l)) applist_free(l);
+        } else {
+            applist_free(l);
         }
         // Unresolved names usually sort themselves out once the package update finishes.
-        if (g_apps_unresolved) log_msg("apps: %d unresolved names skipped", g_apps_unresolved);
-        retries = g_apps_unresolved ? retries + 1 : 0;
-        DWORD wait = g_apps_unresolved && retries <= 10 ? 30 * 1000 : 20 * 60 * 1000;
+        if (unresolved) log_msg("apps: %d unresolved names skipped", unresolved);
+        retries = unresolved ? retries + 1 : 0;
+        DWORD wait = unresolved && retries <= 10 ? 30 * 1000 : 20 * 60 * 1000;
         DWORD r = WaitForMultipleObjects((DWORD)nw, waits, FALSE, wait);
         if (r >= WAIT_OBJECT_0 + 1 && r < WAIT_OBJECT_0 + (DWORD)nw) {
+            // a folder changed: wait for the burst of changes (an installer at work) to settle
             FindNextChangeNotification(waits[r - WAIT_OBJECT_0]);
             for (;;) {
                 DWORD r2 = WaitForMultipleObjects((DWORD)nw - 1, waits + 1, FALSE, 1500);
@@ -465,4 +471,10 @@ static DWORD WINAPI indexer_thread(void *param)
         }
     }
     return 0;
+}
+
+static void apps_index_start(u64 cached_signature)
+{
+    g_index_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+    thread_start(indexer_thread, (void *)(uintptr_t)cached_signature);
 }

@@ -1,3 +1,6 @@
+// Fuzzy matching of a query against names (apps, files, tags). Both sides are normalized with norm_str, and
+// ws marks where words start in the original (spaces, punctuation, camelCase, digits).
+
 enum {
     SCORE_EXACT = 10000,
     SCORE_PREFIX = 9000,
@@ -57,6 +60,47 @@ static int find_sub(const WCHAR *s, int n, const WCHAR *q, int m, int from)
     return -1;
 }
 
+// Where the query starts a word other than the first, -1 if nowhere.
+static int word_prefix_at(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int m)
+{
+    for (int i = find_sub(s, n, q, m, 1); i >= 0; i = find_sub(s, n, q, m, i + 1))
+        if (ws[i]) return i;
+    return -1;
+}
+
+// The query's letters start words of s in order ("vsc" -> Visual Studio Code); marks them in mask if given.
+static bool acronym_match(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int m, u8 *mask)
+{
+    int j = 0;
+    for (int i = 0; i < n && j < m; i++)
+        if (ws[i] && s[i] == q[j]) j++;
+    if (j < m) return false;
+    for (int i = 0, k = 0; mask && i < n && k < m; i++)
+        if (ws[i] && s[i] == q[k]) {
+            mask[i] = 1;
+            k++;
+        }
+    return true;
+}
+
+static void trim_spaces(const WCHAR **q, int *m)
+{
+    while (*m > 0 && (*q)[*m - 1] == ' ') (*m)--;
+    while (*m > 0 && (*q)[0] == ' ') {
+        (*q)++;
+        (*m)--;
+    }
+}
+
+// The next space-separated token of q from *i: its start and length, 0 at the end.
+static int next_token(const WCHAR *q, int m, int *i, int *start)
+{
+    while (*i < m && q[*i] == ' ') (*i)++;
+    *start = *i;
+    while (*i < m && q[*i] != ' ') (*i)++;
+    return *i - *start;
+}
+
 static int score_fuzzy(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int m)
 {
     int start = -1;
@@ -109,51 +153,29 @@ static int score_token(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int 
     int len_pen = MIN(n - m, 200);
     if (m == n && wmem_eq(s, q, n)) return SCORE_EXACT;
     if (wmem_eq(s, q, m)) return SCORE_PREFIX - len_pen;
-    for (int i = find_sub(s, n, q, m, 1); i >= 0; i = find_sub(s, n, q, m, i + 1))
-        if (ws[i]) return SCORE_WORD_PREFIX - MIN(i, 100) * 4 - len_pen;
-    if (m >= 2) {
-        int j = 0;
-        for (int i = 0; i < n && j < m; i++)
-            if (ws[i] && s[i] == q[j]) j++;
-        if (j == m) return SCORE_ACRONYM - MIN(n, 200);
-    }
-    int at = find_sub(s, n, q, m, 0);
+    int wp = word_prefix_at(s, n, ws, q, m);
+    if (wp >= 0) return SCORE_WORD_PREFIX - MIN(wp, 100) * 4 - len_pen;
+    if (m >= 2 && acronym_match(s, n, ws, q, m, NULL)) return SCORE_ACRONYM - MIN(n, 200);
     int st = score_stem(s, n, ws, q, m);
     if (st) return st;
+    int at = find_sub(s, n, q, m, 0);
     if (at >= 0) return SCORE_SUBSTRING - MIN(at, 200) * 2 - len_pen;
     return score_fuzzy(s, n, ws, q, m);
 }
 
+// The query as a whole, or every word of it somewhere in s (scored by the weakest, a little below a whole match).
 static int score_query(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int m)
 {
-    while (m > 0 && q[m - 1] == ' ') m--;
-    while (m > 0 && q[0] == ' ') {
-        q++;
-        m--;
-    }
+    trim_spaces(&q, &m);
     if (m <= 0) return 1;
     int whole = score_token(s, n, ws, q, m);
-    bool has_space = false;
-    for (int i = 0; i < m; i++)
-        if (q[i] == ' ') has_space = true;
-    if (!has_space) return whole;
-    int worst = INT32_MAX, tokens = 0;
-    for (int i = 0; i < m;) {
-        while (i < m && q[i] == ' ') i++;
-        int b = i;
-        while (i < m && q[i] != ' ') i++;
-        if (i > b) {
-            int sc = score_token(s, n, ws, q + b, i - b);
-            if (!sc) {
-                worst = 0;
-                break;
-            }
-            worst = MIN(worst, sc);
-            tokens++;
-        }
+    if (!wmemchr(q, ' ', (size_t)m)) return whole;
+    int worst = INT32_MAX;
+    for (int i = 0, b, len; (len = next_token(q, m, &i, &b)) > 0;) {
+        worst = MIN(worst, score_token(s, n, ws, q + b, len));
+        if (!worst) break;
     }
-    int multi = (tokens && worst) ? worst - 300 : 0;
-    return MAX(whole, multi);
+    return MAX(whole, worst > 0 && worst < INT32_MAX ? worst - 300 : 0);
 }
 
 static const WCHAR k_layout_en[] = L"`qwertyuiop[]asdfghjkl;'zxcvbnm,./";
@@ -161,6 +183,7 @@ static const WCHAR k_layout_ru[] = L"\x0451\x0439\x0446\x0443\x043a\x0435\x043d\
                                    L"\x0444\x044b\x0432\x0430\x043f\x0440\x043e\x043b\x0434\x0436\x044d"
                                    L"\x044f\x0447\x0441\x043c\x0438\x0442\x044c\x0431\x044e.";
 
+// The query as typed in the other layout (ru <-> en, "ghbdtn" -> "привет"). False when it mixes both or has neither.
 static bool layout_convert(const WCHAR *q, int m, WCHAR *out)
 {
     bool has_ru = false, has_en = false;
@@ -183,8 +206,7 @@ static bool layout_convert(const WCHAR *q, int m, WCHAR *out)
                 r = to[k];
                 break;
             }
-        // normalized text maps ё to е, keep that invariant
-        out[i] = norm_char(r);
+        out[i] = norm_char(r);  // normalized text has е for ё
     }
     out[m] = 0;
     return true;
@@ -199,26 +221,8 @@ static void match_token_mask(const WCHAR *s, int n, const u8 *ws, const WCHAR *q
         if (st >= 0) memset(mask + st, 1, (size_t)MAX(4, m - 3));
         return;
     }
-    int at = wmem_eq(s, q, m) ? 0 : -1;
-    for (int i = at < 0 ? find_sub(s, n, q, m, 1) : -1; i >= 0; i = find_sub(s, n, q, m, i + 1))
-        if (ws[i]) {
-            at = i;
-            break;
-        }
-    if (at < 0 && m >= 2) {
-        int j = 0;
-        for (int i = 0; i < n && j < m; i++)
-            if (ws[i] && s[i] == q[j]) j++;
-        if (j == m) {
-            j = 0;
-            for (int i = 0; i < n && j < m; i++)
-                if (ws[i] && s[i] == q[j]) {
-                    mask[i] = 1;
-                    j++;
-                }
-            return;
-        }
-    }
+    int at = wmem_eq(s, q, m) ? 0 : word_prefix_at(s, n, ws, q, m);
+    if (at < 0 && m >= 2 && acronym_match(s, n, ws, q, m, mask)) return;
     int st = at < 0 ? stem_at(s, n, ws, q, m) : -1;
     if (st >= 0) {
         memset(mask + st, 1, (size_t)MAX(4, m - 3));
@@ -241,24 +245,16 @@ static void match_token_mask(const WCHAR *s, int n, const u8 *ws, const WCHAR *q
         for (int i = 0; i < n && i < (int)sizeof tmp; i++) mask[i] |= tmp[i];
 }
 
+// Marks the matched characters for highlighting; returns how many.
 static int match_mask(const WCHAR *s, int n, const u8 *ws, const WCHAR *q, int m, u8 *mask)
 {
-    while (m > 0 && q[m - 1] == ' ') m--;
-    while (m > 0 && q[0] == ' ') {
-        q++;
-        m--;
-    }
+    trim_spaces(&q, &m);
     memset(mask, 0, (size_t)n);
     if (m <= 0) return 0;
     if (score_token(s, n, ws, q, m) > 0) {
         match_token_mask(s, n, ws, q, m, mask);
     } else {
-        for (int i = 0; i < m;) {
-            while (i < m && q[i] == ' ') i++;
-            int b = i;
-            while (i < m && q[i] != ' ') i++;
-            if (i > b) match_token_mask(s, n, ws, q + b, i - b, mask);
-        }
+        for (int i = 0, b, len; (len = next_token(q, m, &i, &b)) > 0;) match_token_mask(s, n, ws, q + b, len, mask);
     }
     int k = 0;
     for (int i = 0; i < n; i++) k += mask[i];

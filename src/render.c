@@ -1,8 +1,13 @@
+// The renderer: one instanced quad per rounded rect, glyph or icon, drawn by a single shader into a composition
+// swap chain (DirectComposition) per window. Also the CPU rasterizing helpers of the taskbar windows and icons.
+
+// One instance. mode: 0 rounded rect, 1 glyph (atlas coverage), 2 icon (atlas BGRA), 3 rounded rect turned by
+// the 2x2 matrix in u0..v1. border > 0 draws only an outline that wide, soft blurs the edge (shadows).
 typedef struct RInst {
     f32 x0, y0, x1, y1;
     f32 u0, v0, u1, v1;
     u32 color;
-    f32 cx0, cy0, cx1, cy1;
+    f32 cx0, cy0, cx1, cy1;  // clip
     f32 radius, border, soft, mode;
 } RInst;
 
@@ -10,7 +15,8 @@ typedef struct RInst {
 #define ICON_ATLAS  1024
 #define RGBA(r, g, b, a) ((u32)(r) | ((u32)(g) << 8) | ((u32)(b) << 16) | ((u32)(a) << 24))
 
-// CPU rasterizing (icons, taskbar windows): signed distance to a rounded box, and "over" compositing.
+// ---- CPU rasterizing: signed distance to a rounded box, premultiplied "over"
+
 static f32 sd_box(f32 px, f32 py, f32 hx, f32 hy, f32 r)
 {
     f32 qx = fabsf(px) - hx + r, qy = fabsf(py) - hy + r;
@@ -18,14 +24,74 @@ static f32 sd_box(f32 px, f32 py, f32 hx, f32 hy, f32 r)
     return sqrtf(ox * ox + oy * oy) + MIN(MAX(qx, qy), 0.f) - r;
 }
 
+// c (premultiplied by *a) = col at alpha over c
 static void px_over(f32 *c, f32 *a, const f32 *col, f32 alpha)
 {
     for (int k = 0; k < 3; k++) c[k] = col[k] * alpha + c[k] * (1.f - alpha);
     *a = alpha + *a * (1.f - alpha);
 }
 
-// b = { x0, y0, x1, y1 }
+// A composited pixel as premultiplied BGRA. Never fully clear: alpha 0 would pass clicks to what is under it.
+static u32 px_pack(const f32 *c, f32 a)
+{
+    a = MAX(a, 1.f / 255.f);
+    u32 A = (u32)(a * 255.f + 0.5f);
+    u32 R = (u32)(CLAMP(c[0], 0.f, a) * 255.f + 0.5f), G = (u32)(CLAMP(c[1], 0.f, a) * 255.f + 0.5f), B = (u32)(CLAMP(c[2], 0.f, a) * 255.f + 0.5f);
+    return (A << 24) | (R << 16) | (G << 8) | B;
+}
+
+// The pixels of a layered window (Start button, media widget): a DIB section in a memory DC.
+typedef struct Layer {
+    HDC dc;
+    HBITMAP bmp;
+    u32 *bits;
+    int w, h;
+} Layer;
+
+static void layer_free(Layer *l)
+{
+    if (l->dc) DeleteDC(l->dc);
+    if (l->bmp) DeleteObject(l->bmp);
+    memset(l, 0, sizeof *l);
+}
+
+// Makes it w x h (its pixels undefined after a change). False when it could not.
+static bool layer_fit(Layer *l, int w, int h)
+{
+    if (l->bmp && l->w == w && l->h == h) return true;
+    layer_free(l);
+    BITMAPINFO bi = dib32(w, h);
+    l->dc = CreateCompatibleDC(NULL);
+    l->bmp = CreateDIBSection(l->dc, &bi, DIB_RGB_COLORS, (void **)&l->bits, NULL, 0);
+    if (!l->bmp) {
+        layer_free(l);
+        return false;
+    }
+    SelectObject(l->dc, l->bmp);
+    l->w = w;
+    l->h = h;
+    return true;
+}
+
+static void layer_show(const Layer *l, HWND wnd)
+{
+    SIZE size = { l->w, l->h };
+    POINT src = { 0, 0 };
+    BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+    if (wnd) UpdateLayeredWindow(wnd, NULL, NULL, &size, l->dc, &src, 0, &bf, ULW_ALPHA);
+}
+
+// ---- boxes: b = { x0, y0, x1, y1 }
+
 static bool in_box(const f32 *b, f32 x, f32 y) { return x >= b[0] && x < b[2] && y >= b[1] && y < b[3]; }
+
+static void box_set(f32 *b, f32 x, f32 y, f32 w, f32 h)
+{
+    b[0] = x;
+    b[1] = y;
+    b[2] = x + w;
+    b[3] = y + h;
+}
 
 static u32 color_alpha(u32 c, f32 k)
 {
@@ -44,7 +110,9 @@ static u32 color_mix(u32 a, u32 b, f32 t)
     return r;
 }
 
-// Both motion helpers jump straight to the target under reduced motion.
+// ---- motion. Both helpers jump straight to the target under reduced motion and return whether still moving.
+
+// A critically damped spring: omega sets how fast it arrives.
 static bool spring_step(f32 *x, f32 *v, f32 target, f32 omega, f32 dt)
 {
     if (omega <= 0.f || g_cfg.reduced_motion) {
@@ -65,6 +133,7 @@ static bool spring_step(f32 *x, f32 *v, f32 target, f32 omega, f32 dt)
     return true;
 }
 
+// Exponential ease toward the target.
 static bool approach(f32 *x, f32 target, f32 rate, f32 dt)
 {
     f32 d = target - *x;
@@ -123,7 +192,7 @@ typedef struct Renderer {
     RTarget *t;
 
     RInst *inst;
-    u32 count, cap;
+    int count, cap;
     f32 clip[4];
     f32 scale;
     f32 opacity;
@@ -135,6 +204,8 @@ typedef struct Renderer {
 
 static Renderer R;
 
+// The vertex shader spreads an instance over its quad (grown by the soft edge) and applies the open/close zoom
+// (vp.z); the pixel shader clips, then shades the rect's distance field, a contrast-boosted glyph or an icon.
 static const char k_shader_src[] =
     "cbuffer C : register(b0) { float4 vp; float4 gamma; float4 misc; };\n"
     "struct I { float4 r : RECT; float4 uv : UV; float4 c : COLOR; float4 clip : CLIP; float4 p : PARAM; uint vid : SV_VertexID; };\n"
@@ -450,10 +521,6 @@ static bool r_init(HWND hwnd, int w, int h)
     R.dirty_y0 = 0;
     R.dirty_x1 = GLYPH_ATLAS;
     R.dirty_y1 = GLYPH_ATLAS;
-    if (!R.inst) {
-        R.cap = 16384;
-        R.inst = (RInst *)malloc(sizeof(RInst) * R.cap);
-    }
     R.ok = true;
     return true;
 }
@@ -471,22 +538,18 @@ static void r_set_clip(f32 x0, f32 y0, f32 x1, f32 y1)
     R.clip[3] = y1;
 }
 
+static void r_clip_all(void) { r_set_clip(0, 0, (f32)R.t->w, (f32)R.t->h); }
+
 static void r_begin(void)
 {
     R.count = 0;
     R.opacity = 1.f;
-    r_set_clip(0, 0, (f32)R.t->w, (f32)R.t->h);
+    r_clip_all();
 }
 
 static RInst *r_push(void)
 {
-    if (R.count >= R.cap) {
-        u32 nc = R.cap * 2;
-        RInst *ni = (RInst *)realloc(R.inst, sizeof(RInst) * nc);
-        if (!ni) return NULL;
-        R.inst = ni;
-        R.cap = nc;
-    }
+    if (!GROW(R.inst, R.cap, R.count + 1, 16384)) return NULL;
     RInst *q = &R.inst[R.count++];
     q->cx0 = R.clip[0];
     q->cy0 = R.clip[1];
@@ -519,6 +582,17 @@ static void r_rect_ex(f32 x, f32 y, f32 w, f32 h, u32 color, f32 radius, f32 bor
 }
 
 static void r_rect(f32 x, f32 y, f32 w, f32 h, u32 color, f32 radius) { r_rect_ex(x, y, w, h, color, radius, 0, 0); }
+
+// A hairline outline.
+static void r_border(f32 x, f32 y, f32 w, f32 h, u32 color, f32 radius) { r_rect_ex(x, y, w, h, color, radius, 1.f, 0); }
+
+// A floating panel (menu, dialog, tooltip): a soft shadow shadow_dy below, the fill and a hairline border.
+static void r_panel(f32 x, f32 y, f32 w, f32 h, f32 radius, u32 fill, u32 border, u32 shadow, f32 shadow_dy, f32 shadow_soft)
+{
+    r_rect_ex(x, y + shadow_dy, w, h, shadow, radius, 0, shadow_soft);
+    r_rect(x, y, w, h, fill, radius);
+    r_border(x, y, w, h, border, radius);
+}
 
 // A rounded rect centered at (cx, cy) mapped by the 2x2 matrix m: its local x axis goes to (m[0], m[1]), y to (m[2], m[3]).
 static void r_rect_affine(f32 cx, f32 cy, f32 w, f32 h, const f32 m[4], u32 color, f32 radius)
@@ -620,6 +694,7 @@ static bool r_end_and_present(void)
         c[1] = 1.0f / (f32)t->h;
         c[2] = R.scale > 0 ? R.scale : 1.0f;
         c[3] = 0;
+        // DirectWrite's alpha correction for gamma 1.8 (the ps: g + g(1 - g)(..)) and the text contrast boost
         c[4] = 0.1469f / 4.f;
         c[5] = -0.8911f / 4.f;
         c[6] = 1.4644f / 4.f;
@@ -650,12 +725,12 @@ static bool r_end_and_present(void)
     ID3D11SamplerState *samps[2] = { R.scale != 1.0f ? R.samp_linear : R.samp_point, R.samp_linear };
     ID3D11DeviceContext_PSSetSamplers(R.ctx, 0, 2, samps);
 
-    for (u32 done = 0; done < R.count;) {
-        u32 n = MIN(R.count - done, R.ibuf_cap);
+    for (int done = 0; done < R.count;) {
+        int n = MIN(R.count - done, (int)R.ibuf_cap);
         if (FAILED(ID3D11DeviceContext_Map(R.ctx, (ID3D11Resource *)R.ibuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) break;
-        memcpy(m.pData, R.inst + done, n * sizeof(RInst));
+        memcpy(m.pData, R.inst + done, (size_t)n * sizeof(RInst));
         ID3D11DeviceContext_Unmap(R.ctx, (ID3D11Resource *)R.ibuf, 0);
-        ID3D11DeviceContext_DrawInstanced(R.ctx, 4, n, 0, 0);
+        ID3D11DeviceContext_DrawInstanced(R.ctx, 4, (UINT)n, 0, 0);
         done += n;
     }
 

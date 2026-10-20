@@ -14,7 +14,10 @@
 #include "elevation.c"
 #include "launch.c"
 #include "update.c"
+#include "theme.c"
 #include "ui.c"
+#include "ui_window.c"
+#include "ui_draw.c"
 #include "ctxmenu.c"
 #include "tagdlg.c"
 #include "start.c"
@@ -159,6 +162,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         }
         return 0;
     case WM_SETTINGCHANGE:
+        if (wp == SPI_SETCLIENTAREAANIMATION) g_sys_anim = -1;
         if (lp && !wcscmp((const WCHAR *)lp, L"ImmersiveColorSet")) {
             theme_update();
             ui_invalidate();
@@ -257,27 +261,17 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     return DefWindowProcW(h, msg, wp, lp);
 }
 
-static void write_utf8_file(const WCHAR *path, Buf *b) { write_file_atomic(path, b->data ? b->data : "", (DWORD)b->len); }
+// ---- diagnostics: --dump-apps, --test-everything
 
 static int cmd_dump_apps(const WCHAR *out)
 {
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     f64 t0 = time_now();
-    AppList *l = apps_enumerate();
-    f64 t1 = time_now();
+    AppList *l = apps_enumerate(NULL);
     Buf b = { 0 };
-    buf_printf(&b, "enumerated in %.1f ms, %d apps\n", (t1 - t0) * 1000.0, l ? l->shell_count : -1);
-    for (int i = 0; l && i < l->count; i++) {
-        App *a = &l->apps[i];
-        buf_put_w(&b, a->name);
-        buf_put(&b, "\t", 1);
-        buf_put_w(&b, a->id);
-        buf_put(&b, "\t", 1);
-        if (a->path) buf_put_w(&b, a->path);
-        buf_put(&b, "\n", 1);
-    }
-    write_utf8_file(out, &b);
-    free(b.data);
+    buf_printf(&b, "enumerated in %.1f ms, %d apps\n", (time_now() - t0) * 1000.0, l ? l->shell_count : -1);
+    if (l) apps_write(&b, l, l->count);
+    buf_save(&b, out);
     return 0;
 }
 
@@ -300,13 +294,7 @@ static LRESULT CALLBACK test_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 
 static int cmd_test_everything(const WCHAR *query, const WCHAR *out)
 {
-    WNDCLASSW wc;
-    memset(&wc, 0, sizeof wc);
-    wc.lpfnWndProc = test_wndproc;
-    wc.hInstance = GetModuleHandleW(NULL);
-    wc.lpszClassName = L"MixLauncherTest";
-    RegisterClassW(&wc);
-    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, wc.hInstance, NULL);
+    g_hwnd = message_window(L"MixLauncherTest", test_wndproc);
     g_ev_own_allowed = g_elevated;
     ev_start();
     f64 t0 = time_now();
@@ -336,8 +324,7 @@ static int cmd_test_everything(const WCHAR *query, const WCHAR *out)
             }
         }
     }
-    write_utf8_file(out, &b);
-    free(b.data);
+    buf_save(&b, out);
     return 0;
 }
 
@@ -356,6 +343,15 @@ static void shutdown_running(void)
         }
     }
     ev_own_stop(5000);
+}
+
+// "--style" -> the style field. --lang is short for --language.
+static int option_field(const WCHAR *arg)
+{
+    char key[64];
+    if (wcsncmp(arg, L"--", 2)) return CF_NONE;
+    w_to_utf8(arg + 2, -1, key, sizeof key);
+    return cfg_find(!strcmp(key, "lang") ? "language" : key);
 }
 
 static void init_paths(void)
@@ -388,7 +384,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     bool opt_show = false, opt_settings = false;
     const WCHAR *opt_query = NULL, *opt_update_as = NULL;
     DWORD opt_after_update = 0;
-    int opt_backdrop = -1, opt_theme = -1, opt_lang = -1, opt_style = -1, opt_position = -1;
+    int overrides[16], noverrides = 0;  // "--<config key> <value>" (--lang for language): this run only
     for (int i = 1; i < argc; i++) {
         if (!wcscmp(argv[i], L"--exit")) {
             HWND other = FindWindowW(WINDOW_CLASS, NULL);
@@ -410,6 +406,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
             wfmt(args, countof(args), L"/c whoami /groups > \"%s\"", argv[i + 1]);
             return shell_exec_unelevated_ex(L"cmd.exe", args, NULL, NULL, SW_HIDE) ? 0 : 1;
         } else if (!wcscmp(argv[i], L"--write-icon") && i + 1 < argc) {
+            CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
             return app_icon_write_ico(argv[i + 1]) ? 0 : 1;
         } else if (!wcscmp(argv[i], L"--media-dump") && i + 1 < argc) {
             config_load();
@@ -421,24 +418,6 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
         } else if (!wcscmp(argv[i], L"--test-everything") && i + 2 < argc) {
             config_load();
             return cmd_test_everything(argv[i + 1], argv[i + 2]);
-        } else if (!wcscmp(argv[i], L"--backdrop") && i + 1 < argc) {
-            i++;
-            opt_backdrop = !wcscmp(argv[i], L"solid") ? BACKDROP_SOLID : !wcscmp(argv[i], L"acrylic") ? BACKDROP_ACRYLIC : BACKDROP_BLUR;
-        } else if (!wcscmp(argv[i], L"--theme") && i + 1 < argc) {
-            i++;
-            opt_theme = !wcscmp(argv[i], L"dark") ? 1 : !wcscmp(argv[i], L"light") ? 2 : 0;
-        } else if (!wcscmp(argv[i], L"--style") && i + 1 < argc) {
-            i++;
-            char name[32];
-            w_to_utf8(argv[i], -1, name, sizeof name);
-            for (int k = 0; k < STYLE__COUNT; k++)
-                if (!_stricmp(name, k_style_names[k])) opt_style = k;
-        } else if (!wcscmp(argv[i], L"--position") && i + 1 < argc) {
-            i++;
-            opt_position = !wcscmp(argv[i], L"bottom-left") ? POS_BOTTOM_LEFT : !wcscmp(argv[i], L"bottom-center") ? POS_BOTTOM_CENTER : POS_CENTER;
-        } else if (!wcscmp(argv[i], L"--lang") && i + 1 < argc) {
-            i++;
-            opt_lang = !wcscmp(argv[i], L"ru") ? 1 : !wcscmp(argv[i], L"en") ? 2 : 0;
         } else if (!wcscmp(argv[i], L"--other-monitor")) {
             g_other_monitor = true;
             g_ktrace_on = true;
@@ -457,6 +436,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
         } else if (!wcscmp(argv[i], L"--query") && i + 1 < argc) {
             opt_query = argv[++i];
             opt_show = true;
+        } else if (option_field(argv[i]) && i + 1 < argc && noverrides < countof(overrides)) {
+            overrides[noverrides++] = i++;
         }
     }
 
@@ -479,19 +460,16 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     }
 
     config_load();
-    if (opt_backdrop >= 0) g_cfg.backdrop = opt_backdrop;
-    if (opt_theme >= 0) g_cfg.theme = opt_theme;
-    if (opt_style >= 0) g_cfg.style = opt_style;
-    if (opt_position >= 0) g_cfg.position = opt_position;
-    if (opt_lang >= 0) {
-        g_cfg.language = opt_lang;
-        lang_apply();
+    for (int k = 0; k < noverrides; k++) {
+        char v[1024];
+        w_to_utf8(argv[overrides[k] + 1], -1, v, sizeof v);
+        cfg_parse(option_field(argv[overrides[k]]), v);
     }
+    lang_apply();
     history_load();
     tags_load();
     arena_init(&U.recent_arena, 1ull << 20);
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-    theme_update();
 
     // Window icons (tray, taskbar, Alt+Tab) are the logo without its tile; only the exe icon keeps it.
     g_icon_big = app_icon_create(GetSystemMetrics(SM_CXICON), false);
@@ -521,12 +499,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     icons_start(ui_icon_px());
 
     AppList *cached = apps_cache_load();
-    u64 cached_sig = cached ? cached->signature : 0;
+    apps_index_start(cached ? cached->signature : 0);
     if (cached) on_apps_ready(cached);
-    g_index_event = CreateEventW(NULL, FALSE, FALSE, NULL);
     U.last_reindex = time_now();
-    HANDLE t = CreateThread(NULL, 0, indexer_thread, (void *)(uintptr_t)cached_sig, 0, NULL);
-    if (t) CloseHandle(t);
 
     g_ev_own_allowed = g_elevated && !g_pinned;
     ev_start();
@@ -557,6 +532,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
     }
     LocalFree(argv);
 
+    // Messages first, then a frame for every window that needs one; idle until the next message.
     for (;;) {
         MSG msg;
         while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {

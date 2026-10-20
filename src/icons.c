@@ -1,3 +1,6 @@
+// Icons: the shell renders them on two worker threads, the UI thread packs them into the icon atlas (one slot each,
+// the least recently drawn one is reused) and draws them from there.
+
 enum { ICON_KIND_APP, ICON_KIND_FILE, ICON_KIND_AVATAR };  // avatar: a picture file, cut to a circle
 enum { ICON_EMPTY, ICON_PENDING, ICON_READY, ICON_FAILED };
 
@@ -46,6 +49,7 @@ static struct {
     bool posted;
 } I;
 
+// The entry for an icon key, or a new one; emptied entries are reused as tombstones.
 static IconEntry *icon_entry(u64 h, bool create)
 {
     u32 i = (u32)hash_u64(h) & (ICON_HASH - 1);
@@ -94,6 +98,14 @@ static void icons_begin_frame(void)
     if (I.used > ICON_HASH * 3 / 4) icons_reset(I.px);
 }
 
+// Where a slot's icon sits in the atlas (inside its 1 px border).
+static void icon_slot_xy(int slot, int *x, int *y)
+{
+    *x = (slot % I.per_row) * I.slot_px + 1;
+    *y = (slot / I.per_row) * I.slot_px + 1;
+}
+
+// The icon's atlas coordinates when it is ready; otherwise it is queued for the workers and false returned.
 static bool icon_get(u64 h, u8 kind, const WCHAR *path, f32 uv[4])
 {
     if (!h || !path) return false;
@@ -102,7 +114,8 @@ static bool icon_get(u64 h, u8 kind, const WCHAR *path, f32 uv[4])
     if (e->state == ICON_READY) {
         e->last_used = I.frame;
         I.slot_used[e->slot] = I.frame;
-        int sx = (e->slot % I.per_row) * I.slot_px + 1, sy = (e->slot / I.per_row) * I.slot_px + 1;
+        int sx, sy;
+        icon_slot_xy(e->slot, &sx, &sy);
         uv[0] = (f32)sx / ICON_ATLAS;
         uv[1] = (f32)sy / ICON_ATLAS;
         uv[2] = (f32)(sx + I.px) / ICON_ATLAS;
@@ -112,15 +125,7 @@ static bool icon_get(u64 h, u8 kind, const WCHAR *path, f32 uv[4])
     if (e->state == ICON_EMPTY) {
         e->state = ICON_PENDING;
         AcquireSRWLockExclusive(&I.lock);
-        if (I.req_count == I.req_cap) {
-            int nc = I.req_cap ? I.req_cap * 2 : 128;
-            IconReq *nr = (IconReq *)realloc(I.reqs, sizeof(IconReq) * nc);
-            if (nr) {
-                I.reqs = nr;
-                I.req_cap = nc;
-            }
-        }
-        if (I.req_count < I.req_cap) {
+        if (GROW(I.reqs, I.req_cap, I.req_count + 1, 128)) {
             IconReq *r = &I.reqs[I.req_count++];
             r->hash = h;
             r->gen = (u32)I.gen;
@@ -190,7 +195,8 @@ static bool icons_process_results(void)
                         e->slot = (u16)slot;
                         e->state = ICON_READY;
                         e->last_used = I.frame;
-                        int sx = (slot % I.per_row) * I.slot_px + 1, sy = (slot / I.per_row) * I.slot_px + 1;
+                        int sx, sy;
+                        icon_slot_xy(slot, &sx, &sy);
                         r_upload_icon(sx, sy, I.px, r->pixels);
                     }
                 }
@@ -202,6 +208,7 @@ static bool icons_process_results(void)
     return any;
 }
 
+// The bitmap as premultiplied BGRA, px by px: fitted and centered, box-filtered when it is bigger.
 static u32 *hbitmap_to_pixels(HBITMAP bmp, int px)
 {
     BITMAP bm;
@@ -209,14 +216,7 @@ static u32 *hbitmap_to_pixels(HBITMAP bmp, int px)
     int w = bm.bmWidth, h = bm.bmHeight;
     u32 *src = (u32 *)malloc((size_t)w * h * 4);
     if (!src) return NULL;
-    BITMAPINFO bi;
-    memset(&bi, 0, sizeof bi);
-    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bi.bmiHeader.biWidth = w;
-    bi.bmiHeader.biHeight = -h;
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    bi.bmiHeader.biCompression = BI_RGB;
+    BITMAPINFO bi = dib32(w, h);
     HDC dc = GetDC(NULL);
     int got = GetDIBits(dc, bmp, 0, (UINT)h, src, &bi, DIB_RGB_COLORS);
     ReleaseDC(NULL, dc);
@@ -224,6 +224,7 @@ static u32 *hbitmap_to_pixels(HBITMAP bmp, int px)
         free(src);
         return NULL;
     }
+    // no alpha at all: opaque; color above alpha somewhere: straight alpha, premultiply it
     bool any_alpha = false, straight = false;
     for (int i = 0; i < w * h; i++) {
         u32 p = src[i];
@@ -328,16 +329,8 @@ static DWORD WINAPI icon_worker(void *param)
         free(req.path);
 
         AcquireSRWLockExclusive(&I.lock);
-        if (I.res_count == I.res_cap) {
-            int nc = I.res_cap ? I.res_cap * 2 : 64;
-            IconRes *nr = (IconRes *)realloc(I.res, sizeof(IconRes) * nc);
-            if (nr) {
-                I.res = nr;
-                I.res_cap = nc;
-            }
-        }
         bool post = false;
-        if (I.res_count < I.res_cap) {
+        if (GROW(I.res, I.res_cap, I.res_count + 1, 64)) {
             I.res[I.res_count++] = res;
             if (!I.posted) {
                 I.posted = true;
@@ -357,12 +350,73 @@ static void icons_start(int px)
     InitializeSRWLock(&I.lock);
     InitializeConditionVariable(&I.cv);
     icons_reset(px);
-    for (int i = 0; i < 2; i++) {
-        HANDLE t = CreateThread(NULL, 0, icon_worker, NULL, 0, NULL);
-        if (t) CloseHandle(t);
-    }
+    for (int i = 0; i < 2; i++) thread_start(icon_worker, NULL);
 }
 
+// ---- WIC: pictures from files and streams (the custom Start button icon, media covers), and PNG for our icon
+
+static IWICImagingFactory *wic_factory(void)
+{
+    IWICImagingFactory *f = NULL;
+    if (FAILED(CoCreateInstance(&ML_CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, &ML_IID_IWICImagingFactory, (void **)&f))) f = NULL;
+    return f;
+}
+
+// An image scaled to w x h, as premultiplied BGRA (malloc'd).
+static u32 *wic_pixels(IWICImagingFactory *f, IWICBitmapSource *src, UINT w, UINT h)
+{
+    IWICBitmapScaler *sc = NULL;
+    IWICFormatConverter *cv = NULL;
+    u32 *out = NULL;
+    if (SUCCEEDED(IWICImagingFactory_CreateBitmapScaler(f, &sc)) &&
+        SUCCEEDED(IWICBitmapScaler_Initialize(sc, src, w, h, WICBitmapInterpolationModeFant)) &&
+        SUCCEEDED(IWICImagingFactory_CreateFormatConverter(f, &cv)) &&
+        SUCCEEDED(IWICFormatConverter_Initialize(cv, (IWICBitmapSource *)sc, &ML_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, NULL, 0,
+                                                 WICBitmapPaletteTypeCustom)))
+        out = (u32 *)malloc((size_t)w * h * 4);
+    if (out && FAILED(IWICFormatConverter_CopyPixels(cv, NULL, w * 4, w * h * 4, (BYTE *)out))) {
+        free(out);
+        out = NULL;
+    }
+    SAFE_RELEASE(cv);
+    SAFE_RELEASE(sc);
+    return out;
+}
+
+// Straight-alpha BGRA as a PNG file, appended to b.
+static bool wic_png(const u32 *bgra, int w, int h, Buf *b)
+{
+    IWICImagingFactory *f = wic_factory();
+    IStream *stm = f ? SHCreateMemStream(NULL, 0) : NULL;
+    IWICBitmapEncoder *enc = NULL;
+    IWICBitmapFrameEncode *frame = NULL;
+    WICPixelFormatGUID fmt = ML_WICPixelFormat32bppBGRA;
+    bool ok = stm && SUCCEEDED(IWICImagingFactory_CreateEncoder(f, &ML_ContainerFormatPng, NULL, &enc)) &&
+              SUCCEEDED(IWICBitmapEncoder_Initialize(enc, stm, WICBitmapEncoderNoCache)) &&
+              SUCCEEDED(IWICBitmapEncoder_CreateNewFrame(enc, &frame, NULL)) && SUCCEEDED(IWICBitmapFrameEncode_Initialize(frame, NULL)) &&
+              SUCCEEDED(IWICBitmapFrameEncode_SetSize(frame, (UINT)w, (UINT)h)) && SUCCEEDED(IWICBitmapFrameEncode_SetPixelFormat(frame, &fmt)) &&
+              IsEqualGUID(&fmt, &ML_WICPixelFormat32bppBGRA) &&
+              SUCCEEDED(IWICBitmapFrameEncode_WritePixels(frame, (UINT)h, (UINT)w * 4, (UINT)(w * h * 4), (BYTE *)bgra)) &&
+              SUCCEEDED(IWICBitmapFrameEncode_Commit(frame)) && SUCCEEDED(IWICBitmapEncoder_Commit(enc));
+    STATSTG st = { 0 };
+    LARGE_INTEGER zero = { 0 };
+    if (ok) ok = SUCCEEDED(stm->lpVtbl->Stat(stm, &st, STATFLAG_NONAME)) && SUCCEEDED(stm->lpVtbl->Seek(stm, zero, STREAM_SEEK_SET, NULL));
+    for (ULONG left = ok ? (ULONG)st.cbSize.QuadPart : 0, got = 0; left > 0; left -= got) {
+        char chunk[16 * 1024];
+        if (FAILED(stm->lpVtbl->Read(stm, chunk, MIN(left, (ULONG)sizeof chunk), &got)) || !got) {
+            ok = false;
+            break;
+        }
+        buf_put(b, chunk, got);
+    }
+    SAFE_RELEASE(frame);
+    SAFE_RELEASE(enc);
+    SAFE_RELEASE(stm);
+    SAFE_RELEASE(f);
+    return ok;
+}
+
+// Files share their type's icon, except those with icons of their own (programs, shortcuts, icons).
 static u64 icon_key_for_file(const WCHAR *full, bool folder)
 {
     if (folder) return hash_wstr_i(full, -1) ^ 0x1111;

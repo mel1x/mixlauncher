@@ -41,45 +41,50 @@ static void st_metrics(void)
     U.list_y1 = (f32)U.H - U.footer_h;
 }
 
-// ---- pins: app ids, one per line, in the order they were pinned or moved; after tabs the Windows 10 tile
-// size and its cell (column, row; -1 until it has one)
+// ---- pins (pins.txt): app ids in the order they were pinned or moved, each with its Windows 10 tile size and
+// cell (column and row, -1 until it has one). Shared with the Windows 10 style.
+
+typedef struct Pin {
+    WCHAR *id;
+    u8 size;  // TILE_*
+    i16 col, row;
+} Pin;
 
 static struct {
-    WCHAR *id[PINS_MAX];
-    u8 size[PINS_MAX];
-    i16 col[PINS_MAX], row[PINS_MAX];
+    Pin p[PINS_MAX];
     int n;
     bool loaded;
 } PIN;
 
+// <id> [<size> <col> <row>], tab-separated
 static void pins_load(void)
 {
     if (PIN.loaded) return;
     PIN.loaded = true;
-    WCHAR path[MAX_PATH], id[1024];
-    data_path(path, L"pins.txt");
-    char *text = read_file(path, NULL);
+    char *text = data_read(L"pins.txt");
     if (!text) return;
     char *cur = text, *line;
+    WCHAR id[1024];
     while ((line = next_line(&cur)) != NULL && PIN.n < PINS_MAX) {
         if (!*line || *line == '#') continue;
         char *tab = strchr(line, '\t');
         int size = TILE_MEDIUM, col = -1, row = -1;
         if (tab) {
             *tab = 0;
-            char *e = tab + 1, *f;
-            size = (int)strtol(e, &f, 10);
-            if (*f == '	') col = (int)strtol(f + 1, &f, 10);
-            if (*f == '	') row = (int)strtol(f + 1, &f, 10);
+            char *f;
+            size = CLAMP((int)strtol(tab + 1, &f, 10), 0, TILE__COUNT - 1);
+            if (*f == '\t') col = (int)strtol(f + 1, &f, 10);
+            if (*f == '\t') row = (int)strtol(f + 1, &f, 10);
             else col = -1;
-            size = CLAMP(size, 0, TILE__COUNT - 1);
         }
         utf8_to_w(line, -1, id, countof(id));
         if (!id[0]) continue;
-        PIN.size[PIN.n] = (u8)size;
-        PIN.col[PIN.n] = (i16)(col >= 0 && row >= 0 ? MIN(col, 63) : -1);
-        PIN.row[PIN.n] = (i16)(col >= 0 && row >= 0 ? MIN(row, 250) : -1);
-        PIN.id[PIN.n++] = wdup_heap(id);
+        Pin *p = &PIN.p[PIN.n++];
+        bool cell = col >= 0 && row >= 0;
+        p->size = (u8)size;
+        p->col = (i16)(cell ? MIN(col, 63) : -1);
+        p->row = (i16)(cell ? MIN(row, 250) : -1);
+        p->id = wdup_heap(id);
     }
     free(text);
 }
@@ -87,70 +92,43 @@ static void pins_load(void)
 static void pins_save(void)
 {
     Buf b = { 0 };
-    buf_put(&b, "# MixLauncher pinned apps\n", 26);
+    buf_str(&b, "# MixLauncher pinned apps\n");
     for (int i = 0; i < PIN.n; i++) {
-        buf_put_w(&b, PIN.id[i]);
-        buf_printf(&b, "\t%d\t%d\t%d\n", PIN.size[i], PIN.col[i], PIN.row[i]);
+        buf_put_w(&b, PIN.p[i].id);
+        buf_printf(&b, "\t%d\t%d\t%d\n", PIN.p[i].size, PIN.p[i].col, PIN.p[i].row);
     }
-    WCHAR path[MAX_PATH];
-    data_path(path, L"pins.txt");
-    if (!write_file_atomic(path, b.data ? b.data : "", (DWORD)b.len)) log_msg("pins save failed");
-    free(b.data);
+    buf_save_data(&b, L"pins.txt");
 }
 
 static int pin_index(const WCHAR *id)
 {
     pins_load();
     for (int i = 0; i < PIN.n; i++)
-        if (!wcscmp(PIN.id[i], id)) return i;
+        if (!wcscmp(PIN.p[i].id, id)) return i;
     return -1;
 }
 
-static int pin_size(int i) { return i >= 0 && i < PIN.n ? PIN.size[i] : TILE_MEDIUM; }
+static int pin_size(int i) { return i >= 0 && i < PIN.n ? PIN.p[i].size : TILE_MEDIUM; }
 
 static void pin_set_size(const WCHAR *id, int size)
 {
     int i = pin_index(id);
-    if (i < 0 || PIN.size[i] == size) return;
-    PIN.size[i] = (u8)size;
+    if (i < 0 || PIN.p[i].size == size) return;
+    PIN.p[i].size = (u8)size;
     pins_save();
-}
-
-static void pin_move(int from, int to)
-{
-    WCHAR *p = PIN.id[from];
-    u8 sz = PIN.size[from];
-    i16 c = PIN.col[from], r = PIN.row[from];
-    if (from < to) {
-        memmove(&PIN.id[from], &PIN.id[from + 1], sizeof(WCHAR *) * (to - from));
-        memmove(&PIN.size[from], &PIN.size[from + 1], (size_t)(to - from));
-        memmove(&PIN.col[from], &PIN.col[from + 1], sizeof(i16) * (to - from));
-        memmove(&PIN.row[from], &PIN.row[from + 1], sizeof(i16) * (to - from));
-    } else {
-        memmove(&PIN.id[to + 1], &PIN.id[to], sizeof(WCHAR *) * (from - to));
-        memmove(&PIN.size[to + 1], &PIN.size[to], (size_t)(from - to));
-        memmove(&PIN.col[to + 1], &PIN.col[to], sizeof(i16) * (from - to));
-        memmove(&PIN.row[to + 1], &PIN.row[to], sizeof(i16) * (from - to));
-    }
-    PIN.id[to] = p;
-    PIN.size[to] = sz;
-    PIN.col[to] = c;
-    PIN.row[to] = r;
 }
 
 static void pin_set(const WCHAR *id, bool on)
 {
     int i = pin_index(id);
     if (on && i < 0 && PIN.n < PINS_MAX) {
-        PIN.size[PIN.n] = TILE_MEDIUM;
-        PIN.col[PIN.n] = PIN.row[PIN.n] = -1;
-        PIN.id[PIN.n++] = wdup_heap(id);
+        Pin *p = &PIN.p[PIN.n++];
+        p->id = wdup_heap(id);
+        p->size = TILE_MEDIUM;
+        p->col = p->row = -1;
     } else if (!on && i >= 0) {
-        free(PIN.id[i]);
-        memmove(&PIN.id[i], &PIN.id[i + 1], sizeof(WCHAR *) * (PIN.n - i - 1));
-        memmove(&PIN.size[i], &PIN.size[i + 1], (size_t)(PIN.n - i - 1));
-        memmove(&PIN.col[i], &PIN.col[i + 1], sizeof(i16) * (PIN.n - i - 1));
-        memmove(&PIN.row[i], &PIN.row[i + 1], sizeof(i16) * (PIN.n - i - 1));
+        free(PIN.p[i].id);
+        memmove(&PIN.p[i], &PIN.p[i + 1], sizeof(Pin) * (PIN.n - i - 1));
         PIN.n--;
     } else {
         return;
@@ -162,7 +140,9 @@ static void pin_to_top(const WCHAR *id)
 {
     int i = pin_index(id);
     if (i <= 0) return;
-    pin_move(i, 0);
+    Pin p = PIN.p[i];
+    memmove(&PIN.p[1], &PIN.p[0], sizeof(Pin) * i);
+    PIN.p[0] = p;
     pins_save();
 }
 
@@ -183,7 +163,7 @@ static void st_refresh_tiles(void)
     if (!U.apps) return;
     int cap = countof(U.st.tiles);
     for (int k = 0; k < PIN.n && U.st.tile_count < cap; k++) {
-        App *a = app_by_id(PIN.id[k]);
+        App *a = app_by_id(PIN.p[k].id);
         if (a) U.st.tiles[U.st.tile_count++] = a;
     }
     App *tmp[512];
@@ -342,23 +322,15 @@ static void st_user_init(void)
 
 static void st_open(const WCHAR *uri)
 {
-    LaunchJob j;
-    memset(&j, 0, sizeof j);
-    j.act = ACT_OPEN;
-    j.uri = true;
-    j.target = wdup_heap(uri);
     AllowSetForegroundWindow(ASFW_ANY);
     ui_hide();
-    launch_submit(&j);
+    launch_open(uri, OPEN_URI);
 }
 
 static void st_run(u8 cmd)
 {
-    LaunchJob j;
-    memset(&j, 0, sizeof j);
-    j.cmd = cmd;
     ui_hide();
-    launch_submit(&j);
+    launch_command(cmd);
 }
 
 // Hibernation is turned on (powercfg /h on) and the machine supports it.
@@ -389,13 +361,11 @@ static void st_menu_open(bool account, int x, int y)
     cm_show(x, y, false);
 }
 
-static void st_footer_menu(int b) { st_menu_open(b == FB_ACCOUNT, U.st.fb[b][0], U.st.fb[b][1]); }
-
 static void st_footer_click(int b)
 {
     switch (b) {
     case FB_ACCOUNT:
-    case FB_POWER: st_footer_menu(b); break;
+    case FB_POWER: st_menu_open(b == FB_ACCOUNT, (int)U.st.fb[b][0], (int)U.st.fb[b][1]); break;
     case FB_DOWNLOADS: st_open(L"shell:Downloads"); break;
     case FB_EXPLORER: st_open(L"explorer.exe"); break;
     case FB_SETTINGS: st_open(L"ms-settings:"); break;
@@ -419,16 +389,14 @@ static void st_menu_pick(int cmd)
 
 // ---- input
 
-static bool in_rect4(const int *r, int x, int y) { return x >= r[0] && x < r[2] && y >= r[1] && y < r[3]; }
-
 static int st_footer_at(int x, int y)
 {
     for (int i = 0; i < FB__COUNT; i++)
-        if (in_rect4(U.st.fb[i], x, y)) return i;
+        if (in_box(U.st.fb[i], (f32)x, (f32)y)) return i;
     return -1;
 }
 
-static bool st_title_at(int x, int y) { return y >= U.list_y0 && y < U.list_y1 && in_rect4(U.st.title_btn, x, y); }
+static bool st_title_at(int x, int y) { return y >= U.list_y0 && y < U.list_y1 && in_box(U.st.title_btn, (f32)x, (f32)y); }
 
 // Hover over the footer buttons and the section button; true when the pointer is on one.
 static bool st_mouse_move(int x, int y)
@@ -535,7 +503,7 @@ static bool st_animate(f32 dt)
 
 static void st_draw_chrome(void)
 {
-    Theme *t = &U.th;
+    Theme *t = &TH;
     memset(U.st.title_btn, 0, sizeof U.st.title_btn);  // set again when the title is drawn, so not once it scrolls away
     // a dense acrylic close to the taskbar's color, as Start has; the page a shade lighter
     r_rect(0, 0, (f32)U.W, (f32)U.H, t->dark ? RGBA(38, 38, 39, 236) : RGBA(243, 243, 243, 236), 0);
@@ -544,7 +512,7 @@ static void st_draw_chrome(void)
     search_field(&fx0, &fx1, &cy);
     f32 bx = SR(32), bh = SR(34), by = floorf(cy - bh * 0.5f), bw = (f32)U.W - bx * 2;
     r_rect(bx, by, bw, bh, t->dark ? RGBA(0, 0, 0, 56) : RGBA(255, 255, 255, 200), bh * 0.5f);
-    r_rect_ex(bx, by, bw, bh, t->dark ? RGBA(255, 255, 255, 22) : RGBA(0, 0, 0, 26), bh * 0.5f, 1.f, 0);
+    r_border(bx, by, bw, bh, t->dark ? RGBA(255, 255, 255, 22) : RGBA(0, 0, 0, 26), bh * 0.5f);
     draw_search();
 }
 
@@ -554,19 +522,20 @@ static void st_draw_highlight(f32 off)
     f32 in = r->cell == CELL_TILE ? SR(4) : 0;
     f32 x = floorf(U.hl_x + in + 0.5f), y = floorf(off + U.hl_y + in * 0.5f + 0.5f);
     f32 h = floorf(U.hl_h - in + 0.5f);
-    r_rect(x, y, floorf(U.hl_w - in * 2 + 0.5f), h, U.th.sel, SR(LS()->sel_r));
-    if (st_search() && !r->cell) r_rect(x, floorf(y + h * 0.5f - SR(8)), SR(3), SR(16), U.th.accent, SR(1.5f));
+    r_rect(x, y, floorf(U.hl_w - in * 2 + 0.5f), h, TH.sel, SR(LS()->sel_r));
+    if (st_search() && !r->cell) r_rect(x, floorf(y + h * 0.5f - SR(8)), SR(3), SR(16), TH.accent, SR(1.5f));
 }
 
+// The page's title; the first one carries the "All apps" / "Back" button.
 static void st_draw_title(Row *r, f32 y)
 {
-    Theme *t = &U.th;
+    Theme *t = &TH;
     f32 x0 = st_grid_x(), tw = SR(ST_TILE_W), isz = (f32)ui_icon_px();
     f32 cy = y + SR(34), fs = S(14);
     // aligned with the icons of the first and the last column
     f32 lx = floorf(x0 + (tw - isz) * 0.5f), rx = floorf(x0 + tw * (ST_COLS - 1) + (tw + isz) * 0.5f);
-    text_draw(FONT_TEXT_SEMIBOLD, fs, lx, floorf(cy + font_cap_height(FONT_TEXT_SEMIBOLD, fs) * 0.5f + 0.5f), r->text, -1, t->text);
-    if (r != &U.rows[0]) return;  // the button belongs to the page's own title
+    text_draw(FONT_TEXT_SEMIBOLD, fs, lx, text_baseline(FONT_TEXT_SEMIBOLD, fs, cy), r->text, -1, t->text);
+    if (r != &U.rows[0]) return;
     bool back = U.st.all_view;
     const WCHAR *label = back ? TR("Назад", "Back") : TR("Все приложения", "All apps");
     f32 bfs = S(12.5f), lw = text_width(FONT_TEXT, bfs, label, -1);
@@ -574,7 +543,7 @@ static void st_draw_title(Row *r, f32 y)
     f32 hov = U.st.title_hover_t * (U.st.title_press ? 0.6f : 1.f);
     // darker than the page, a little lighter under the pointer
     r_rect(bx, by, bw, bh, t->dark ? RGBA(0, 0, 0, (int)(56 - 22 * hov)) : RGBA(0, 0, 0, (int)(14 - 5 * hov)), SR(7));
-    f32 base = floorf(cy + font_cap_height(FONT_TEXT, bfs) * 0.5f + 0.5f);
+    f32 base = text_baseline(FONT_TEXT, bfs, cy);
     if (back) {
         text_draw_icon(0xE76B, S(10), bx + SR(12) + SR(5), cy, t->text);
         text_draw(FONT_TEXT, bfs, bx + SR(12) + SR(10) + SR(8), base, label, -1, t->text);
@@ -582,10 +551,7 @@ static void st_draw_title(Row *r, f32 y)
         text_draw(FONT_TEXT, bfs, bx + SR(12), base, label, -1, t->text);
         text_draw_icon(0xE76C, S(10), bx + SR(12) + lw + SR(8) + SR(5), cy, t->text);
     }
-    U.st.title_btn[0] = (int)bx;
-    U.st.title_btn[1] = (int)by;
-    U.st.title_btn[2] = (int)(bx + bw);
-    U.st.title_btn[3] = (int)(by + bh);
+    box_set(U.st.title_btn, bx, by, bw, bh);
 }
 
 // The name under a tile, centered: on two lines at a space when it does not fit, like Start; the rest is elided.
@@ -616,23 +582,20 @@ static void st_draw_cell(Row *r, f32 y, bool selected)
     }
     if (r->cell == CELL_HINT) {
         f32 fs = S(13), lx = floorf(st_grid_x() + (SR(ST_TILE_W) - (f32)ui_icon_px()) * 0.5f);
-        text_draw(FONT_TEXT, fs, lx, floorf(y + SR(12) + font_cap_height(FONT_TEXT, fs) * 0.5f + 0.5f), r->text, -1, U.th.dim);
+        text_draw(FONT_TEXT, fs, lx, text_baseline(FONT_TEXT, fs, y + SR(12)), r->text, -1, TH.dim);
         return;
     }
-    Theme *t = &U.th;
+    Theme *t = &TH;
     App *a = r->app;
     f32 isz = (f32)ui_icon_px(), ix = floorf(r->x + (r->w - isz) * 0.5f), iy = y + SR(16);
-    f32 uv[4];
     bool armed = U.armed == a;
     if (a->kind == APP_CMD) {
         r_rect(ix, iy, isz, isz, armed ? color_alpha(t->danger, 0.16f) : t->tile, SR(LS()->tile_r));
         text_draw_icon(a->glyph, S(16), ix + isz * 0.5f, iy + isz * 0.5f, armed ? t->danger : t->text);
-    } else if (icon_get(a->id_hash ^ 0xA11, ICON_KIND_APP, a->id, uv)) {
-        r_icon(ix, iy, isz, isz, uv[0], uv[1], uv[2], uv[3], 1.f);
     } else {
-        draw_placeholder_icon(ix, iy, isz, icon_failed(a->id_hash ^ 0xA11) ? a->name : NULL);
+        draw_app_icon(a, ix, iy, isz);
     }
-    st_draw_label(r, floorf(iy + isz + SR(17) + font_cap_height(FONT_TEXT, S(12)) * 0.5f + 0.5f), a->name, a->len, armed ? t->danger : t->text);
+    st_draw_label(r, text_baseline(FONT_TEXT, S(12), iy + isz + SR(17)), a->name, a->len, armed ? t->danger : t->text);
 }
 
 static void st_draw_avatar(f32 x, f32 y, f32 sz)
@@ -651,17 +614,9 @@ static void st_draw_avatar(f32 x, f32 y, f32 sz)
     r_rect(floorf(x + (sz - bw) * 0.5f + 0.5f), floorf(y + sz * 0.6f + 0.5f), bw, bh, fg, bw * 0.45f);
 }
 
-static void st_set_fb(int i, f32 x, f32 y, f32 w, f32 h)
-{
-    U.st.fb[i][0] = (int)x;
-    U.st.fb[i][1] = (int)y;
-    U.st.fb[i][2] = (int)(x + w);
-    U.st.fb[i][3] = (int)(y + h);
-}
-
 static void st_draw_footer(void)
 {
-    Theme *t = &U.th;
+    Theme *t = &TH;
     st_user_init();
     f32 fy = U.list_y1, cy = floorf(fy + U.footer_h * 0.5f);
     r_rect(0, fy, (f32)U.W, (f32)U.H - fy, t->dark ? RGBA(0, 0, 0, 26) : RGBA(0, 0, 0, 8), 0);
@@ -672,50 +627,25 @@ static void st_draw_footer(void)
     f32 ax = floorf(x0 + (tw - av) * 0.5f), nfs = S(13);
     f32 nw = STU.name[0] ? MIN(text_width(FONT_TEXT, nfs, STU.name, -1), SR(200)) : 0;
     f32 bh = SR(44), by = floorf(cy - bh * 0.5f);
-    st_set_fb(FB_ACCOUNT, ax - SR(10), by, av + SR(20) + (nw > 0 ? SR(12) + nw : 0), bh);
+    box_set(U.st.fb[FB_ACCOUNT], ax - SR(10), by, av + SR(20) + (nw > 0 ? SR(12) + nw : 0), bh);
     // the buttons on the right, power last, under the last column
     static const u32 glyph[FB__COUNT] = { 0, 0xE896, 0xEC50, 0xE713, 0xE7E8 };
     f32 bs = SR(38), pitch = SR(40), pcx = floorf(x0 + tw * (ST_COLS - 0.5f) + SR(8));
-    for (int i = FB_DOWNLOADS; i < FB__COUNT; i++) st_set_fb(i, floorf(pcx - pitch * (f32)(FB_POWER - i) - bs * 0.5f), floorf(cy - bs * 0.5f), bs, bs);
+    for (int i = FB_DOWNLOADS; i < FB__COUNT; i++) box_set(U.st.fb[i], floorf(pcx - pitch * (f32)(FB_POWER - i) - bs * 0.5f), floorf(cy - bs * 0.5f), bs, bs);
 
     for (int i = 0; i < FB__COUNT; i++) {
+        const f32 *b = U.st.fb[i];
         f32 h = U.st.fb_hover_t[i] * (U.st.fb_press == i ? 0.6f : 1.f);
-        if (h > 0.f) {
-            const int *b = U.st.fb[i];
-            r_rect((f32)b[0], (f32)b[1], (f32)(b[2] - b[0]), (f32)(b[3] - b[1]), color_alpha(t->sel, h * 1.4f), SR(4));
-        }
-        if (glyph[i]) text_draw_icon(glyph[i], S(16), (f32)(U.st.fb[i][0] + U.st.fb[i][2]) * 0.5f, cy, t->text);
+        if (h > 0.f) r_rect(b[0], b[1], b[2] - b[0], b[3] - b[1], color_alpha(t->sel, h * 1.4f), SR(4));
+        if (glyph[i]) text_draw_icon(glyph[i], S(16), (b[0] + b[2]) * 0.5f, cy, t->text);
     }
     st_draw_avatar(ax, floorf(cy - av * 0.5f), av);
-    if (nw > 0) text_draw_fit(FONT_TEXT, nfs, ax + av + SR(12), floorf(cy + font_cap_height(FONT_TEXT, nfs) * 0.5f + 0.5f), nw, STU.name, -1, t->text, false);
+    if (nw > 0) text_draw_fit(FONT_TEXT, nfs, ax + av + SR(12), text_baseline(FONT_TEXT, nfs, cy), nw, STU.name, -1, t->text, false);
 
     memset(U.update_btn, 0, sizeof U.update_btn);
     if (upd_visible()) {
-        WCHAR ub[64];
-        const WCHAR *ul = upd_label(ub, countof(ub));
-        int st = upd_state();
-        bool busy = st == UPD_DOWNLOADING || st == UPD_INSTALLING;
-        f32 lfs = S(12.5f), ulw = text_width(FONT_TEXT, lfs, ul, -1);
-        f32 uw = floorf(SR(8) + SR(16) + SR(7) + ulw + SR(10)), uh = SR(28), uy = floorf(cy - uh * 0.5f);
         // centered in the window, unless a long account name or the buttons on the right are in the way
-        f32 lo = (f32)U.st.fb[FB_ACCOUNT][2] + SR(8), hi = (f32)U.st.fb[FB_DOWNLOADS][0] - SR(8) - uw;
-        f32 ux = floorf(CLAMP(((f32)U.W - uw) * 0.5f, lo, MAX(lo, hi)));
-        f32 hov = U.update_hover_t * (busy ? 0.f : 1.f);
-        r_rect(ux, uy, uw, uh, color_alpha(t->accent, 0.16f + 0.10f * hov), SR(4));
-        if (st == UPD_DOWNLOADING) {
-            f32 pw = floorf(uw * (f32)UPD.progress / 1000.f);
-            if (pw > 0) {
-                r_set_clip(ux, uy, ux + pw, uy + uh);
-                r_rect(ux, uy, uw, uh, color_alpha(t->accent, 0.22f), SR(4));
-                r_set_clip(0, 0, (f32)U.W, (f32)U.H);
-            }
-        }
-        u32 ucol = st == UPD_ERROR ? t->danger : t->text;
-        text_draw_icon(st == UPD_ERROR ? 0xE72C : 0xE896, S(14), ux + SR(16), cy, ucol);
-        text_draw(FONT_TEXT, lfs, ux + SR(31), floorf(cy + font_cap_height(FONT_TEXT, lfs) * 0.5f + 0.5f), ul, -1, ucol);
-        U.update_btn[0] = (int)ux;
-        U.update_btn[1] = (int)uy;
-        U.update_btn[2] = (int)(ux + uw);
-        U.update_btn[3] = (int)(uy + uh);
+        f32 uw = update_chip_width(), lo = U.st.fb[FB_ACCOUNT][2] + SR(8), hi = U.st.fb[FB_DOWNLOADS][0] - SR(8) - uw;
+        draw_update_chip(floorf(CLAMP(((f32)U.W - uw) * 0.5f, lo, MAX(lo, hi))), cy, SR(28), SR(4));
     }
 }

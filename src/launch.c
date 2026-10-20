@@ -1,3 +1,5 @@
+// Launching runs on its own STA thread: the shell may take its time, and the launcher must not wait for it.
+
 enum { ACT_OPEN, ACT_REVEAL, ACT_RUNAS, ACT_PROPERTIES };
 
 typedef struct LaunchJob {
@@ -8,7 +10,7 @@ typedef struct LaunchJob {
     WCHAR *target;
     WCHAR *path;
     WCHAR *dir;
-    u8 hist_type;
+    u8 hist_type;  // a file that turns out to be gone is dropped from the history
     WCHAR *hist_key;
 } LaunchJob;
 
@@ -41,14 +43,15 @@ static void enable_shutdown_privilege(void)
     CloseHandle(tok);
 }
 
-static bool shell_exec_ex(const WCHAR *verb, const WCHAR *file, const WCHAR *dir, DWORD *err, bool quiet)
+static bool shell_run(const WCHAR *verb, const WCHAR *file, const WCHAR *args, const WCHAR *dir, ULONG mask, DWORD *err)
 {
     SHELLEXECUTEINFOW sei;
     memset(&sei, 0, sizeof sei);
     sei.cbSize = sizeof sei;
-    sei.fMask = SEE_MASK_NOASYNC | SEE_MASK_FLAG_LOG_USAGE | (quiet ? SEE_MASK_FLAG_NO_UI : 0);
+    sei.fMask = SEE_MASK_NOASYNC | mask;
     sei.lpVerb = verb;
     sei.lpFile = file;
+    sei.lpParameters = args;
     sei.lpDirectory = (dir && dir[0]) ? dir : NULL;
     sei.nShow = SW_SHOWNORMAL;
     BOOL ok = ShellExecuteExW(&sei);
@@ -56,15 +59,21 @@ static bool shell_exec_ex(const WCHAR *verb, const WCHAR *file, const WCHAR *dir
     return ok != 0;
 }
 
-static bool shell_exec(const WCHAR *verb, const WCHAR *file, const WCHAR *dir, DWORD *err) { return shell_exec_ex(verb, file, dir, err, false); }
+static bool shell_exec(const WCHAR *verb, const WCHAR *file, const WCHAR *dir, DWORD *err) { return shell_run(verb, file, NULL, dir, SEE_MASK_FLAG_LOG_USAGE, err); }
 
+// Through Explorer while we are elevated, so it runs at the user's level; directly otherwise or when that fails.
+static void open_as_user(const WCHAR *target, const WCHAR *dir, DWORD *err)
+{
+    if (!g_elevated || !shell_exec_unelevated(target, NULL, dir, NULL)) shell_exec(NULL, target, dir, err);
+}
+
+// An app by its AUMID; its target file when that fails (unless the user cancelled, a UAC prompt for one).
 static void app_exec(const WCHAR *verb, const WCHAR *app_uri, const WCHAR *path)
 {
     DWORD err = 0;
-    if (shell_exec_ex(verb, app_uri, NULL, &err, true)) return;
+    if (shell_run(verb, app_uri, NULL, NULL, SEE_MASK_FLAG_LOG_USAGE | SEE_MASK_FLAG_NO_UI, &err)) return;
     if (err == ERROR_CANCELLED) return;
-    if (path && shell_exec(verb, path, NULL, &err)) return;
-    if (!path) shell_exec(verb, app_uri, NULL, &err);
+    shell_exec(verb, path ? path : app_uri, NULL, &err);
 }
 
 static void reveal_in_explorer(const WCHAR *path)
@@ -103,11 +112,11 @@ static void run_command(u8 cmd)
         ExitWindowsEx(EWX_LOGOFF, 0);
         break;
     case CMD_RECYCLE:
-        if (!g_elevated || !shell_exec_unelevated(L"shell:RecycleBinFolder", NULL, NULL, NULL)) shell_exec(NULL, L"shell:RecycleBinFolder", NULL, NULL);
+        open_as_user(L"shell:RecycleBinFolder", NULL, NULL);
         break;
     case CMD_UNINSTALL:
     case CMD_ADDREMOVE:
-        if (!g_elevated || !shell_exec_unelevated(L"ms-settings:appsfeatures", NULL, NULL, NULL)) shell_exec(NULL, L"ms-settings:appsfeatures", NULL, NULL);
+        open_as_user(L"ms-settings:appsfeatures", NULL, NULL);
         break;
     }
 }
@@ -118,56 +127,36 @@ static void launch_exec(LaunchJob *j)
         run_command(j->cmd);
         return;
     }
-    DWORD err = 0;
-    WCHAR buf[2048];
-    const WCHAR *app_uri = NULL;
-    if (j->is_app) {
-        wfmt(buf, countof(buf), L"shell:AppsFolder\\%s", j->target);
-        app_uri = buf;
-    }
+    WCHAR app_uri[2048];
+    if (j->is_app) wfmt(app_uri, countof(app_uri), L"shell:AppsFolder\\%s", j->target);
+    const WCHAR *file = j->is_app ? j->path : j->target;  // what Reveal and Properties act on
     switch (j->act) {
     case ACT_OPEN:
         if (j->is_app) {
             const WCHAR *what = wcsstr(j->target, L"://") ? j->target : app_uri;
             if (!g_elevated || !shell_exec_unelevated(what, NULL, NULL, NULL)) app_exec(NULL, app_uri, j->path);
         } else if (j->uri || wcsstr(j->target, L"://")) {
-            if (!g_elevated || !shell_exec_unelevated(j->target, NULL, NULL, NULL)) shell_exec(NULL, j->target, NULL, &err);
+            open_as_user(j->target, NULL, NULL);
         } else if (GetFileAttributesW(j->target) == INVALID_FILE_ATTRIBUTES) {
             DWORD e = GetLastError();
             if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) {
                 WCHAR *k = wdup_heap(j->hist_key);
                 if (!PostMessageW(g_hwnd, WM_APP_LAUNCH_FAILED, (WPARAM)j->hist_type, (LPARAM)k)) free(k);
             }
-        } else if (!g_elevated || !shell_exec_unelevated(j->target, NULL, j->dir, NULL)) {
-            shell_exec(NULL, j->target, j->dir, &err);
+        } else {
+            open_as_user(j->target, j->dir, NULL);
         }
         break;
     case ACT_RUNAS:
-        if (j->is_app) {
-            app_exec(L"runas", app_uri, j->path);
-        } else {
-            shell_exec(L"runas", j->target, j->dir, &err);
-        }
+        if (j->is_app) app_exec(L"runas", app_uri, j->path);
+        else shell_exec(L"runas", j->target, j->dir, NULL);
         break;
-    case ACT_REVEAL: {
-        const WCHAR *p = j->is_app ? j->path : j->target;
-        if (p) reveal_in_explorer(p);
+    case ACT_REVEAL:
+        if (file) reveal_in_explorer(file);
         break;
-    }
-    case ACT_PROPERTIES: {
-        const WCHAR *p = j->is_app ? j->path : j->target;
-        if (p) {
-            SHELLEXECUTEINFOW sei;
-            memset(&sei, 0, sizeof sei);
-            sei.cbSize = sizeof sei;
-            sei.fMask = SEE_MASK_INVOKEIDLIST | SEE_MASK_NOASYNC;
-            sei.lpVerb = L"properties";
-            sei.lpFile = p;
-            sei.nShow = SW_SHOWNORMAL;
-            ShellExecuteExW(&sei);
-        }
+    case ACT_PROPERTIES:
+        if (file) shell_run(L"properties", file, NULL, NULL, SEE_MASK_INVOKEIDLIST, NULL);
         break;
-    }
     }
 }
 
@@ -178,11 +167,7 @@ static DWORD WINAPI launch_thread(void *param)
     for (;;) {
         // STA thread: keep pumping so shell components that post to us work.
         MsgWaitForMultipleObjects(1, &LQ.event, FALSE, INFINITE, QS_ALLINPUT);
-        MSG msg;
-        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
+        pump_messages();
         for (;;) {
             LaunchJob j;
             AcquireSRWLockExclusive(&LQ.lock);
@@ -205,22 +190,35 @@ static void launch_start(void)
 {
     InitializeSRWLock(&LQ.lock);
     LQ.event = CreateEventW(NULL, FALSE, FALSE, NULL);
-    HANDLE t = CreateThread(NULL, 0, launch_thread, NULL, 0, NULL);
-    if (t) CloseHandle(t);
+    thread_start(launch_thread, NULL);
 }
 
+// Queues a job; the launch thread frees its strings.
 static void launch_submit(const LaunchJob *j)
 {
     AcquireSRWLockExclusive(&LQ.lock);
-    if (LQ.count == LQ.cap) {
-        int nc = LQ.cap ? LQ.cap * 2 : 16;
-        LaunchJob *nj = (LaunchJob *)realloc(LQ.jobs, sizeof(LaunchJob) * nc);
-        if (nj) {
-            LQ.jobs = nj;
-            LQ.cap = nc;
-        }
-    }
-    if (LQ.count < LQ.cap) LQ.jobs[LQ.count++] = *j;
+    if (GROW(LQ.jobs, LQ.cap, LQ.count + 1, 16)) LQ.jobs[LQ.count++] = *j;
     ReleaseSRWLockExclusive(&LQ.lock);
     SetEvent(LQ.event);
+}
+
+enum { OPEN_PATH, OPEN_URI, OPEN_APP };
+
+static void launch_open(const WCHAR *target, int kind)
+{
+    LaunchJob j;
+    memset(&j, 0, sizeof j);
+    j.act = ACT_OPEN;
+    j.uri = kind == OPEN_URI;
+    j.is_app = kind == OPEN_APP;
+    j.target = wdup_heap(target);
+    launch_submit(&j);
+}
+
+static void launch_command(u8 cmd)
+{
+    LaunchJob j;
+    memset(&j, 0, sizeof j);
+    j.cmd = cmd;
+    launch_submit(&j);
 }

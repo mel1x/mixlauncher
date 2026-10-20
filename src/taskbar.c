@@ -1,10 +1,43 @@
+// The Start button: a layered child window of each taskbar over its own Start button (found with UI Automation)
+// that opens the launcher and draws our icon on a plate of the bar's color. Also the search clicks
+// (taskbar_search) and the UI Automation helpers the media widget shares.
+
 #define TB_MAX 4
 #define TB_CLASS L"MixLauncherStartButton"
 #define TB_TIMER_ANIM 1
 
-static const GUID ML_CLSID_CUIAutomation = { 0xff48dba4, 0x60ef, 0x4201, { 0xaa, 0x87, 0x54, 0x10, 0x3e, 0xef, 0x59, 0x4e } };
-static const GUID ML_IID_IUIAutomation = { 0x30cbe57d, 0xd9d0, 0x452a, { 0xab, 0x13, 0x7a, 0xc5, 0xac, 0x48, 0x25, 0xee } };
-static const GUID ML_IID_IUIAutomationElement3 = { 0x8471df34, 0xaee0, 0x4a01, { 0xa7, 0xde, 0x7d, 0xb9, 0xaf, 0x12, 0xc2, 0x96 } };
+// ---- UI Automation
+
+static IUIAutomation *uia_create(void)
+{
+    IUIAutomation *uia = NULL;
+    if (FAILED(CoCreateInstance(&ML_CLSID_CUIAutomation, NULL, CLSCTX_INPROC_SERVER, &ML_IID_IUIAutomation, (void **)&uia))) uia = NULL;
+    return uia;
+}
+
+// Matches a string property (UIA_AutomationIdPropertyId, UIA_ClassNamePropertyId).
+static IUIAutomationCondition *uia_cond(IUIAutomation *uia, PROPERTYID prop, const WCHAR *value)
+{
+    IUIAutomationCondition *c = NULL;
+    VARIANT v = variant_str(value);
+    if (FAILED(IUIAutomation_CreatePropertyCondition(uia, prop, v, &c))) c = NULL;
+    VariantClear(&v);
+    return c;
+}
+
+// The first element in a window that matches the condition.
+static IUIAutomationElement *uia_find(IUIAutomation *uia, HWND wnd, IUIAutomationCondition *cond)
+{
+    IUIAutomationElement *root = NULL, *el = NULL;
+    if (wnd && cond && SUCCEEDED(IUIAutomation_ElementFromHandle(uia, wnd, &root)) && root) {
+        IUIAutomationElement_FindFirst(root, TreeScope_Descendants, cond, &el);
+        IUIAutomationElement_Release(root);
+    }
+    return el;
+}
+
+
+// ---- the Start button
 
 typedef struct TbButton {
     HWND taskbar, wnd;
@@ -13,15 +46,12 @@ typedef struct TbButton {
     bool hover, press;
     f32 hover_t, press_t, open_t;
     f64 last_anim, bounce_at;  // when the launcher opened from here: the icon squeezes and springs back
-    COLORREF plate, pending;
+    COLORREF plate, pending;   // the bar's color under the button, and a new one waiting to be confirmed
     bool plate_ok, pending_ok;
     f64 pending_at;
-    HDC dc;
-    HBITMAP bmp;
-    u32 *bits;
-    int bmp_w, bmp_h;
+    Layer layer;
     f64 sampled;
-    u32 *img;
+    u32 *img;  // the custom icon, img_n square
     int img_n;
     u32 img_gen;
 } TbButton;
@@ -29,7 +59,8 @@ typedef struct TbButton {
 static struct {
     bool enabled;
     bool search;  // clicks on the taskbar's search open the launcher (the hook thread swallows them)
-    HANDLE thread, wake;
+    bool started;
+    HANDLE wake;
     SRWLOCK lock;
     struct { HWND taskbar; RECT r; } found[TB_MAX], search_found[TB_MAX];
     int nfound, nsearch;
@@ -66,9 +97,7 @@ static bool tb_search_hit(POINT pt)
     ReleaseSRWLockShared(&TB.lock);
     if (!bar) return false;
     HWND w = WindowFromPoint(pt);
-    DWORD pid = 0;
-    if (w) GetWindowThreadProcessId(w, &pid);
-    return w && GetAncestor(w, GA_ROOT) == bar && pid != GetCurrentProcessId();
+    return w && GetAncestor(w, GA_ROOT) == bar && !window_is_ours(w);
 }
 
 static int tb_taskbars(HWND *out)
@@ -84,8 +113,8 @@ static volatile LONG g_tb_centered = 1;
 
 static bool tb_read_centered(void)
 {
-    DWORD v = 1, sz = sizeof v;
-    RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", L"TaskbarAl", RRF_RT_REG_DWORD, NULL, &v, &sz);
+    DWORD v = 1;
+    reg_dword(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", L"TaskbarAl", &v);
     return v != 0;
 }
 
@@ -101,22 +130,18 @@ static void CALLBACK tb_winevent(HWINEVENTHOOK hook, DWORD ev, HWND h, LONG obj,
     }
 }
 
+// Watches where the Start buttons (and the search) of every taskbar are: often while windows come and go on a
+// centered bar (its buttons move with them), rarely otherwise. Posts WM_APP_TASKBAR when they moved.
 static DWORD WINAPI tb_thread(void *param)
 {
     (void)param;
     CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    IUIAutomation *uia = NULL;
-    if (FAILED(CoCreateInstance(&ML_CLSID_CUIAutomation, NULL, CLSCTX_INPROC_SERVER, &ML_IID_IUIAutomation, (void **)&uia)) || !uia) {
+    IUIAutomation *uia = uia_create();
+    if (!uia) {
         log_msg("taskbar: UI Automation unavailable");
         return 0;
     }
-    IUIAutomationCondition *cond = NULL, *scond = NULL;
-    VARIANT v;
-    VariantInit(&v);
-    v.vt = VT_BSTR;
-    v.bstrVal = SysAllocString(L"StartButton");
-    IUIAutomation_CreatePropertyCondition(uia, UIA_AutomationIdPropertyId, v, &cond);
-    VariantClear(&v);
+    IUIAutomationCondition *cond = uia_cond(uia, UIA_AutomationIdPropertyId, L"StartButton"), *scond = NULL;
     // Windows 11 calls every kind of its search SearchButton; Windows 10 has a window of its own
     static const struct { bool cls; const WCHAR *val; } k_search[] = {
         { false, L"SearchButton" },
@@ -125,12 +150,8 @@ static DWORD WINAPI tb_thread(void *param)
     };
     IUIAutomationCondition *sc[countof(k_search)] = { 0 };
     int nsc = 0;
-    for (int i = 0; i < (int)countof(k_search); i++) {
-        v.vt = VT_BSTR;
-        v.bstrVal = SysAllocString(k_search[i].val);
-        if (SUCCEEDED(IUIAutomation_CreatePropertyCondition(uia, k_search[i].cls ? UIA_ClassNamePropertyId : UIA_AutomationIdPropertyId, v, &sc[nsc])) && sc[nsc]) nsc++;
-        VariantClear(&v);
-    }
+    for (int i = 0; i < (int)countof(k_search); i++)
+        if ((sc[nsc] = uia_cond(uia, k_search[i].cls ? UIA_ClassNamePropertyId : UIA_AutomationIdPropertyId, k_search[i].val)) != NULL) nsc++;
     if (nsc) IUIAutomation_CreateOrConditionFromNativeArray(uia, sc, nsc, &scond);
     for (int i = 0; i < nsc; i++) IUIAutomationCondition_Release(sc[i]);
     HWINEVENTHOOK hook = SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE, NULL, tb_winevent, 0, 0,
@@ -148,8 +169,7 @@ static DWORD WINAPI tb_thread(void *param)
         bool fast = now < TB.fast_until;
         bool active = TB.enabled || TB.search;
         MsgWaitForMultipleObjects(1, &TB.wake, FALSE, !active ? INFINITE : fast ? 15 : g_tb_centered ? 500 : 1000, QS_ALLINPUT);
-        MSG msg;
-        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) DispatchMessageW(&msg);
+        pump_messages();
         if (InterlockedExchange(&TB.reset, 0)) {
             for (int i = 0; i < TB_MAX; i++) {
                 SAFE_RELEASE(els[i]);
@@ -175,11 +195,7 @@ static DWORD WINAPI tb_thread(void *param)
             }
             if (TB.search) {
                 if (!sels[i] && scond && time_now() >= sretry_at) {
-                    IUIAutomationElement *root = NULL;
-                    if (SUCCEEDED(IUIAutomation_ElementFromHandle(uia, cur[i], &root)) && root) {
-                        IUIAutomationElement_FindFirst(root, TreeScope_Descendants, scond, &sels[i]);
-                        IUIAutomationElement_Release(root);
-                    }
+                    sels[i] = uia_find(uia, cur[i], scond);
                     if (!sels[i]) sretry_at = time_now() + 3.0;  // search turned off in the taskbar settings
                 }
                 RECT r;
@@ -204,11 +220,7 @@ static DWORD WINAPI tb_thread(void *param)
                 continue;
             }
             if (!els[i] && cond && time_now() >= retry_at) {
-                IUIAutomationElement *root = NULL;
-                if (SUCCEEDED(IUIAutomation_ElementFromHandle(uia, cur[i], &root)) && root) {
-                    IUIAutomationElement_FindFirst(root, TreeScope_Descendants, cond, &els[i]);
-                    IUIAutomationElement_Release(root);
-                }
+                els[i] = uia_find(uia, cur[i], cond);
                 if (!els[i]) retry_at = time_now() + 1.0;
             }
             RECT r;
@@ -273,21 +285,9 @@ static DWORD WINAPI tb_thread(void *param)
 
 static bool taskbar_light(void)
 {
-    DWORD v = 0, sz = sizeof v;
-    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"SystemUsesLightTheme", RRF_RT_REG_DWORD, NULL,
-                     &v, &sz) == ERROR_SUCCESS)
-        return v != 0;
-    return false;
-}
-
-static void tb_free_bitmap(TbButton *b)
-{
-    if (b->dc) DeleteDC(b->dc);
-    if (b->bmp) DeleteObject(b->bmp);
-    b->dc = NULL;
-    b->bmp = NULL;
-    b->bits = NULL;
-    b->bmp_w = b->bmp_h = 0;
+    DWORD v = 0;
+    reg_dword(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"SystemUsesLightTheme", &v);
+    return v != 0;
 }
 
 static int tb_color_dist(COLORREF a, COLORREF b)
@@ -350,20 +350,15 @@ static bool tb_sample(TbButton *b)
     return true;
 }
 
+// The custom icon file fitted into n x n (its largest frame for an .ico), premultiplied BGRA.
 static u32 *tb_load_image(const WCHAR *path, int n)
 {
-    static const GUID clsid = { 0xcacaf262, 0x9370, 0x4615, { 0xa1, 0x3b, 0x9f, 0x55, 0x39, 0xda, 0x4c, 0x0a } };
-    static const GUID iid = { 0xec5ec8a9, 0xc395, 0x4314, { 0x9c, 0x77, 0x54, 0xd7, 0xa9, 0x35, 0xff, 0x70 } };
-    static const GUID pbgra = { 0x6fddc324, 0x4e03, 0x4bfe, { 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x10 } };
     if (!path || !path[0] || n <= 0) return NULL;
-    IWICImagingFactory *f = NULL;
+    IWICImagingFactory *f = wic_factory();
     IWICBitmapDecoder *dec = NULL;
     IWICBitmapFrameDecode *frame = NULL;
-    IWICBitmapScaler *sc = NULL;
-    IWICFormatConverter *cv = NULL;
     u32 *out = NULL, *tmp = NULL;
-    if (FAILED(CoCreateInstance(&clsid, NULL, CLSCTX_INPROC_SERVER, &iid, (void **)&f)) || !f) goto done;
-    if (FAILED(IWICImagingFactory_CreateDecoderFromFilename(f, path, NULL, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec))) goto done;
+    if (!f || FAILED(IWICImagingFactory_CreateDecoderFromFilename(f, path, NULL, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec))) goto done;
     UINT frames = 0, best = 0, best_w = 0;
     IWICBitmapDecoder_GetFrameCount(dec, &frames);
     for (UINT i = 0; i < frames && i < 32; i++) {
@@ -383,23 +378,11 @@ static u32 *tb_load_image(const WCHAR *path, int n)
     IWICBitmapFrameDecode_GetSize(frame, &iw, &ih);
     if (!iw || !ih) goto done;
     UINT tw = iw >= ih ? (UINT)n : MAX(1u, (UINT)((u64)n * iw / ih)), th = ih >= iw ? (UINT)n : MAX(1u, (UINT)((u64)n * ih / iw));
-    if (FAILED(IWICImagingFactory_CreateBitmapScaler(f, &sc)) ||
-        FAILED(IWICBitmapScaler_Initialize(sc, (IWICBitmapSource *)frame, tw, th, WICBitmapInterpolationModeFant)) ||
-        FAILED(IWICImagingFactory_CreateFormatConverter(f, &cv)) ||
-        FAILED(IWICFormatConverter_Initialize(cv, (IWICBitmapSource *)sc, &pbgra, WICBitmapDitherTypeNone, NULL, 0, WICBitmapPaletteTypeCustom)))
-        goto done;
-    tmp = (u32 *)malloc((size_t)tw * th * 4);
-    out = (u32 *)calloc((size_t)n * n, 4);
-    if (!tmp || !out || FAILED(IWICFormatConverter_CopyPixels(cv, NULL, tw * 4, tw * th * 4, (BYTE *)tmp))) {
-        free(out);
-        out = NULL;
-        goto done;
-    }
-    for (UINT y = 0; y < th; y++) memcpy(out + (size_t)(y + (n - th) / 2) * n + (n - tw) / 2, tmp + (size_t)y * tw, (size_t)tw * 4);
+    tmp = wic_pixels(f, (IWICBitmapSource *)frame, tw, th);
+    out = tmp ? (u32 *)calloc((size_t)n * n, 4) : NULL;
+    for (UINT y = 0; out && y < th; y++) memcpy(out + (size_t)(y + (n - th) / 2) * n + (n - tw) / 2, tmp + (size_t)y * tw, (size_t)tw * 4);
 done:
     free(tmp);
-    SAFE_RELEASE(cv);
-    SAFE_RELEASE(sc);
     SAFE_RELEASE(frame);
     SAFE_RELEASE(dec);
     SAFE_RELEASE(f);
@@ -483,26 +466,7 @@ static f32 tb_bounce(TbButton *b)
 static void tb_render(TbButton *b)
 {
     int w = b->w, h = b->h;
-    if (w <= 0 || h <= 0 || !b->wnd) return;
-    if (!b->bmp || b->bmp_w != w || b->bmp_h != h) {
-        tb_free_bitmap(b);
-        BITMAPINFO bi;
-        memset(&bi, 0, sizeof bi);
-        bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-        bi.bmiHeader.biWidth = w;
-        bi.bmiHeader.biHeight = -h;
-        bi.bmiHeader.biPlanes = 1;
-        bi.bmiHeader.biBitCount = 32;
-        b->dc = CreateCompatibleDC(NULL);
-        b->bmp = CreateDIBSection(b->dc, &bi, DIB_RGB_COLORS, (void **)&b->bits, NULL, 0);
-        if (!b->bmp) {
-            tb_free_bitmap(b);
-            return;
-        }
-        SelectObject(b->dc, b->bmp);
-        b->bmp_w = w;
-        b->bmp_h = h;
-    }
+    if (w <= 0 || h <= 0 || !b->wnd || !layer_fit(&b->layer, w, h)) return;
 
     f32 s = (f32)monitor_dpi(MonitorFromWindow(b->taskbar, MONITOR_DEFAULTTONEAREST)) / 96.f;
     f32 logo = floorf(24.f * s + 0.5f), plate = logo + 2.f * floorf(1.f * s + 0.5f);
@@ -537,7 +501,7 @@ static void tb_render(TbButton *b)
         if (!b->img) style = TBI_DIAMOND;
     }
 
-    u32 *px = b->bits;
+    u32 *px = b->layer.bits;
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
             f32 fx = (f32)x + 0.5f - cx, fy = (f32)y + 0.5f - cy;
@@ -555,16 +519,10 @@ static void tb_render(TbButton *b)
             } else if (replace) {
                 tb_shape(style, fx, fy, u, dim, fg, c, &a);
             }
-            if (a < 1.f / 255.f) a = 1.f / 255.f;  // alpha 0 would pass clicks to the real button
-            u32 A = (u32)(a * 255.f + 0.5f);
-            u32 R = (u32)(CLAMP(c[0], 0.f, a) * 255.f + 0.5f), G = (u32)(CLAMP(c[1], 0.f, a) * 255.f + 0.5f), B = (u32)(CLAMP(c[2], 0.f, a) * 255.f + 0.5f);
-            px[y * w + x] = (A << 24) | (R << 16) | (G << 8) | B;
+            px[y * w + x] = px_pack(c, a);
         }
     }
-    SIZE size = { w, h };
-    POINT src = { 0, 0 };
-    BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
-    UpdateLayeredWindow(b->wnd, NULL, NULL, &size, b->dc, &src, 0, &bf, ULW_ALPHA);
+    layer_show(&b->layer, b->wnd);
 }
 
 static TbButton *tb_from_hwnd(HWND h)
@@ -611,8 +569,7 @@ static LRESULT CALLBACK tb_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_MOUSEMOVE:
         if (b && !b->hover) {
             b->hover = true;
-            TRACKMOUSEEVENT tme = { sizeof tme, TME_LEAVE, h, 0 };
-            TrackMouseEvent(&tme);
+            track_mouse_leave(h);
             tb_kick(b);
         }
         return 0;
@@ -669,7 +626,7 @@ static void tb_destroy(TbButton *b)
     b->wnd = NULL;
     free(b->img);
     b->img = NULL;
-    tb_free_bitmap(b);
+    layer_free(&b->layer);
 }
 
 static void tb_publish_hits(void)
@@ -680,15 +637,12 @@ static void tb_publish_hits(void)
     g_tb_hit_count = n;
 }
 
-// Something of the taskbar's own (its XAML island) went above `h`. Our other taskbar
-// windows don't count: raising over each other in turn makes the taskbar flicker.
+// Something of the taskbar's own (its XAML island) went above `h`. Our other taskbar windows don't count:
+// raising over each other in turn makes the taskbar flicker.
 static bool tb_covered(HWND h)
 {
-    for (HWND w = GetWindow(h, GW_HWNDPREV); w; w = GetWindow(w, GW_HWNDPREV)) {
-        DWORD pid = 0;
-        GetWindowThreadProcessId(w, &pid);
-        if (pid != GetCurrentProcessId()) return true;
-    }
+    for (HWND w = GetWindow(h, GW_HWNDPREV); w; w = GetWindow(w, GW_HWNDPREV))
+        if (!window_is_ours(w)) return true;
     return false;
 }
 
@@ -707,11 +661,10 @@ static void tb_sync(void)
         TbButton *b = &nb[i];
         for (int k = 0; k < TB.n; k++)
             if (TB.b[k].taskbar == f[i].taskbar && TB.b[k].wnd && IsWindow(TB.b[k].wnd)) {
-                *b = TB.b[k];
+                *b = TB.b[k];  // moves its window, icon and pixels over
                 TB.b[k].wnd = NULL;
                 TB.b[k].img = NULL;
-                TB.b[k].dc = NULL;
-                TB.b[k].bmp = NULL;
+                memset(&TB.b[k].layer, 0, sizeof TB.b[k].layer);
             }
         b->taskbar = f[i].taskbar;
         b->screen = f[i].r;
@@ -799,10 +752,11 @@ static void tb_explorer_restarted(void)
 
 static void tb_thread_start(void)
 {
-    if (!TB.thread) {
+    if (!TB.started) {
+        TB.started = true;
         InitializeSRWLock(&TB.lock);
         TB.wake = CreateEventW(NULL, FALSE, FALSE, NULL);
-        TB.thread = CreateThread(NULL, 0, tb_thread, NULL, 0, NULL);
+        thread_start(tb_thread, NULL);
     }
     InterlockedExchange(&TB.reset, 1);
     SetEvent(TB.wake);

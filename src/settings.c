@@ -1,3 +1,6 @@
+// The settings: the items of every page (k_sitems), their values and what changing one does. Layout and
+// drawing of the rows are here too; the window, input and animation are in settings_wnd.c.
+
 enum { SK_TOGGLE, SK_CHOICE, SK_STEPPER, SK_TEXT, SK_HOTKEY, SK_BUTTON, SK_INFO, SK_ABOUT };
 enum {
     SID_NONE, SID_HOTKEY, SID_AUTOSTART, SID_KEEPQUERY, SID_THEME, SID_BACKDROP, SID_ANIM, SID_WIDTH, SID_ROWS,
@@ -26,7 +29,7 @@ typedef struct SItem {
     u8 page, kind, id;
     Str group;
     Str title, desc;
-    int lo, hi, step;
+    int lo, hi, step;  // a stepper; with no range given, its setting's range
     Str unit;
     Str opt[6];
     u32 glyph;
@@ -117,9 +120,9 @@ static const SItem k_sitems[] = {
       .desc = { L"Буквы, по которым нашлись приложение или файл, выделяются жирным",
                 L"The letters that matched the query are drawn in bold" } },
     { .page = PG_APPEARANCE, .kind = SK_STEPPER, .id = SID_WIDTH, .dep = SID_STYLE, .dep_mask = STYLES_START_MENU, .dep_not = true, .group = { L"Размер", L"Size" },
-      .title = { L"Ширина окна", L"Window width" }, .lo = 480, .hi = 1600, .step = 20, .unit = { L"px", L"px" } },
+      .title = { L"Ширина окна", L"Window width" }, .step = 20, .unit = { L"px", L"px" } },
     { .page = PG_APPEARANCE, .kind = SK_STEPPER, .id = SID_ROWS, .dep = SID_STYLE, .dep_mask = STYLES_START_MENU, .dep_not = true, .title = { L"Строк в списке", L"Visible rows" },
-      .lo = 4, .hi = 20, .step = 1 },
+      .step = 1 },
     { .page = PG_APPEARANCE, .kind = SK_BUTTON, .id = SID_APREVIEW, .title = { L"Проверить", L"Try it" },
       .desc = { L"Открыть лаунчер с текущими настройками. Esc вернёт сюда", L"Open the launcher with the current settings. Esc comes back here" },
       .opt = { { L"Открыть лаунчер", L"Open launcher" } }, .glyph = 0xE768 },
@@ -135,38 +138,38 @@ static const SItem k_sitems[] = {
     { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ASPEED, .dep = SID_ANIM, .dep_val = 1, .title = { L"Общая скорость", L"Overall speed" },
       .desc = { L"Множитель для всех длительностей ниже: 200 % - всё вдвое быстрее, 50 % - вдвое медленнее",
                 L"Multiplies every duration below: 200% makes everything twice as fast, 50% twice as slow" },
-      .lo = 30, .hi = 400, .step = 10, .unit = { L"%", L"%" } },
+      .step = 10, .unit = { L"%", L"%" } },
     { .page = PG_ANIM, .kind = SK_BUTTON, .id = SID_APREVIEW, .dep = SID_ANIM, .dep_val = 1, .title = { L"Проверить", L"Try it" },
       .desc = { L"Открыть лаунчер с текущими настройками. Esc вернёт сюда", L"Open the launcher with the current settings. Esc comes back here" },
       .opt = { { L"Открыть лаунчер", L"Open launcher" } }, .glyph = 0xE768 },
     { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_AOPEN, .dep = SID_ANIM, .dep_val = 1, .group = { L"Открытие и закрытие", L"Open and close" },
       .title = { L"Появление окна", L"Window appears" }, .desc = { L"Проявление стекла и содержимого. 0 - сразу", L"Fade-in of the glass and content. 0 is instant" },
-      .lo = 0, .hi = 1000, .step = 10, .unit = { L"мс", L"ms" } },
+      .step = 10, .unit = { L"мс", L"ms" } },
     { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ACLOSE, .dep = SID_ANIM, .dep_val = 1, .title = { L"Закрытие", L"Window closes" },
       .desc = { L"Короче появления, чтобы Esc не ощущался задержкой", L"Shorter than opening so Esc never feels delayed" },
-      .lo = 0, .hi = 1000, .step = 10, .unit = { L"мс", L"ms" } },
+      .step = 10, .unit = { L"мс", L"ms" } },
     { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ASCALE, .dep = SID_ANIM, .dep_val = 1, .title = { L"Начальный масштаб", L"Starting scale" },
       .desc = { L"С какого размера содержимое «наплывает» при открытии. 100 % - без увеличения",
                 L"The size the content grows from when opening. 100% means no zoom" },
-      .lo = 80, .hi = 100, .step = 1, .unit = { L"%", L"%" } },
+      .step = 1, .unit = { L"%", L"%" } },
     { .page = PG_ANIM, .kind = SK_TOGGLE, .id = SID_ACASCADE, .dep = SID_ANIM, .dep_val = 1, .title = { L"Каскад строк", L"Row cascade" },
       .desc = { L"После открытия строки появляются по очереди, сверху вниз", L"After opening the rows appear one after another, top to bottom" } },
     { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_AROW, .dep = SID_ACASCADE, .dep_val = 1, .title = { L"Появление строки", L"Row fade-in" },
-      .lo = 0, .hi = 1000, .step = 10, .unit = { L"мс", L"ms" } },
+      .step = 10, .unit = { L"мс", L"ms" } },
     { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ASTAGGER, .dep = SID_ACASCADE, .dep_val = 1, .title = { L"Задержка между строками", L"Delay between rows" },
-      .lo = 0, .hi = 60, .step = 2, .unit = { L"мс", L"ms" } },
+      .step = 2, .unit = { L"мс", L"ms" } },
     { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ASELECT, .dep = SID_ANIM, .dep_val = 1, .group = { L"Движение", L"Motion" },
       .title = { L"Выделение", L"Selection" },
       .desc = { L"За сколько подложка доезжает до выбранной строки (пружина: при быстром листании скорость не рвётся)",
                 L"How fast the highlight reaches the selected row (a spring: fast key repeat never jerks it)" },
-      .lo = 0, .hi = 600, .step = 10, .unit = { L"мс", L"ms" } },
+      .step = 10, .unit = { L"мс", L"ms" } },
     { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_ASCROLL, .dep = SID_ANIM, .dep_val = 1, .title = { L"Прокрутка", L"Scrolling" },
-      .lo = 0, .hi = 600, .step = 10, .unit = { L"мс", L"ms" } },
+      .step = 10, .unit = { L"мс", L"ms" } },
     { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_AMENU, .dep = SID_ANIM, .dep_val = 1, .title = { L"Меню", L"Menus" },
       .desc = { L"Контекстное меню лаунчера и выпадающие списки настроек", L"The launcher context menu and the dropdowns in settings" },
-      .lo = 0, .hi = 600, .step = 10, .unit = { L"мс", L"ms" } },
+      .step = 10, .unit = { L"мс", L"ms" } },
     { .page = PG_ANIM, .kind = SK_STEPPER, .id = SID_APAGE, .dep = SID_ANIM, .dep_val = 1, .title = { L"Смена раздела настроек", L"Settings page switch" },
-      .lo = 0, .hi = 800, .step = 10, .unit = { L"мс", L"ms" } },
+      .step = 10, .unit = { L"мс", L"ms" } },
     { .page = PG_ANIM, .kind = SK_BUTTON, .id = SID_ARESET, .dep = SID_ANIM, .dep_val = 1, .group = { L"Сброс", L"Reset" },
       .title = { L"Значения по умолчанию", L"Default values" }, .desc = { L"Вернуть все тайминги этой страницы", L"Restore every timing on this page" },
       .opt = { { L"Сбросить", L"Reset" } }, .glyph = 0xE777 },
@@ -177,7 +180,7 @@ static const SItem k_sitems[] = {
                 L"Seconds to keep the typed text after closing. 0 always starts empty" },
       .lo = 0, .hi = 3600, .step = 10, .unit = { L"с", L"s" } },
     { .page = PG_SEARCH, .kind = SK_STEPPER, .id = SID_MAXAPPS, .group = { L"Приложения", L"Applications" },
-      .title = { L"Приложений в результатах", L"Apps in results" }, .lo = 1, .hi = 50, .step = 1 },
+      .title = { L"Приложений в результатах", L"Apps in results" }, .step = 1 },
     { .page = PG_SEARCH, .kind = SK_TOGGLE, .id = SID_HIDENOISE, .title = { L"Скрывать деинсталляторы и справку", L"Hide uninstallers and help links" },
       .desc = { L"Ярлыки «Удалить…», «Readme» и подобные из меню «Пуск»", L"“Uninstall…”, “Readme” and similar Start menu shortcuts" } },
     { .page = PG_SEARCH, .kind = SK_BUTTON, .id = SID_REINDEX, .title = { L"Список приложений", L"App list" },
@@ -189,7 +192,7 @@ static const SItem k_sitems[] = {
                 L"File search goes through your own Everything, or the built-in one when you have none" } },
     { .page = PG_SEARCH, .kind = SK_STEPPER, .id = SID_MINCHARS,
       .title = { L"Искать файлы с", L"Search files from" },
-      .desc = { L"Минимальная длина запроса", L"Minimum query length" }, .lo = 1, .hi = 10, .step = 1, .unit = { L"симв.", L"chars" } },
+      .desc = { L"Минимальная длина запроса", L"Minimum query length" }, .step = 1, .unit = { L"симв.", L"chars" } },
     { .page = PG_SEARCH, .kind = SK_TEXT, .id = SID_FILTER, .title = { L"Фильтр Everything", L"Everything filter" },
       .desc = { L"Добавляется к каждому запросу. Например, !C:\\Windows\\ исключает папку Windows",
                 L"Appended to every query. For example, !C:\\Windows\\ excludes the Windows folder" } },
@@ -225,6 +228,20 @@ static const SItem k_sitems[] = {
 };
 #define SITEMS countof(k_sitems)
 #define SROWS_MAX 24
+
+// The config.ini field behind an item, when it is a plain setting (its value is the field's).
+static const u8 k_sid_cfg[SID__COUNT] = {
+    [SID_LANG] = CF_LANGUAGE, [SID_REDUCED] = CF_REDUCED_MOTION, [SID_THEME] = CF_THEME, [SID_BACKDROP] = CF_BACKDROP,
+    [SID_STYLE] = CF_STYLE, [SID_POSITION] = CF_POSITION, [SID_MATCHHL] = CF_MATCH_HIGHLIGHT, [SID_WIDTH] = CF_WIDTH, [SID_ROWS] = CF_ROWS,
+    [SID_TASKBAR] = CF_TASKBAR_BUTTON, [SID_TBREPLACE] = CF_TASKBAR_REPLACE_ICON, [SID_TBICON] = CF_TASKBAR_ICON,
+    [SID_TBSEARCH] = CF_TASKBAR_SEARCH, [SID_MEDIA] = CF_MEDIA_WIDGET, [SID_MEDIAPOS] = CF_MEDIA_POSITION,
+    [SID_MEDIACTL] = CF_MEDIA_CONTROLS, [SID_MEDIAHIDE] = CF_MEDIA_HIDE_PAUSED, [SID_MEDIASCROLL] = CF_MEDIA_MARQUEE,
+    [SID_ANIM] = CF_ANIMATIONS, [SID_ASPEED] = CF_ANIM_SPEED, [SID_AOPEN] = CF_ANIM_OPEN_MS, [SID_ACLOSE] = CF_ANIM_CLOSE_MS,
+    [SID_ASCALE] = CF_ANIM_OPEN_SCALE, [SID_ACASCADE] = CF_ANIM_CASCADE, [SID_AROW] = CF_ANIM_ROW_MS, [SID_ASTAGGER] = CF_ANIM_STAGGER_MS,
+    [SID_ASELECT] = CF_ANIM_SELECT_MS, [SID_ASCROLL] = CF_ANIM_SCROLL_MS, [SID_AMENU] = CF_ANIM_MENU_MS, [SID_APAGE] = CF_ANIM_PAGE_MS,
+    [SID_KEEPQUERY] = CF_KEEP_QUERY, [SID_MAXAPPS] = CF_MAX_APPS, [SID_HIDENOISE] = CF_HIDE_UNINSTALLERS, [SID_MINCHARS] = CF_FILE_MIN_CHARS,
+    [SID_UPDCHECK] = CF_UPDATE_CHECK,
+};
 
 typedef struct SRow {
     int item;
@@ -362,44 +379,9 @@ static int sval_applied(int id)
 {
     switch (id) {
     case SID_AUTOSTART: return SW.autostart;
-    case SID_THEME: return g_cfg.theme;
-    case SID_STYLE: return g_cfg.style;
-    case SID_POSITION: return g_cfg.position;
     case SID_STARTPOS: return launcher_position() == POS_BOTTOM_LEFT ? 0 : 1;
-    case SID_UPDCHECK: return g_cfg.update_check;
-    case SID_MATCHHL: return g_cfg.match_highlight;
-    case SID_LANG: return g_cfg.language;
-    case SID_BACKDROP: return g_cfg.backdrop == BACKDROP_BLUR ? 0 : g_cfg.backdrop == BACKDROP_ACRYLIC ? 1 : 2;
-    case SID_ANIM: return g_cfg.animations;
-    case SID_REDUCED: return g_cfg.reduced_motion;
-    case SID_TASKBAR: return g_cfg.taskbar_button;
-    case SID_TBREPLACE: return g_cfg.taskbar_replace_icon;
-    case SID_TBICON: return g_cfg.taskbar_icon;
-    case SID_TBSEARCH: return g_cfg.taskbar_search;
-    case SID_MEDIA: return g_cfg.media_widget;
-    case SID_MEDIAPOS: return g_cfg.media_position;
-    case SID_MEDIACTL: return g_cfg.media_controls;
-    case SID_MEDIAHIDE: return g_cfg.media_hide_paused;
-    case SID_MEDIASCROLL: return g_cfg.media_marquee;
-    case SID_WIDTH: return g_cfg.width;
-    case SID_ROWS: return g_cfg.rows;
-    case SID_MAXAPPS: return g_cfg.max_apps;
-    case SID_MINCHARS: return g_cfg.file_min_chars;
-    case SID_HIDENOISE: return g_cfg.hide_uninstallers;
-    case SID_KEEPQUERY: return g_cfg.keep_query_seconds;
-    case SID_ASPEED: return g_cfg.anim_speed;
-    case SID_AOPEN: return g_cfg.anim_open_ms;
-    case SID_ACLOSE: return g_cfg.anim_close_ms;
-    case SID_ASCALE: return g_cfg.anim_open_scale;
-    case SID_ACASCADE: return g_cfg.anim_cascade;
-    case SID_AROW: return g_cfg.anim_row_ms;
-    case SID_ASTAGGER: return g_cfg.anim_stagger_ms;
-    case SID_ASELECT: return g_cfg.anim_select_ms;
-    case SID_ASCROLL: return g_cfg.anim_scroll_ms;
-    case SID_AMENU: return g_cfg.anim_menu_ms;
-    case SID_APAGE: return g_cfg.anim_page_ms;
     }
-    return 0;
+    return k_sid_cfg[id] ? cfg_get(k_sid_cfg[id]) : 0;
 }
 
 // The value the settings show: a pending change, or the applied one.
@@ -410,6 +392,13 @@ static const SItem *sitem(int id)
     for (int i = 0; i < (int)countof(k_sitems); i++)
         if (k_sitems[i].id == id) return &k_sitems[i];
     return NULL;
+}
+
+static void item_range(const SItem *it, int *lo, int *hi)
+{
+    bool own = it->lo || it->hi || !k_sid_cfg[it->id];
+    *lo = own ? it->lo : k_cfg[k_sid_cfg[it->id]].lo;
+    *hi = own ? it->hi : k_cfg[k_sid_cfg[it->id]].hi;
 }
 
 // Under reduced motion the animation settings keep their values but cannot be changed.
@@ -427,21 +416,6 @@ static bool item_shown(int i)
     bool match = it->dep_mask ? ((it->dep_mask >> v) & 1) != 0 : v == it->dep_val;
     return match != it->dep_not && (!p || item_shown((int)(p - k_sitems)));
 }
-
-static void save_int(const char *key, int v)
-{
-    char buf[32];
-    snprintf(buf, sizeof buf, "%d", v);
-    config_set(key, buf);
-}
-
-static void save_wstr(const char *key, const WCHAR *v)
-{
-    char buf[1024];
-    w_to_utf8(v, -1, buf, sizeof buf);
-    config_set(key, buf);
-}
-
 
 static int choice_count(const SItem *it)
 {
@@ -473,15 +447,14 @@ static int seg_index_at(const SItem *it, f32 cx, f32 mx)
     return 0;
 }
 
+// The custom Start button icon, from a file dialog. True when one was chosen.
 static bool pick_taskbar_icon(void)
 {
-    static const GUID clsid = { 0xdc1c5a9c, 0xe88a, 0x4dde, { 0xa5, 0xa1, 0x60, 0xf8, 0x2a, 0x20, 0xae, 0xf7 } };
-    static const GUID iid = { 0xd57c7288, 0xd4ad, 0x4768, { 0xbe, 0x02, 0x9d, 0x96, 0x95, 0x32, 0xd9, 0x60 } };
     IFileOpenDialog *d = NULL;
-    if (FAILED(CoCreateInstance(&clsid, NULL, CLSCTX_INPROC_SERVER, &iid, (void **)&d)) || !d) return false;
-    COMDLG_FILTERSPEC types[] = { { g_lang_ru ? L"Изображения" : L"Images", L"*.png;*.ico;*.jpg;*.jpeg;*.bmp" } };
+    if (FAILED(CoCreateInstance(&ML_CLSID_FileOpenDialog, NULL, CLSCTX_INPROC_SERVER, &ML_IID_IFileOpenDialog, (void **)&d)) || !d) return false;
+    COMDLG_FILTERSPEC types[] = { { TR("Изображения", "Images"), L"*.png;*.ico;*.jpg;*.jpeg;*.bmp" } };
     IFileOpenDialog_SetFileTypes(d, 1, types);
-    IFileOpenDialog_SetTitle(d, g_lang_ru ? L"Значок кнопки Пуск" : L"Start button icon");
+    IFileOpenDialog_SetTitle(d, TR("Значок кнопки Пуск", "Start button icon"));
     bool ok = false;
     if (SUCCEEDED(IFileOpenDialog_Show(d, SW.hwnd))) {
         IShellItem *item = NULL;
@@ -489,7 +462,7 @@ static bool pick_taskbar_icon(void)
             WCHAR *path = NULL;
             if (SUCCEEDED(IShellItem_GetDisplayName(item, SIGDN_FILESYSPATH, &path)) && path) {
                 wcopy(g_cfg.taskbar_icon_path, countof(g_cfg.taskbar_icon_path), path);
-                save_wstr("taskbar_icon_path", path);
+                cfg_save(CF_TASKBAR_ICON_PATH);
                 CoTaskMemFree(path);
                 ok = true;
             }
@@ -500,33 +473,6 @@ static bool pick_taskbar_icon(void)
     return ok;
 }
 
-static const struct { u8 id; const char *key; size_t off; } k_anim_fields[] = {
-    { SID_ASPEED, "anim_speed", offsetof(Config, anim_speed) },
-    { SID_AOPEN, "anim_open_ms", offsetof(Config, anim_open_ms) },
-    { SID_ACLOSE, "anim_close_ms", offsetof(Config, anim_close_ms) },
-    { SID_ASCALE, "anim_open_scale", offsetof(Config, anim_open_scale) },
-    { SID_ACASCADE, "anim_cascade", offsetof(Config, anim_cascade) },
-    { SID_AROW, "anim_row_ms", offsetof(Config, anim_row_ms) },
-    { SID_ASTAGGER, "anim_stagger_ms", offsetof(Config, anim_stagger_ms) },
-    { SID_ASELECT, "anim_select_ms", offsetof(Config, anim_select_ms) },
-    { SID_ASCROLL, "anim_scroll_ms", offsetof(Config, anim_scroll_ms) },
-    { SID_AMENU, "anim_menu_ms", offsetof(Config, anim_menu_ms) },
-    { SID_APAGE, "anim_page_ms", offsetof(Config, anim_page_ms) },
-};
-
-static int *anim_field(int id)
-{
-    for (int i = 0; i < (int)countof(k_anim_fields); i++)
-        if (k_anim_fields[i].id == id) return (int *)((char *)&g_cfg + k_anim_fields[i].off);
-    return NULL;
-}
-
-static const char *anim_key(int id)
-{
-    for (int i = 0; i < (int)countof(k_anim_fields); i++)
-        if (k_anim_fields[i].id == id) return k_anim_fields[i].key;
-    return "";
-}
 
 // Autostart (schtasks.exe, slow) runs on a thread; a value changed meanwhile is applied after it.
 static struct { bool busy; int want; } AS;
@@ -543,10 +489,8 @@ static void autostart_request(int v)
 {
     AS.want = v;
     if (AS.busy) return;
-    HANDLE t = CreateThread(NULL, 0, autostart_thread, (void *)(INT_PTR)v, 0, NULL);
-    if (t) {
+    if (thread_start(autostart_thread, (void *)(INT_PTR)v)) {
         AS.busy = true;
-        CloseHandle(t);
     } else {
         autostart_set(v != 0);
         SW.autostart = autostart_get();
@@ -564,17 +508,20 @@ static void settings_autostart_done(int v, bool on)
     settings_invalidate();
 }
 
+// Applies a value: the setting and config.ini, then whatever has to follow it.
 static void sapply(const SItem *it, int v)
 {
     if (v == sval_applied(it->id)) return;
+    if (k_sid_cfg[it->id]) cfg_set(k_sid_cfg[it->id], v);
     switch (it->id) {
     case SID_AUTOSTART:
         SW.autostart = v;
         autostart_request(v);
         break;
+    case SID_STARTPOS:
+        cfg_set(CF_POSITION, v ? POS_BOTTOM_CENTER : POS_BOTTOM_LEFT);
+        break;
     case SID_LANG:
-        g_cfg.language = v;
-        config_set("language", v == 1 ? "ru" : v == 2 ? "en" : "auto");
         lang_apply();
         apps_relocalize(U.apps);
         SetWindowTextW(SW.hwnd, TR("Настройки MixLauncher", "MixLauncher Settings"));
@@ -584,132 +531,51 @@ static void sapply(const SItem *it, int v)
         }
         break;
     case SID_THEME:
-        g_cfg.theme = v;
-        config_set("theme", v == 1 ? "dark" : v == 2 ? "light" : "auto");
+    case SID_BACKDROP:
         theme_update();
         U.backdrop_ok = backdrop_apply(g_hwnd);
         settings_apply_theme();
         break;
     case SID_STYLE:
-        g_cfg.style = v;
-        config_set("style", k_style_names[v]);
-        U.dpi = 0;
+        U.dpi = 0;  // the launcher's metrics are made again when it opens
         U.backdrop_ok = backdrop_apply(g_hwnd);
         break;
-    case SID_POSITION:
-        g_cfg.position = v;
-        config_set("position", k_pos_names[v]);
-        break;
-    case SID_STARTPOS:
-        g_cfg.position = v ? POS_BOTTOM_CENTER : POS_BOTTOM_LEFT;
-        config_set("position", k_pos_names[g_cfg.position]);
+    case SID_WIDTH:
+    case SID_ROWS:
+        U.dpi = 0;
         break;
     case SID_UPDCHECK:
-        g_cfg.update_check = v;
-        config_set("update_check", v ? "1" : "0");
         upd_schedule(2000);
         break;
     case SID_MATCHHL:
-        g_cfg.match_highlight = v;
-        config_set("match_highlight", v ? "1" : "0");
         if (U.visible) ui_invalidate();
         break;
-    case SID_BACKDROP:
-        g_cfg.backdrop = v == 0 ? BACKDROP_BLUR : v == 1 ? BACKDROP_ACRYLIC : BACKDROP_SOLID;
-        config_set("backdrop", v == 0 ? "blur" : v == 1 ? "acrylic" : "solid");
-        theme_update();
-        U.backdrop_ok = backdrop_apply(g_hwnd);
-        break;
     case SID_TBICON:
-        g_cfg.taskbar_icon = v;
-        config_set("taskbar_icon", k_tbi_names[v]);
+    case SID_TBREPLACE:
         tb_icon_changed();
         break;
     case SID_TASKBAR:
-        g_cfg.taskbar_button = v;
-        config_set("taskbar_button", v ? "1" : "0");
         tb_set_enabled(v != 0);
         break;
-    case SID_TBREPLACE:
-        g_cfg.taskbar_replace_icon = v;
-        config_set("taskbar_replace_icon", v ? "1" : "0");
-        tb_icon_changed();
-        break;
     case SID_TBSEARCH:
-        g_cfg.taskbar_search = v;
-        config_set("taskbar_search", v ? "1" : "0");
         tb_set_search(v != 0);
         break;
     case SID_MEDIA:
-        g_cfg.media_widget = v;
-        config_set("media_widget", v ? "1" : "0");
         media_set_enabled(v != 0);
         break;
-    case SID_MEDIAPOS:
-        g_cfg.media_position = v;
-        config_set("media_position", v ? "right" : "left");
-        media_settings_changed();
-        break;
-    case SID_MEDIACTL:
-        g_cfg.media_controls = v;
-        config_set("media_controls", v ? "1" : "0");
-        media_settings_changed();
-        break;
-    case SID_MEDIAHIDE:
-        g_cfg.media_hide_paused = v;
-        config_set("media_hide_paused", v ? "1" : "0");
-        media_settings_changed();
-        break;
-    case SID_MEDIASCROLL:
-        g_cfg.media_marquee = v;
-        config_set("media_marquee", v ? "1" : "0");
-        media_settings_changed();
-        break;
-    case SID_ANIM:
-        g_cfg.animations = v;
-        config_set("animations", v ? "1" : "0");
-        break;
     case SID_REDUCED:
-        g_cfg.reduced_motion = v;
-        config_set("reduced_motion", v ? "1" : "0");
         if (SW.hwnd) dwm_set(SW.hwnd, DWA_NO_TRANSITIONS, v);
         media_settings_changed();
         break;
-    case SID_WIDTH:
-        g_cfg.width = v;
-        save_int("width", v);
-        U.dpi = 0;
-        break;
-    case SID_ROWS:
-        g_cfg.rows = v;
-        save_int("rows", v);
-        U.dpi = 0;
-        break;
-    case SID_MAXAPPS:
-        g_cfg.max_apps = v;
-        save_int("max_apps", v);
-        break;
-    case SID_MINCHARS:
-        g_cfg.file_min_chars = v;
-        save_int("file_min_chars", v);
+    case SID_MEDIAPOS:
+    case SID_MEDIACTL:
+    case SID_MEDIAHIDE:
+    case SID_MEDIASCROLL:
+        media_settings_changed();
         break;
     case SID_HIDENOISE:
-        g_cfg.hide_uninstallers = v;
-        config_set("hide_uninstallers", v ? "1" : "0");
         apps_request_reindex();
         break;
-    case SID_KEEPQUERY:
-        g_cfg.keep_query_seconds = v;
-        save_int("keep_query_seconds", v);
-        break;
-    default: {
-        int *f = anim_field(it->id);
-        if (f) {
-            *f = v;
-            save_int(anim_key(it->id), v);
-        }
-        break;
-    }
     }
     settings_invalidate();
 }
@@ -740,7 +606,9 @@ static void pend_flush(bool all)
 // Shows a change at once and applies it after the animation; changing it back first cancels it.
 static void sset(const SItem *it, int v)
 {
-    if (it->kind == SK_STEPPER) v = CLAMP(v, it->lo, it->hi);
+    int lo, hi;
+    item_range(it, &lo, &hi);
+    if (it->kind == SK_STEPPER) v = CLAMP(v, lo, hi);
     if (it->kind == SK_TOGGLE) v = v ? 1 : 0;
     if (it->kind == SK_CHOICE) v = CLAMP(v, 0, choice_count(it) - 1);
     if (v == sval(it->id) || item_locked(it)) return;
@@ -759,13 +627,12 @@ static void sset(const SItem *it, int v)
     settings_invalidate();
 }
 
-static void open_path(const WCHAR *path)
+// A button's label says "Done" for a moment.
+static void button_flash(int id)
 {
-    LaunchJob j;
-    memset(&j, 0, sizeof j);
-    j.act = ACT_OPEN;
-    j.target = wdup_heap(path);
-    launch_submit(&j);
+    SW.flash_id = id;
+    SW.flash_until = time_now() + 1.6;
+    SetTimer(SW.hwnd, SETTINGS_TIMER_FLASH, 1700, NULL);
 }
 
 static void button_action(const SItem *it)
@@ -773,12 +640,10 @@ static void button_action(const SItem *it)
     switch (it->id) {
     case SID_REINDEX:
         apps_request_reindex();
-        SW.flash_id = it->id;
-        SW.flash_until = time_now() + 1.6;
-        SetTimer(SW.hwnd, SETTINGS_TIMER_FLASH, 1700, NULL);
+        button_flash(it->id);
         break;
     case SID_CLEARHIST:
-        if (!SW.armed) {
+        if (!SW.armed) {  // the first press asks
             SW.armed = true;
             break;
         }
@@ -786,24 +651,21 @@ static void button_action(const SItem *it)
         history_clear();
         refresh_frecency();
         refresh_empty_view();
-        SW.flash_id = it->id;
-        SW.flash_until = time_now() + 1.6;
-        SetTimer(SW.hwnd, SETTINGS_TIMER_FLASH, 1700, NULL);
+        button_flash(it->id);
         break;
     case SID_CONFIG: {
         WCHAR path[MAX_PATH];
         config_path(path);
-        open_path(path);
+        launch_open(path, OPEN_PATH);
         break;
     }
     case SID_DATADIR:
-        open_path(g_data_dir);
+        launch_open(g_data_dir, OPEN_PATH);
         break;
     case SID_TBFILE:
         if (pick_taskbar_icon()) {
             SW.pend[SID_TBICON].on = false;
-            g_cfg.taskbar_icon = TBI_CUSTOM;
-            config_set("taskbar_icon", k_tbi_names[TBI_CUSTOM]);
+            cfg_set(CF_TASKBAR_ICON, TBI_CUSTOM);
             tb_icon_changed();
         }
         break;
@@ -817,20 +679,15 @@ static void button_action(const SItem *it)
         if (upd_state() == UPD_AVAILABLE || (upd_state() == UPD_ERROR && UPD.url[0])) upd_download();
         else upd_check();
         break;
-    case SID_ARESET: {
-        Config d;
-        config_anim_defaults(&d);
-        for (int i = 0; i < (int)countof(k_anim_fields); i++) {
-            SW.pend[k_anim_fields[i].id].on = false;
-            int v = *(int *)((char *)&d + k_anim_fields[i].off);
-            *(int *)((char *)&g_cfg + k_anim_fields[i].off) = v;
-            save_int(k_anim_fields[i].key, v);
+    case SID_ARESET:
+        for (int id = 0; id < SID__COUNT; id++) {
+            int f = k_sid_cfg[id];
+            if (f < CF_ANIM_FIRST || f > CF_ANIM_LAST) continue;
+            SW.pend[id].on = false;
+            cfg_set(f, k_cfg[f].def);
         }
-        SW.flash_id = it->id;
-        SW.flash_until = time_now() + 1.6;
-        SetTimer(SW.hwnd, SETTINGS_TIMER_FLASH, 1700, NULL);
+        button_flash(it->id);
         break;
-    }
     }
     settings_invalidate();
 }
@@ -845,11 +702,11 @@ static const WCHAR *info_text(int id, bool *good)
 {
     if (id == SID_ADMIN) {
         *good = g_elevated;
-        return g_elevated ? ss((Str){ L"Есть", L"Granted" }) : ss((Str){ L"Нет", L"No" });
+        return g_elevated ? TR("Есть", "Granted") : TR("Нет", "No");
     }
     *good = SW.everything != EVS_NONE;
-    if (SW.everything == EVS_OWN) return ss((Str){ L"Встроенный, запущен", L"Built-in, running" });
-    return SW.everything == EVS_USER ? ss((Str){ L"Запущен", L"Running" }) : ss((Str){ L"Не запущен", L"Not running" });
+    if (SW.everything == EVS_OWN) return TR("Встроенный, запущен", "Built-in, running");
+    return SW.everything == EVS_USER ? TR("Запущен", "Running") : TR("Не запущен", "Not running");
 }
 
 static int hk_tokens(Hotkey h, KeyTok *out)
@@ -932,7 +789,7 @@ static void rec_close(bool save)
     if (save && SW.rec.has && !hotkey_problem(SW.rec.hk)) {
         g_cfg.hk = SW.rec.hk;
         hotkey_format(g_cfg.hk, g_cfg.hotkey, countof(g_cfg.hotkey));
-        save_wstr("hotkey", g_cfg.hotkey);
+        cfg_save(CF_HOTKEY);
         hook_set_hotkey(g_cfg.hk);
     }
     SW.rec.open = false;
@@ -1000,22 +857,14 @@ static void end_edit(bool commit)
     if (SW.editing < 0) return;
     if (commit && wcscmp(SW.edit, g_cfg.everything_filter)) {
         wcopy(g_cfg.everything_filter, countof(g_cfg.everything_filter), SW.edit);
-        save_wstr("everything_filter", SW.edit);
+        cfg_save(CF_EVERYTHING_FILTER);
     }
     SW.editing = -1;
     KillTimer(SW.hwnd, SETTINGS_TIMER_CARET);
     settings_invalidate();
 }
 
-static void edit_insert(const WCHAR *s, int n)
-{
-    for (int i = 0; i < n && SW.edit_len < (int)countof(SW.edit) - 1; i++) {
-        if (s[i] < 0x20 || s[i] == 0x7F) continue;
-        memmove(SW.edit + SW.edit_caret + 1, SW.edit + SW.edit_caret, (size_t)(SW.edit_len - SW.edit_caret + 1) * sizeof(WCHAR));
-        SW.edit[SW.edit_caret++] = s[i];
-        SW.edit_len++;
-    }
-}
+static void edit_splice(int a, int b, const WCHAR *s, int n) { SW.edit_caret = text_splice(SW.edit, &SW.edit_len, countof(SW.edit), a, b, s, n); }
 
 static void edit_key(UINT vk, bool ctrl)
 {
@@ -1033,24 +882,17 @@ static void edit_key(UINT vk, bool ctrl)
                 while (from > 0 && SW.edit[from - 1] == ' ') from--;
                 while (from > 0 && SW.edit[from - 1] != ' ') from--;
             }
-            memmove(SW.edit + from, SW.edit + SW.edit_caret, (size_t)(SW.edit_len - SW.edit_caret + 1) * sizeof(WCHAR));
-            SW.edit_len -= SW.edit_caret - from;
-            SW.edit_caret = from;
+            edit_splice(from, SW.edit_caret, NULL, 0);
         }
         break;
     case VK_DELETE:
-        if (SW.edit_caret < SW.edit_len) {
-            memmove(SW.edit + SW.edit_caret, SW.edit + SW.edit_caret + 1, (size_t)(SW.edit_len - SW.edit_caret) * sizeof(WCHAR));
-            SW.edit_len--;
-        }
+        if (SW.edit_caret < SW.edit_len) edit_splice(SW.edit_caret, SW.edit_caret + 1, NULL, 0);
         break;
     case 'V':
-        if (ctrl && OpenClipboard(SW.hwnd)) {
-            HANDLE h = GetClipboardData(CF_UNICODETEXT);
-            const WCHAR *p = h ? (const WCHAR *)GlobalLock(h) : NULL;
-            if (p) edit_insert(p, wlen(p));
-            if (h) GlobalUnlock(h);
-            CloseClipboard();
+        if (ctrl) {
+            WCHAR tmp[countof(SW.edit)];
+            int n = clipboard_get(tmp, countof(tmp));
+            if (n) edit_splice(SW.edit_caret, SW.edit_caret, tmp, n);
         }
         break;
     }
@@ -1127,8 +969,8 @@ static void control_size(const SItem *it, f32 *w, f32 *h)
     }
     case SK_BUTTON: {
         f32 tw = text_width(FONT_TEXT, fs, ss(it->opt[0]), -1);
-        if (it->id == SID_CLEARHIST) tw = MAX(tw, text_width(FONT_TEXT, fs, ss((Str){ L"Точно очистить?", L"Clear for sure?" }), -1));
-        if (it->id == SID_UPDNOW) tw = MAX(tw, text_width(FONT_TEXT, fs, ss((Str){ L"Обновить до 10.10.10", L"Update to 10.10.10" }), -1));
+        if (it->id == SID_CLEARHIST) tw = MAX(tw, text_width(FONT_TEXT, fs, TR("Точно очистить?", "Clear for sure?"), -1));
+        if (it->id == SID_UPDNOW) tw = MAX(tw, text_width(FONT_TEXT, fs, TR("Обновить до 10.10.10", "Update to 10.10.10"), -1));
         *w = MAX(SSR(130), floorf(tw + SSR(14) + SSR(8) + SSR(32)));
         break;
     }
@@ -1291,15 +1133,13 @@ static SColors scolors(bool dark)
     return c;
 }
 
-static f32 baseline_for(int font, f32 fs, f32 cy) { return floorf(cy + font_cap_height(font, fs) * 0.5f + 0.5f); }
-
 static void draw_app_tile(f32 x, f32 y, f32 sz)
 {
     x = floorf(x);
     y = floorf(y);
     f32 rad = floorf(sz * 0.225f + 0.5f);
     r_rect(x, y, sz, sz, RGBA(APP_LOGO_TILE >> 16, (APP_LOGO_TILE >> 8) & 255, APP_LOGO_TILE & 255, 255), rad);
-    r_rect_ex(x, y, sz, sz, RGBA(255, 255, 255, 26), rad, 1.f, 0);
+    r_border(x, y, sz, sz, RGBA(255, 255, 255, 26), rad);
     f32 u = sz * APP_LOGO_FILL / 152.f, m[4] = { 0.70710678f, 0.70710678f * APP_LOGO_SQUASH, -0.70710678f, 0.70710678f * APP_LOGO_SQUASH };
     for (int i = 0; i < 3; i++) {
         u32 c = k_logo_rgb[i];
@@ -1313,10 +1153,10 @@ static void draw_skeycaps(f32 x, f32 cy, const KeyTok *t, int n, int font, f32 f
     for (int i = 0; i < n; i++) {
         f32 w = keycap_w(&t[i], font, fs, h, pad), y = floorf(cy - h * 0.5f);
         r_rect(x, y, w, h, bg, rad);
-        if (border) r_rect_ex(x, y, w, h, border, rad, 1.f, 0);
+        if (border) r_border(x, y, w, h, border, rad);
         f32 sfs = fs * 0.7f, lw = text_width(font, fs, t[i].label, -1), sw = 0;
         if (t[i].side) sw = text_width(FONT_TEXT, sfs, t[i].side, -1) + fs * 0.35f;
-        f32 tx = floorf(x + (w - lw - sw) * 0.5f + 0.5f), base = baseline_for(font, fs, cy);
+        f32 tx = floorf(x + (w - lw - sw) * 0.5f + 0.5f), base = text_baseline(font, fs, cy);
         if (t[i].side) {
             text_draw(FONT_TEXT, sfs, tx, base, t[i].side, -1, side_fg);
             tx += sw;
@@ -1330,20 +1170,20 @@ static void draw_sidebar(const Theme *t, const SColors *c)
 {
     f32 x = sb_x(), y = sb_x(), w = sb_w(), h = (f32)SW.H - sb_x() * 2;
     r_rect(x, y, w, h, c->panel, SSR(12));
-    r_rect_ex(x, y, w, h, c->panel_border, SSR(12), 1.f, 0);
+    r_border(x, y, w, h, c->panel_border, SSR(12));
 
     f32 tile = SSR(36), tx = x + SSR(16), ty = y + SSR(18);
     draw_app_tile(tx, ty, tile);
     f32 nx = tx + tile + SSR(12);
     text_draw_fit(FONT_TEXT_SEMIBOLD, SSC(15), nx, floorf(ty + SSR(16)), x + w - nx - SSR(10), L"MixLauncher", -1, t->text, false);
-    text_draw_fit(FONT_TEXT, SSC(12.5f), nx, floorf(ty + SSR(33)), x + w - nx - SSR(10), ss((Str){ L"Настройки", L"Settings" }), -1, t->dim, false);
+    text_draw_fit(FONT_TEXT, SSC(12.5f), nx, floorf(ty + SSR(33)), x + w - nx - SSR(10), TR("Настройки", "Settings"), -1, t->dim, false);
 
     {
         f32 r[4];
         nav_rect(SW.page, r);
         f32 py = floorf(SW.nav_y + 0.5f), ph = r[3] - r[1];
         r_rect(r[0], py, r[2] - r[0], ph, c->nav_sel, SSR(8));
-        r_rect_ex(r[0], py, r[2] - r[0], ph, c->nav_sel_border, SSR(8), 1.f, 0);
+        r_border(r[0], py, r[2] - r[0], ph, c->nav_sel_border, SSR(8));
         f32 bh = floorf(MIN(SSR(16) + fabsf(SW.nav_v) * 0.02f, ph - SSR(8)) + 0.5f), bw = SSR(3);
         r_rect(r[0] + SSR(4), floorf(py + (ph - bh) * 0.5f + 0.5f), bw, bh, t->accent, bw * 0.5f);
     }
@@ -1357,7 +1197,7 @@ static void draw_sidebar(const Theme *t, const SColors *c)
         u32 fg = sel ? t->text : color_mix(t->dim, t->text, SW.nav_hov[i]);
         text_draw_icon(k_pages[i].glyph, SSC(15), ix + isz * 0.5f, cy, sel ? t->text : color_mix(t->faint, t->dim, SW.nav_hov[i]));
         f32 fs = SSC(14);
-        text_draw_fit(sel ? FONT_TEXT_SEMIBOLD : FONT_TEXT, fs, ix + isz + SSR(12), baseline_for(FONT_TEXT, fs, cy), r[2] - ix - isz - SSR(18),
+        text_draw_fit(sel ? FONT_TEXT_SEMIBOLD : FONT_TEXT, fs, ix + isz + SSR(12), text_baseline(FONT_TEXT, fs, cy), r[2] - ix - isz - SSR(18),
                       ss(k_pages[i].name), -1, fg, false);
     }
 }
@@ -1412,7 +1252,7 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
         r_rect(r->x + g, y + g, r->w - g * 2, r->h - g * 2, color_alpha(c->nav_hover, SW.row_hov), SSR(7));
     }
     f32 tx = r->x + SSR(18), tmax = r->cx - SSR(28) - tx;
-    text_draw_fit(FONT_TEXT, fs, tx, baseline_for(FONT_TEXT, fs, ty), tmax, ss(it->title), -1, t->text, false);
+    text_draw_fit(FONT_TEXT, fs, tx, text_baseline(FONT_TEXT, fs, ty), tmax, ss(it->title), -1, t->text, false);
     if (r->ndesc) {
         const WCHAR *d = ss(it->desc);
         int n = wlen(d);
@@ -1420,7 +1260,7 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
             int a = r->desc_at[k], b = k + 1 < r->ndesc ? r->desc_at[k + 1] : n;
             while (b > a && d[b - 1] == ' ') b--;
             f32 lc = y + SSR(14) + SSR(20) + SSR(3) + SSR(18) * (f32)k + SSR(9);
-            text_draw_fit(FONT_TEXT, dfs, tx, baseline_for(FONT_TEXT, dfs, lc), tmax, d + a, b - a, t->dim, false);
+            text_draw_fit(FONT_TEXT, dfs, tx, text_baseline(FONT_TEXT, dfs, lc), tmax, d + a, b - a, t->dim, false);
         }
     }
 
@@ -1441,13 +1281,13 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
             f32 fr = p - (f32)k0, px = floorf(xs[k0] + (xs[k1] - xs[k0]) * fr + 0.5f), pw = floorf(ws[k0] + (ws[k1] - ws[k0]) * fr + 0.5f);
             if (!t->dark) r_rect_ex(px, cy + SSR(3), pw, ch - SSR(4), RGBA(0, 0, 0, 22), SSR(6), 0, SSR(2));
             r_rect(px, cy + SSR(2), pw, ch - SSR(4), c->seg, SSR(6));
-            r_rect_ex(px, cy + SSR(2), pw, ch - SSR(4), c->seg_border, SSR(6), 1.f, 0);
+            r_border(px, cy + SSR(2), pw, ch - SSR(4), c->seg_border, SSR(6));
             int hk = chov ? seg_index_at(it, cx, (f32)SW.mx) : -1;
             for (int k = 0; k < n; k++) {
                 const WCHAR *lbl = ss(it->opt[k]);
                 f32 lw = text_width(FONT_TEXT, cfs, lbl, -1);
                 u32 col = k == cur ? t->text : k == hk ? color_mix(t->dim, t->text, 0.6f) : t->dim;
-                text_draw(FONT_TEXT, cfs, floorf(xs[k] + (ws[k] - lw) * 0.5f + 0.5f), baseline_for(FONT_TEXT, cfs, mid), lbl, -1, col);
+                text_draw(FONT_TEXT, cfs, floorf(xs[k] + (ws[k] - lw) * 0.5f + 0.5f), text_baseline(FONT_TEXT, cfs, mid), lbl, -1, col);
             }
             break;
         }
@@ -1455,14 +1295,15 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
         r_rect(cx, cy, cw, ch, chov || open ? c->ctl_hover : c->ctl, SSR(7));
         const WCHAR *lbl = ss(it->opt[sval(it->id)]);
         f32 gx = cx + cw - SSR(14) - SSR(5);
-        text_draw_fit(FONT_TEXT, cfs, cx + SSR(14), baseline_for(FONT_TEXT, cfs, mid), gx - SSR(10) - cx - SSR(14), lbl, -1, t->text, false);
+        text_draw_fit(FONT_TEXT, cfs, cx + SSR(14), text_baseline(FONT_TEXT, cfs, mid), gx - SSR(10) - cx - SSR(14), lbl, -1, t->text, false);
         text_draw_icon(0xE70D, SSC(10), gx, mid, t->dim);
         break;
     }
     case SK_STEPPER: {
-        int v = sval(it->id);
+        int v = sval(it->id), lo, hi;
+        item_range(it, &lo, &hi);
         f32 bw = SSR(34);
-        bool can_dec = v > it->lo, can_inc = v < it->hi;
+        bool can_dec = v > lo, can_inc = v < hi;
         r_rect(cx, cy, cw, ch, c->ctl, SSR(7));
         if (hov && SW.hover.part == PART_MINUS && can_dec) r_rect(cx, cy, bw, ch, c->ctl_hover, SSR(7));
         if (hov && SW.hover.part == PART_PLUS && can_inc) r_rect(cx + cw - bw, cy, bw, ch, c->ctl_hover, SSR(7));
@@ -1474,7 +1315,7 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
         wfmt(num, countof(num), L"%d", v);
         const WCHAR *unit = it->unit.ru ? ss(it->unit) : NULL;
         f32 ufs = SSC(12), nw = text_width(FONT_TEXT, cfs, num, -1), uw = unit ? text_width(FONT_TEXT, ufs, unit, -1) + SSR(4) : 0;
-        f32 nx = floorf(cx + (cw - nw - uw) * 0.5f + 0.5f), base = baseline_for(FONT_TEXT, cfs, mid);
+        f32 nx = floorf(cx + (cw - nw - uw) * 0.5f + 0.5f), base = text_baseline(FONT_TEXT, cfs, mid);
         text_draw(FONT_TEXT, cfs, nx, base, num, -1, t->text);
         if (unit) text_draw(FONT_TEXT, ufs, nx + nw + SSR(4), base, unit, -1, t->dim);
         break;
@@ -1485,12 +1326,12 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
         r_rect_ex(cx, cy, cw, ch, editing ? t->accent : chov ? color_alpha(c->field_border, 1.8f) : c->field_border, SSR(7),
                   editing ? SSR(1.5f) : 1.f, 0);
         const WCHAR *s = editing ? SW.edit : g_cfg.everything_filter;
-        f32 ix = cx + SSR(10), iw = cw - SSR(20), base = baseline_for(FONT_TEXT, cfs, mid);
+        f32 ix = cx + SSR(10), iw = cw - SSR(20), base = text_baseline(FONT_TEXT, cfs, mid);
         f32 clip[4];
         memcpy(clip, R.clip, sizeof clip);
         r_set_clip(MAX(ix - SSR(1), clip[0]), MAX(cy, clip[1]), MIN(ix + iw + SSR(1), clip[2]), MIN(cy + ch, clip[3]));
         if (!s[0] && !editing) {
-            text_draw(FONT_TEXT, cfs, ix, base, ss((Str){ L"Нет", L"None" }), -1, t->faint);
+            text_draw(FONT_TEXT, cfs, ix, base, TR("Нет", "None"), -1, t->faint);
         } else {
             f32 offs[513];
             int n = wlen(s);
@@ -1518,7 +1359,7 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
         bool flashing = SW.flash_id == it->id && time_now() < SW.flash_until;
         u32 bg = armed ? color_alpha(t->danger, 0.2f) : chov ? c->ctl_hover : c->ctl;
         r_rect(cx, cy, cw, ch, bg, SSR(7));
-        const WCHAR *lbl = armed ? ss((Str){ L"Точно очистить?", L"Clear for sure?" }) : flashing ? ss((Str){ L"Готово", L"Done" }) : ss(it->opt[0]);
+        const WCHAR *lbl = armed ? TR("Точно очистить?", "Clear for sure?") : flashing ? TR("Готово", "Done") : ss(it->opt[0]);
         u32 glyph = flashing ? 0xE73E : it->glyph;
         u32 col = armed ? t->danger : flashing ? t->accent : t->text;
         WCHAR ub[64];
@@ -1532,7 +1373,7 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
         f32 lw = text_width(FONT_TEXT, cfs, lbl, -1), gw = glyph ? SSR(14) + SSR(8) : 0;
         f32 bx = floorf(cx + (cw - lw - gw) * 0.5f + 0.5f);
         if (glyph) text_draw_icon(glyph, SSC(13), bx + SSR(7), mid, col);
-        text_draw(FONT_TEXT, cfs, bx + gw, baseline_for(FONT_TEXT, cfs, mid), lbl, -1, col);
+        text_draw(FONT_TEXT, cfs, bx + gw, text_baseline(FONT_TEXT, cfs, mid), lbl, -1, col);
         break;
     }
     case SK_INFO: {
@@ -1540,7 +1381,7 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
         const WCHAR *s = info_text(it->id, &good);
         f32 dot = SSR(8);
         r_rect(cx, floorf(mid - dot * 0.5f), dot, dot, good ? RGBA(48, 176, 99, 255) : t->danger, dot * 0.5f);
-        text_draw(FONT_TEXT, cfs, cx + dot + SSR(8), baseline_for(FONT_TEXT, cfs, mid), s, -1, t->text);
+        text_draw(FONT_TEXT, cfs, cx + dot + SSR(8), text_baseline(FONT_TEXT, cfs, mid), s, -1, t->text);
         break;
     }
     }
@@ -1549,30 +1390,26 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
 
 static void draw_tip(const Theme *t, const SColors *c)
 {
-    const WCHAR *s = ss((Str){ L"Изменение недоступно при включённом уменьшении движения", L"Can't be changed while reduced motion is on" });
+    const WCHAR *s = TR("Изменение недоступно при включённом уменьшении движения", "Can't be changed while reduced motion is on");
     f32 fs = SSC(12.5f), pad = SSR(10), h = SSR(30), w = floorf(text_width(FONT_TEXT, fs, s, -1) + pad * 2);
     f32 x = floorf(MAX(SSR(8), MIN((f32)SW.tip_x, (f32)SW.W - w - SSR(8)))), y = (f32)SW.tip_y + SSR(22);
     if (y + h > (f32)SW.H - SSR(8)) y = (f32)SW.tip_y - h - SSR(8);
-    r_rect_ex(x, y + SSR(3), w, h, c->shadow, SSR(7), 0, SSR(8));
-    r_rect(x, y, w, h, c->pop, SSR(7));
-    r_rect_ex(x, y, w, h, c->pop_border, SSR(7), 1.f, 0);
-    text_draw(FONT_TEXT, fs, x + pad, baseline_for(FONT_TEXT, fs, y + h * 0.5f), s, -1, t->text);
+    r_panel(x, y, w, h, SSR(7), c->pop, c->pop_border, c->shadow, SSR(3), SSR(8));
+    text_draw(FONT_TEXT, fs, x + pad, text_baseline(FONT_TEXT, fs, y + h * 0.5f), s, -1, t->text);
 }
 
 static void draw_popover(const Theme *t, const SColors *c)
 {
     const SItem *it = &k_sitems[SW.rows[SW.pop_row].item];
     f32 x = SW.pop_x, y = SW.pop_y - floorf((1.f - ease_out_cubic(SW.pop_t)) * SSR(6) + 0.5f), w = SW.pop_w, h = SW.pop_h;
-    r_rect_ex(x, y + SSR(6), w, h, c->shadow, SSR(10), 0, SSR(14));
-    r_rect(x, y, w, h, c->pop, SSR(10));
-    r_rect_ex(x, y, w, h, c->pop_border, SSR(10), 1.f, 0);
+    r_panel(x, y, w, h, SSR(10), c->pop, c->pop_border, c->shadow, SSR(6), SSR(14));
     int sel = sval(it->id);
     f32 fs = SSC(13.5f);
     for (int k = 0; k < choice_count(it); k++) {
         f32 iy = y + SSR(5) + SSR(32) * (f32)k, cy = iy + SSR(16);
         if (SW.pop_hover == k) r_rect(x + SSR(5), iy, w - SSR(10), SSR(32), c->pop_hover, SSR(6));
         if (k == sel) text_draw_icon(0xE73E, SSC(12), x + SSR(5) + SSR(16), cy, t->text);
-        text_draw(FONT_TEXT, fs, x + SSR(5) + SSR(32), baseline_for(FONT_TEXT, fs, cy), ss(it->opt[k]), -1, t->text);
+        text_draw(FONT_TEXT, fs, x + SSR(5) + SSR(32), text_baseline(FONT_TEXT, fs, cy), ss(it->opt[k]), -1, t->text);
     }
 }
 
@@ -1581,15 +1418,10 @@ static void draw_recorder(const Theme *t, const SColors *c)
     r_rect(0, 0, (f32)SW.W, (f32)SW.H, c->overlay, 0);
     f32 pw = SSR(460), ph = SSR(260);
     f32 px = floorf(((f32)SW.W - pw) * 0.5f), py = floorf(((f32)SW.H - ph) * 0.5f + (1.f - ease_out_cubic(SW.rec_t)) * SSR(12));
-    SW.rec_panel[0] = px;
-    SW.rec_panel[1] = py;
-    SW.rec_panel[2] = px + pw;
-    SW.rec_panel[3] = py + ph;
-    r_rect_ex(px, py + SSR(12), pw, ph, c->shadow, SSR(16), 0, SSR(26));
-    r_rect(px, py, pw, ph, t->dark ? RGBA(36, 36, 39, 255) : RGBA(252, 252, 253, 255), SSR(16));
-    r_rect_ex(px, py, pw, ph, c->pop_border, SSR(16), 1.f, 0);
+    box_set(SW.rec_panel, px, py, pw, ph);
+    r_panel(px, py, pw, ph, SSR(16), t->dark ? RGBA(36, 36, 39, 255) : RGBA(252, 252, 253, 255), c->pop_border, c->shadow, SSR(12), SSR(26));
 
-    text_draw(FONT_TEXT, SSC(16), px + SSR(26), py + SSR(42), ss((Str){ L"Задайте сочетание…", L"Set Hotkey…" }), -1, t->faint);
+    text_draw(FONT_TEXT, SSC(16), px + SSR(26), py + SSR(42), TR("Задайте сочетание…", "Set Hotkey…"), -1, t->faint);
 
     KeyTok tk[5];
     int n = 0;
@@ -1608,9 +1440,9 @@ static void draw_recorder(const Theme *t, const SColors *c)
         draw_skeycaps(floorf(px + (pw - kw) * 0.5f), kcy, tk, n, FONT_TEXT_SEMIBOLD, kfs, kh, kpad, kgap, SSR(12),
                      t->dark ? RGBA(255, 255, 255, 24) : RGBA(0, 0, 0, 9), c->cap_border, fg, t->faint);
     } else {
-        const WCHAR *s = ss((Str){ L"Нажмите клавишу или сочетание", L"Press a key or a shortcut" });
+        const WCHAR *s = TR("Нажмите клавишу или сочетание", "Press a key or a shortcut");
         f32 fs = SSC(15), w = text_width(FONT_TEXT, fs, s, -1);
-        text_draw(FONT_TEXT, fs, floorf(px + (pw - w) * 0.5f), baseline_for(FONT_TEXT, fs, kcy), s, -1, t->faint);
+        text_draw(FONT_TEXT, fs, floorf(px + (pw - w) * 0.5f), text_baseline(FONT_TEXT, fs, kcy), s, -1, t->faint);
     }
     const WCHAR *msg = NULL;
     u32 msg_col = t->faint;
@@ -1618,25 +1450,25 @@ static void draw_recorder(const Theme *t, const SColors *c)
         msg = ss(*problem);
         msg_col = t->danger;
     } else if (!n || live) {
-        msg = ss((Str){ L"Одна клавиша (Win, F1-F24, правый Ctrl…) или сочетание с Ctrl, Alt, Shift, Win",
-                        L"A single key (Win, F1-F24, right Ctrl…) or a shortcut with Ctrl, Alt, Shift, Win" });
+        msg = TR("Одна клавиша (Win, F1-F24, правый Ctrl…) или сочетание с Ctrl, Alt, Shift, Win",
+                 "A single key (Win, F1-F24, right Ctrl…) or a shortcut with Ctrl, Alt, Shift, Win");
     }
     if (msg) {
         f32 fs = SSC(12.5f), w = MIN(text_width(FONT_TEXT, fs, msg, -1), pw - SSR(40));
-        text_draw_fit(FONT_TEXT, fs, floorf(px + (pw - w) * 0.5f), baseline_for(FONT_TEXT, fs, py + SSR(180)), pw - SSR(40), msg, -1, msg_col, false);
+        text_draw_fit(FONT_TEXT, fs, floorf(px + (pw - w) * 0.5f), text_baseline(FONT_TEXT, fs, py + SSR(180)), pw - SSR(40), msg, -1, msg_col, false);
     }
 
     f32 by = py + ph - SSR(56), bcy = by + SSR(28);
     r_rect(px, by, pw, 1, c->sep, 0);
     draw_app_tile(px + SSR(22), bcy - SSR(11), SSR(22));
     f32 fs = SSC(14);
-    text_draw(FONT_TEXT, fs, px + SSR(22) + SSR(22) + SSR(10), baseline_for(FONT_TEXT, fs, bcy), ss((Str){ L"Открыть MixLauncher", L"Open MixLauncher" }), -1,
+    text_draw(FONT_TEXT, fs, px + SSR(22) + SSR(22) + SSR(10), text_baseline(FONT_TEXT, fs, bcy), TR("Открыть MixLauncher", "Open MixLauncher"), -1,
               t->text);
 
     bool can_save = SW.rec.has && !problem;
     f32 xr = px + pw - SSR(14);
     for (int b = 1; b >= 0; b--) {
-        const WCHAR *lbl = b ? ss((Str){ L"Сохранить", L"Save" }) : ss((Str){ L"Отмена", L"Cancel" });
+        const WCHAR *lbl = b ? TR("Сохранить", "Save") : TR("Отмена", "Cancel");
         KeyTok cap;
         wcopy(cap.label, countof(cap.label), b ? L"Enter" : L"Esc");
         cap.side = NULL;
@@ -1644,17 +1476,13 @@ static void draw_recorder(const Theme *t, const SColors *c)
         f32 lw = text_width(FONT_TEXT, fs, lbl, -1);
         f32 bw = SSR(10) + lw + SSR(8) + cw + SSR(6), bh = SSR(34);
         f32 bx = xr - bw, byy = floorf(bcy - bh * 0.5f);
-        f32 *rb = SW.rec_btn[b];
-        rb[0] = bx;
-        rb[1] = byy;
-        rb[2] = bx + bw;
-        rb[3] = byy + bh;
+        box_set(SW.rec_btn[b], bx, byy, bw, bh);
         bool hov = SW.hover.type == (b ? HT_RECSAVE : HT_RECCANCEL);
         bool enabled = !b || can_save;
         if (b && can_save) r_rect(bx, byy, bw, bh, color_alpha(t->accent, hov ? 0.32f : 0.22f), SSR(8));
         else if (hov && enabled) r_rect(bx, byy, bw, bh, c->ctl, SSR(8));
         u32 col = !enabled ? t->faint : t->text;
-        text_draw(FONT_TEXT, fs, bx + SSR(10), baseline_for(FONT_TEXT, fs, bcy), lbl, -1, col);
+        text_draw(FONT_TEXT, fs, bx + SSR(10), text_baseline(FONT_TEXT, fs, bcy), lbl, -1, col);
         draw_skeycaps(bx + SSR(10) + lw + SSR(8), bcy, &cap, 1, FONT_TEXT, cfs, ch, SSR(6), 0, SSR(5), 0, c->cap_border, !enabled ? t->faint : t->dim,
                      t->faint);
         xr = bx - SSR(6);

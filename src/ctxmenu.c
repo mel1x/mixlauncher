@@ -41,16 +41,17 @@ static const WCHAR *row_tag_key(Row *r, u8 *type)
 {
     if (!r) return NULL;
     if (r->kind == ROW_FILE) {
-        *type = (r->file->flags & FI_FOLDER) ? 'd' : 'f';
+        *type = file_item_type(r->file);
         return r->file->full;
     }
     if (r->kind == ROW_APP) {
-        *type = r->app->kind == APP_CMD ? 'c' : 'a';
+        *type = app_item_type(r->app);
         return r->app->id;
     }
     return NULL;
 }
 
+// Tags changed: rows may point into what was freed, so everything is searched and laid out again at once.
 static void tags_changed(void)
 {
     search_apps();
@@ -62,6 +63,7 @@ static void tags_changed(void)
 
 static void cm_show(int x, int y, bool keyboard);
 
+// The menu for the selected row, at x, y (keyboard: its first item already hovered).
 static void ui_context_menu(int x, int y, bool keyboard)
 {
     Row *r = sel_row();
@@ -95,7 +97,7 @@ static void ui_context_menu(int x, int y, bool keyboard)
     const WCHAR *tkey = row_tag_key(r, &ttype);
     if (tkey) {
         cm_add(CM_TAG_ADD, 0xE8EC, TR("Добавить тег", "Add tag"), L"", true);
-        TagItem *ti = tags_find(ttype, tkey);
+        TagItem *ti = tags_find(ttype, tkey, 0);
         if (ti && ti->ntags) {
             cm_add(CM_TAG_CLEAR, 0xE74D, TR("Удалить все теги", "Remove all tags"), L"", false);
             tags_count_label(U.cm.tag_count, countof(U.cm.tag_count), ti->ntags);
@@ -245,14 +247,13 @@ static bool cm_animate(f32 dt)
 static void cm_draw(void)
 {
     if (!U.cm.open) return;
-    Theme *t = &U.th;
+    Theme *t = &TH;
     f32 e = U.cm.closing ? U.cm.t : ease_out_cubic(U.cm.t);
     f32 x = U.cm.x, y = U.cm.y - floorf((1.f - e) * SR(6) + 0.5f), w = U.cm.w, h = U.cm.h, rad = SR(10);
     R.opacity = e;
-    r_set_clip(0, 0, (f32)U.W, (f32)U.H);
-    r_rect_ex(x, y + SR(8), w, h, t->dark ? RGBA(0, 0, 0, 110) : RGBA(0, 0, 0, 40), rad, 0, SR(18));
-    r_rect(x, y, w, h, t->dark ? RGBA(40, 40, 43, 252) : RGBA(252, 252, 253, 252), rad);
-    r_rect_ex(x, y, w, h, t->dark ? RGBA(255, 255, 255, 20) : RGBA(0, 0, 0, 22), rad, 1.f, 0);
+    r_clip_all();
+    r_panel(x, y, w, h, rad, t->dark ? RGBA(40, 40, 43, 252) : RGBA(252, 252, 253, 252), t->dark ? RGBA(255, 255, 255, 20) : RGBA(0, 0, 0, 22),
+            t->dark ? RGBA(0, 0, 0, 110) : RGBA(0, 0, 0, 40), SR(8), SR(18));
     f32 ix = x + SR(CM_PAD), iw = w - SR(CM_PAD) * 2;
     if (U.cm.hover >= 0 && U.cm.hl_init) {
         f32 hy = floorf(y + U.cm.hl_y + 0.5f);
@@ -265,14 +266,14 @@ static void cm_draw(void)
         bool hot = i == U.cm.hover, off = U.cm.it[i].disabled;
         if (U.cm.it[i].glyph) text_draw_icon(U.cm.it[i].glyph, S(14), ix + SR(12) + SR(8), cy, hot ? t->text : t->dim);
         f32 lx = ix + SR(12) + SR(16) + SR(12);
-        text_draw(FONT_TEXT, fs, lx, floorf(cy + font_cap_height(FONT_TEXT, fs) * 0.5f + 0.5f), U.cm.it[i].label, -1, off ? t->faint : t->text);
+        text_draw(FONT_TEXT, fs, lx, text_baseline(FONT_TEXT, fs, cy), U.cm.it[i].label, -1, off ? t->faint : t->text);
         f32 kw = text_width(FONT_TEXT, kfs, U.cm.it[i].keys, -1);
-        text_draw(FONT_TEXT, kfs, floorf(ix + iw - SR(12) - kw), floorf(cy + font_cap_height(FONT_TEXT, kfs) * 0.5f + 0.5f), U.cm.it[i].keys, -1,
-                  t->faint);
+        text_draw(FONT_TEXT, kfs, floorf(ix + iw - SR(12) - kw), text_baseline(FONT_TEXT, kfs, cy), U.cm.it[i].keys, -1, t->faint);
     }
     R.opacity = 1.f;
 }
 
+// Keys while the menu is open; any other key closes it and goes on to the launcher.
 static bool cm_key(WPARAM vk)
 {
     if (!U.cm.open || U.cm.closing) return false;

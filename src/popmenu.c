@@ -73,6 +73,35 @@ static void pm_activate(int i)
 
 static bool pm_needs_render(void) { return PM.hwnd && (PM.dirty || PM.animating) && PM.target.ok; }
 
+static f32 pm_t;  // the frame's opening progress, eased
+
+static void pm_draw(void)
+{
+    f32 e = pm_t, s = PM.s;
+    Theme *th = &TH;
+    u32 text = th->dark ? RGBA(255, 255, 255, 255) : RGBA(0, 0, 0, 228);
+    u32 hover = th->dark ? RGBA(255, 255, 255, 21) : RGBA(0, 0, 0, 15);
+    u32 divider = th->dark ? RGBA(255, 255, 255, 31) : RGBA(0, 0, 0, 31);
+    if (!PM.backdrop) r_rect(0, 0, (f32)PM.W, (f32)PM.H, th->bg_solid, 0);
+    R.opacity = e;
+    f32 oy = -(1.f - e) * 10.f * s, fs = 14.f * s;
+    for (int i = 0; i < PM.n; i++) {
+        const PmItem *it = &PM.items[i];
+        f32 y = floorf(pm_item_y(i) * s + oy + 0.5f);
+        if (!it->id) {
+            r_rect(0, floorf(y + PM_SEP_H * 0.5f * s), (f32)PM.W, 1, divider, 0);
+            continue;
+        }
+        f32 rx = floorf(4.f * s + 0.5f), ry = y + floorf(2.f * s + 0.5f), rw = (f32)PM.W - 2.f * rx, rh = floorf((PM_ITEM_H - 4.f) * s + 0.5f);
+        f32 cy = ry + rh * 0.5f;
+        if (i == PM.hover) r_rect(rx, ry, rw, rh, hover, floorf(4.f * s + 0.5f));
+        if (it->glyph) text_draw_icon(it->glyph, 16.f * s, rx + 18.f * s, cy, text);
+        f32 lx = rx + floorf(40.f * s + 0.5f);
+        text_draw_fit(FONT_TEXT, fs, lx, text_baseline(FONT_TEXT, fs, cy), (f32)PM.W - lx - 12.f * s, it->label, -1, text, false);
+    }
+    R.opacity = 1.f;
+}
+
 static void pm_render(void)
 {
     if (!PM.hwnd || !PM.target.ok || !R.ok) return;
@@ -81,37 +110,9 @@ static void pm_render(void)
     f32 dur = anims_enabled() ? 0.22f : 0.f;
     f32 t = dur > 0 ? CLAMP((f32)(time_now() - PM.t0) / dur, 0.f, 1.f) : 1.f;
     PM.animating = t < 1.f;
-    f32 e = ease_out_cubic(t), s = PM.s;
-    Theme *th = &U.th;
-    u32 text = th->dark ? RGBA(255, 255, 255, 255) : RGBA(0, 0, 0, 228);
-    u32 hover = th->dark ? RGBA(255, 255, 255, 21) : RGBA(0, 0, 0, 15);
-    u32 divider = th->dark ? RGBA(255, 255, 255, 31) : RGBA(0, 0, 0, 31);
-    for (int pass = 0; pass < 2; pass++) {
-        R.scale = 1.f;
-        r_begin();
-        if (!PM.backdrop) r_rect(0, 0, (f32)PM.W, (f32)PM.H, th->bg_solid, 0);
-        R.opacity = e;
-        f32 oy = -(1.f - e) * 10.f * s, fs = 14.f * s;
-        for (int i = 0; i < PM.n; i++) {
-            const PmItem *it = &PM.items[i];
-            f32 y = floorf(pm_item_y(i) * s + oy + 0.5f);
-            if (!it->id) {
-                r_rect(0, floorf(y + PM_SEP_H * 0.5f * s), (f32)PM.W, 1, divider, 0);
-                continue;
-            }
-            f32 rx = floorf(4.f * s + 0.5f), ry = y + floorf(2.f * s + 0.5f), rw = (f32)PM.W - 2.f * rx, rh = floorf((PM_ITEM_H - 4.f) * s + 0.5f);
-            f32 cy = ry + rh * 0.5f;
-            if (i == PM.hover) r_rect(rx, ry, rw, rh, hover, floorf(4.f * s + 0.5f));
-            if (it->glyph) text_draw_icon(it->glyph, 16.f * s, rx + 18.f * s, cy, text);
-            f32 lx = rx + floorf(40.f * s + 0.5f);
-            text_draw_fit(FONT_TEXT, fs, lx, floorf(cy + font_cap_height(FONT_TEXT, fs) * 0.5f + 0.5f), (f32)PM.W - lx - 12.f * s, it->label, -1, text,
-                          false);
-        }
-        R.opacity = 1.f;
-        if (!F.overflow) break;
-        font_reset_atlas();
-        F.overflow = false;
-    }
+    pm_t = ease_out_cubic(t);
+    R.scale = 1.f;
+    r_draw(pm_draw);
     r_end_and_present();
     r_use(&R.main);
     PM.dirty = false;
@@ -143,8 +144,7 @@ static LRESULT CALLBACK pm_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             PM.hover = i;
             PM.dirty = true;
         }
-        TRACKMOUSEEVENT tme = { sizeof tme, TME_LEAVE, h, 0 };
-        TrackMouseEvent(&tme);
+        track_mouse_leave(h);
         return 0;
     }
     case WM_MOUSELEAVE:
@@ -199,10 +199,7 @@ static void pm_open(const PmItem *items, int n, POINT at, void (*pick)(int id))
     PM.pick = pick;
 
     HMONITOR mon = MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO mi;
-    mi.cbSize = sizeof mi;
-    GetMonitorInfoW(mon, &mi);
-    RECT wa = mi.rcWork;
+    RECT wa = monitor_work(mon);
     PM.s = (f32)monitor_dpi(mon) / 96.f * PM_SCALE;
     f32 tw = 0;
     for (int i = 0; i < PM.n; i++)
@@ -220,7 +217,7 @@ static void pm_open(const PmItem *items, int n, POINT at, void (*pick)(int id))
     PM.hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOREDIRECTIONBITMAP, PM_CLASS, L"MixLauncher", WS_POPUP, x, y, PM.W, PM.H,
                               NULL, NULL, GetModuleHandleW(NULL), NULL);
     if (!PM.hwnd) return;
-    dwm_set(PM.hwnd, DWA_DARK, U.th.dark);
+    dwm_set(PM.hwnd, DWA_DARK, TH.dark);
     dwm_set(PM.hwnd, DWA_CORNER, DWC_ROUND);
     dwm_set(PM.hwnd, DWA_BORDER_COLOR, DW_COLOR_NONE);
     PM.backdrop = dwm_backdrop(PM.hwnd, DWB_ACRYLIC);

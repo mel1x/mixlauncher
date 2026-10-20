@@ -1,16 +1,14 @@
-enum { BACKDROP_SOLID, BACKDROP_ACRYLIC, BACKDROP_BLUR };
+// config.ini: one table (k_cfg) gives every setting its key, type, default, range and comment.
 
-// STYLE_START and STYLE_WIN10 lay the launcher out like the Windows 11 and Windows 10 Start menus;
-// STYLE_FLUENT is the list with an accent bar.
+enum { BACKDROP_BLUR, BACKDROP_ACRYLIC, BACKDROP_SOLID };
+
+// STYLE_START and STYLE_WIN10 lay the launcher out like the Windows 11 and Windows 10 Start menus.
 enum { STYLE_STANDARD, STYLE_RAYCAST, STYLE_FLUENT, STYLE_COMPACT, STYLE_START, STYLE_WIN10, STYLE__COUNT };
-static const char *const k_style_names[STYLE__COUNT] = { "standard", "raycast", "fluent", "compact", "windows", "windows10" };
 #define STYLES_START_MENU ((1 << STYLE_START) | (1 << STYLE_WIN10))  // always at the taskbar
 
 enum { POS_CENTER, POS_BOTTOM_LEFT, POS_BOTTOM_CENTER, POS__COUNT };
-static const char *const k_pos_names[POS__COUNT] = { "center", "bottom-left", "bottom-center" };
 
 enum { TBI_DIAMOND, TBI_GRID, TBI_PETALS, TBI_LAYERS, TBI_DOTS, TBI_CUSTOM, TBI__COUNT };
-static const char *const k_tbi_names[TBI__COUNT] = { "diamond", "grid", "petals", "layers", "dots", "custom" };
 
 enum { HK_CTRL = 1, HK_ALT = 2, HK_SHIFT = 4, HK_WIN = 8 };
 #define VK_ANYWIN 0x07  // unassigned VK code, used for "either Win key"
@@ -19,34 +17,34 @@ typedef struct Hotkey { u8 mods, vk; } Hotkey;
 
 typedef struct Config {
     WCHAR hotkey[64];
-    Hotkey hk;
-    int   language;
-    int   theme;
+    Hotkey hk;  // parsed from hotkey
+    int   language;  // 0 auto, 1 ru, 2 en
+    int   theme;     // 0 auto, 1 dark, 2 light
     int   backdrop;
     int   style;
     int   position;
-    int   start10_width, start10_height;  // the Windows 10 style's size (logical px)
     bool  match_highlight;
     int   width;
     int   rows;
+    int   start10_width, start10_height;  // the Windows 10 style's size (logical px)
     int   max_apps;
     int   file_min_chars;
     WCHAR everything_filter[512];
     bool  hide_uninstallers;
     int   keep_query_seconds;
     bool  update_check;
-    bool  animations;
-    bool  reduced_motion;
     bool  taskbar_button;
     bool  taskbar_replace_icon;
     int   taskbar_icon;
     WCHAR taskbar_icon_path[MAX_PATH];
     bool  taskbar_search;
     bool  media_widget;
-    int   media_position;
+    int   media_position;  // 0 left, 1 right
     bool  media_controls;
     bool  media_hide_paused;
     bool  media_marquee;
+    bool  reduced_motion;
+    bool  animations;
     int   anim_speed;
     int   anim_open_ms, anim_close_ms;
     int   anim_open_scale;
@@ -60,6 +58,199 @@ typedef struct Config {
 
 static Config g_cfg;
 
+// Fields in config.ini order.
+enum {
+    CF_NONE,
+    CF_HOTKEY, CF_LANGUAGE, CF_THEME, CF_BACKDROP, CF_STYLE, CF_POSITION, CF_MATCH_HIGHLIGHT, CF_WIDTH, CF_ROWS,
+    CF_START10_WIDTH, CF_START10_HEIGHT, CF_MAX_APPS, CF_FILE_MIN_CHARS, CF_EVERYTHING_FILTER, CF_HIDE_UNINSTALLERS,
+    CF_KEEP_QUERY, CF_UPDATE_CHECK, CF_TASKBAR_BUTTON, CF_TASKBAR_REPLACE_ICON, CF_TASKBAR_ICON, CF_TASKBAR_ICON_PATH,
+    CF_TASKBAR_SEARCH, CF_MEDIA_WIDGET, CF_MEDIA_POSITION, CF_MEDIA_CONTROLS, CF_MEDIA_HIDE_PAUSED, CF_MEDIA_MARQUEE,
+    CF_REDUCED_MOTION, CF_ANIMATIONS,
+    CF_ANIM_SPEED, CF_ANIM_OPEN_MS, CF_ANIM_CLOSE_MS, CF_ANIM_OPEN_SCALE, CF_ANIM_CASCADE, CF_ANIM_ROW_MS, CF_ANIM_STAGGER_MS,
+    CF_ANIM_SELECT_MS, CF_ANIM_SCROLL_MS, CF_ANIM_MENU_MS, CF_ANIM_PAGE_MS,
+    CF__COUNT
+};
+#define CF_ANIM_FIRST CF_ANIM_SPEED
+#define CF_ANIM_LAST CF_ANIM_PAGE_MS
+
+enum { CK_BOOL, CK_INT, CK_ENUM, CK_TEXT };
+
+typedef struct CfgField {
+    const char *key;
+    int kind;
+    int off;                   // in Config
+    int def, lo, hi;           // CK_INT: the range; CK_ENUM: hi names; CK_TEXT: hi WCHARs of room
+    const char *const *names;  // CK_ENUM
+    const WCHAR *text;         // CK_TEXT: the default
+    const char *ru, *en;       // the comment above the key in config.ini, lines split by \n
+    bool gap;                  // a blank line before it
+} CfgField;
+
+static const char *const k_lang_names[] = { "auto", "ru", "en" };
+static const char *const k_theme_names[] = { "auto", "dark", "light" };
+static const char *const k_backdrop_names[] = { "blur", "acrylic", "solid" };
+static const char *const k_style_names[STYLE__COUNT] = { "standard", "raycast", "fluent", "compact", "windows", "windows10" };
+static const char *const k_pos_names[POS__COUNT] = { "center", "bottom-left", "bottom-center" };
+static const char *const k_tbi_names[TBI__COUNT] = { "diamond", "grid", "petals", "layers", "dots", "custom" };
+static const char *const k_side_names[] = { "left", "right" };
+
+#define CFG_B(id, field, d, ...) [id] = { #field, CK_BOOL, offsetof(Config, field), d, 0, 1, __VA_ARGS__ }
+#define CFG_I(id, field, d, lo, hi, ...) [id] = { #field, CK_INT, offsetof(Config, field), d, lo, hi, __VA_ARGS__ }
+#define CFG_E(id, field, d, names, ...) [id] = { #field, CK_ENUM, offsetof(Config, field), d, 0, countof(names), names, __VA_ARGS__ }
+#define CFG_T(id, field, d, ...) [id] = { #field, CK_TEXT, offsetof(Config, field), 0, 0, countof(((Config *)0)->field), NULL, d, __VA_ARGS__ }
+
+static const CfgField k_cfg[CF__COUNT] = {
+    CFG_T(CF_HOTKEY, hotkey, L"win", .gap = 1,
+          .ru = "Клавиша или сочетание, которое открывает и закрывает лаунчер. Прежнее действие сочетания\n"
+                "отключается (Win больше не открывает «Пуск», Win+D не сворачивает окна).\n"
+                "Примеры: win, alt+space, ctrl+space, win+d, f13, rctrl (одиночное нажатие правого Ctrl)",
+          .en = "The key or shortcut that opens and closes the launcher. Whatever it did before is turned off\n"
+                "(Win no longer opens Start, Win+D no longer shows the desktop).\n"
+                "Examples: win, alt+space, ctrl+space, win+d, f13, rctrl (a tap of the right Ctrl key)"),
+    CFG_E(CF_LANGUAGE, language, 0, k_lang_names, .gap = 1,
+          .ru = "Язык: auto (как в Windows) | ru | en", .en = "Language: auto (follows Windows) | ru | en"),
+    CFG_E(CF_THEME, theme, 0, k_theme_names, .gap = 1, .ru = "Тема: auto | dark | light", .en = "Theme: auto | dark | light"),
+    CFG_E(CF_BACKDROP, backdrop, BACKDROP_BLUR, k_backdrop_names, .gap = 1,
+          .ru = "Фон окна: blur (полупрозрачное стекло, как в macOS) | acrylic (системный акрил Windows 11) | solid",
+          .en = "Window background: blur (translucent glass, macOS-like) | acrylic (Windows 11 system acrylic) | solid"),
+    CFG_E(CF_STYLE, style, STYLE_STANDARD, k_style_names, .gap = 1,
+          .ru = "Стиль лаунчера: standard | raycast | fluent | compact | windows | windows10 (как меню Пуск Windows 11 и 10)",
+          .en = "Launcher style: standard | raycast | fluent | compact | windows | windows10 (like the Windows 11 and 10 Start menus)"),
+    CFG_E(CF_POSITION, position, POS_CENTER, k_pos_names,
+          .ru = "Положение: center (по центру экрана) | bottom-left (слева снизу, как Пуск) | bottom-center (снизу по центру).\n"
+                "Стили windows и windows10 всегда снизу.",
+          .en = "Position: center (screen center) | bottom-left (like Start on the left) | bottom-center (like Start in the center).\n"
+                "The windows and windows10 styles are always at the bottom."),
+    CFG_B(CF_MATCH_HIGHLIGHT, match_highlight, 1,
+          .ru = "Подсвечивать совпадения с запросом в названиях (1/0)", .en = "Highlight the query matches in names (1/0)"),
+    CFG_I(CF_WIDTH, width, 720, 480, 1600, .gap = 1,
+          .ru = "Ширина окна в логических пикселях и количество видимых строк списка",
+          .en = "Window width in logical pixels and number of visible list rows"),
+    CFG_I(CF_ROWS, rows, 9, 4, 20),
+    CFG_I(CF_START10_WIDTH, start10_width, 648, 300, 4000,
+          .ru = "Размер стиля windows10 (меняется и перетаскиванием края окна)",
+          .en = "Size of the windows10 style (also set by dragging the window edge)"),
+    CFG_I(CF_START10_HEIGHT, start10_height, 608, 420, 2000),
+    CFG_I(CF_MAX_APPS, max_apps, 8, 1, 50, .gap = 1,
+          .ru = "Сколько приложений показывать при поиске (файлы из Everything подгружаются при прокрутке)",
+          .en = "How many apps to show while searching (files from Everything load as you scroll)"),
+    CFG_I(CF_FILE_MIN_CHARS, file_min_chars, 2, 1, 10, .gap = 1,
+          .ru = "Минимальная длина запроса для поиска файлов", .en = "Minimum query length for file search"),
+    CFG_T(CF_EVERYTHING_FILTER, everything_filter, L"", .gap = 1,
+          .ru = "Фильтр Everything, добавляется к каждому запросу файлов. Пример: !C:\\Windows\\ !\\AppData\\",
+          .en = "Everything filter appended to every file query. Example: !C:\\Windows\\ !\\AppData\\"),
+    CFG_B(CF_HIDE_UNINSTALLERS, hide_uninstallers, 1, .gap = 1,
+          .ru = "Скрывать деинсталляторы из списка приложений (1/0)", .en = "Hide uninstallers from the app list (1/0)"),
+    CFG_I(CF_KEEP_QUERY, keep_query_seconds, 60, 0, 24 * 3600, .gap = 1,
+          .ru = "Через сколько секунд после закрытия окна сбрасывать введённый запрос",
+          .en = "Seconds after closing before the typed query is cleared"),
+    CFG_B(CF_UPDATE_CHECK, update_check, 1, .gap = 1,
+          .ru = "Проверять обновления на GitHub раз в несколько часов (1/0)", .en = "Check GitHub for updates every few hours (1/0)"),
+    CFG_B(CF_TASKBAR_BUTTON, taskbar_button, 1, .gap = 1,
+          .ru = "Кнопка Пуск на панели задач Windows 11 открывает лаунчер (1/0)",
+          .en = "The Windows 11 taskbar Start button opens the launcher (1/0)"),
+    CFG_B(CF_TASKBAR_REPLACE_ICON, taskbar_replace_icon, 1,
+          .ru = "Рисовать на ней наш значок вместо значка Windows (1/0)", .en = "Draw our icon on it instead of the Windows logo (1/0)"),
+    CFG_E(CF_TASKBAR_ICON, taskbar_icon, TBI_DIAMOND, k_tbi_names,
+          .ru = "Её значок: diamond (ромб) | grid (сетка) | petals (лепестки) | layers (слои) | dots (точки) | "
+                "custom (свой файл PNG/ICO/JPG из taskbar_icon_path)",
+          .en = "Its icon: diamond | grid | petals | layers | dots | custom (a PNG/ICO/JPG file from taskbar_icon_path)"),
+    CFG_T(CF_TASKBAR_ICON_PATH, taskbar_icon_path, L""),
+    CFG_B(CF_TASKBAR_SEARCH, taskbar_search, 0,
+          .ru = "Клик по поиску на панели задач Windows 10/11 открывает лаунчер (1/0)",
+          .en = "Clicking the search on the Windows 10/11 taskbar opens the launcher (1/0)"),
+    CFG_B(CF_MEDIA_WIDGET, media_widget, 1, .gap = 1,
+          .ru = "«Сейчас играет» на панели задач: обложка, название и кнопки управления музыкой и видео (1/0)",
+          .en = "Now playing on the taskbar: cover, title and playback buttons for music and video (1/0)"),
+    CFG_E(CF_MEDIA_POSITION, media_position, 0, k_side_names,
+          .ru = "Где: left (слева) | right (справа, у значков в трее). При значках, выровненных по левому краю, всегда справа",
+          .en = "Where: left | right (next to the tray icons). Always right when taskbar icons are aligned left"),
+    CFG_B(CF_MEDIA_CONTROLS, media_controls, 1,
+          .ru = "Кнопки «назад», «пауза», «вперёд» (1/0) и скрывать виджет, пока ничего не играет (1/0)",
+          .en = "Previous / pause / next buttons (1/0) and hiding the widget while nothing plays (1/0)"),
+    CFG_B(CF_MEDIA_HIDE_PAUSED, media_hide_paused, 0),
+    CFG_B(CF_MEDIA_MARQUEE, media_marquee, 1,
+          .ru = "Прокручивать название и исполнителя, если они не помещаются (1/0)",
+          .en = "Scroll the title and artist when they do not fit (1/0)"),
+    CFG_B(CF_REDUCED_MOTION, reduced_motion, 0, .gap = 1,
+          .ru = "Уменьшение движения (1/0): без анимаций и задержек, всё происходит сразу. Настройки анимаций ниже сохраняются.",
+          .en = "Reduced motion (1/0): no animations or delays, everything happens at once. The animation settings below are kept."),
+    CFG_B(CF_ANIMATIONS, animations, 1, .gap = 1,
+          .ru = "Анимации открытия и закрытия (1/0). Выключаются и системной настройкой «Эффекты анимации».",
+          .en = "Open/close animations (1/0). Also off when Windows \"Animation effects\" are disabled."),
+    CFG_I(CF_ANIM_SPEED, anim_speed, 100, 30, 400, .gap = 1,
+          .ru = "Тонкая настройка анимаций (миллисекунды). anim_speed - общая скорость в процентах (200 = вдвое быстрее),\n"
+                "anim_open_scale - с какого масштаба (в процентах) проявляется окно, anim_cascade - каскад строк (1/0).\n"
+                "Выделение и прокрутка движутся на пружине: значение - примерное время, за которое она доезжает.",
+          .en = "Fine-tuning of animations (milliseconds). anim_speed is a global speed in percent (200 = twice as fast),\n"
+                "anim_open_scale is the scale (percent) the window opens from, anim_cascade cascades the rows in (1/0).\n"
+                "Selection and scrolling move on a spring: the value is roughly the time it takes to arrive."),
+    CFG_I(CF_ANIM_OPEN_MS, anim_open_ms, 160, 0, 1000),
+    CFG_I(CF_ANIM_CLOSE_MS, anim_close_ms, 90, 0, 1000),
+    CFG_I(CF_ANIM_OPEN_SCALE, anim_open_scale, 97, 80, 100),
+    CFG_I(CF_ANIM_CASCADE, anim_cascade, 1, 0, 1),
+    CFG_I(CF_ANIM_ROW_MS, anim_row_ms, 200, 0, 1000),
+    CFG_I(CF_ANIM_STAGGER_MS, anim_stagger_ms, 12, 0, 60),
+    CFG_I(CF_ANIM_SELECT_MS, anim_select_ms, 120, 0, 600),
+    CFG_I(CF_ANIM_SCROLL_MS, anim_scroll_ms, 160, 0, 600),
+    CFG_I(CF_ANIM_MENU_MS, anim_menu_ms, 140, 0, 600),
+    CFG_I(CF_ANIM_PAGE_MS, anim_page_ms, 220, 0, 800),
+};
+
+static void *cfg_ptr(int id) { return (char *)&g_cfg + k_cfg[id].off; }
+
+// A bool, int or enum field as an int.
+static int cfg_get(int id)
+{
+    if (k_cfg[id].kind == CK_BOOL) return *(bool *)cfg_ptr(id);
+    if (k_cfg[id].kind == CK_TEXT) return 0;
+    return *(int *)cfg_ptr(id);
+}
+
+static void cfg_put(int id, int v)
+{
+    const CfgField *f = &k_cfg[id];
+    if (f->kind == CK_BOOL) *(bool *)cfg_ptr(id) = v != 0;
+    else if (f->kind == CK_INT) *(int *)cfg_ptr(id) = CLAMP(v, f->lo, f->hi);
+    else if (f->kind == CK_ENUM) *(int *)cfg_ptr(id) = CLAMP(v, 0, f->hi - 1);
+}
+
+static int cfg_find(const char *key)
+{
+    for (int id = 1; id < CF__COUNT; id++)
+        if (!_stricmp(k_cfg[id].key, key)) return id;
+    return CF_NONE;
+}
+
+static bool parse_bool(const char *v) { return v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T' || !_stricmp(v, "on"); }
+
+// Sets a field from its config.ini text. An unknown enum name leaves the field as it is.
+static void cfg_parse(int id, const char *v)
+{
+    const CfgField *f = &k_cfg[id];
+    switch (f->kind) {
+    case CK_BOOL: cfg_put(id, parse_bool(v)); break;
+    case CK_INT: cfg_put(id, atoi(v)); break;
+    case CK_ENUM:
+        for (int i = 0; i < f->hi; i++)
+            if (!_stricmp(v, f->names[i])) cfg_put(id, i);
+        break;
+    case CK_TEXT: utf8_to_w(v, -1, (WCHAR *)cfg_ptr(id), f->hi); break;
+    }
+}
+
+static void cfg_format(int id, char *out, int cap)
+{
+    const CfgField *f = &k_cfg[id];
+    int v = cfg_get(id);
+    switch (f->kind) {
+    case CK_BOOL:
+    case CK_INT: snprintf(out, (size_t)cap, "%d", v); break;
+    case CK_ENUM: snprintf(out, (size_t)cap, "%s", f->names[CLAMP(v, 0, f->hi - 1)]); break;
+    case CK_TEXT: w_to_utf8((const WCHAR *)cfg_ptr(id), -1, out, cap); break;
+    }
+}
+
 // The Start layouts always sit at the taskbar: center falls back to bottom center.
 static int launcher_position(void)
 {
@@ -67,181 +258,7 @@ static int launcher_position(void)
     return ((STYLES_START_MENU >> g_cfg.style) & 1) && p == POS_CENTER ? POS_BOTTOM_CENTER : p;
 }
 
-static const char k_default_config_ru[] =
-    "; MixLauncher - настройки. Удобнее менять в окне настроек (кнопка «Настройки» в лаунчере или Ctrl+,).\r\n"
-    "\r\n"
-    "; Клавиша или сочетание, которое открывает и закрывает лаунчер. Прежнее действие сочетания\r\n"
-    "; отключается (Win больше не открывает «Пуск», Win+D не сворачивает окна).\r\n"
-    "; Примеры: win, alt+space, ctrl+space, win+d, f13, rctrl (одиночное нажатие правого Ctrl)\r\n"
-    "hotkey = win\r\n"
-    "\r\n"
-    "; Язык: auto (как в Windows) | ru | en\r\n"
-    "language = auto\r\n"
-    "\r\n"
-    "; Тема: auto | dark | light\r\n"
-    "theme = auto\r\n"
-    "\r\n"
-    "; Фон окна: blur (полупрозрачное стекло, как в macOS) | acrylic (системный акрил Windows 11) | solid\r\n"
-    "backdrop = blur\r\n"
-    "\r\n"
-    "; Стиль лаунчера: standard | raycast | fluent | compact | windows | windows10 (как меню Пуск Windows 11 и 10)\r\n"
-    "style = standard\r\n"
-    "; Положение: center (по центру экрана) | bottom-left (слева снизу, как Пуск) | bottom-center (снизу по центру).\r\n"
-    "; Стили windows и windows10 всегда снизу.\r\n"
-    "position = center\r\n"
-    "; Подсвечивать совпадения с запросом в названиях (1/0)\r\n"
-    "match_highlight = 1\r\n"
-    "\r\n"
-    "; Ширина окна в логических пикселях и количество видимых строк списка\r\n"
-    "width = 720\r\n"
-    "rows = 9\r\n"
-    "\r\n"
-    "; Сколько приложений показывать при поиске (файлы из Everything подгружаются при прокрутке)\r\n"
-    "max_apps = 8\r\n"
-    "\r\n"
-    "; Минимальная длина запроса для поиска файлов\r\n"
-    "file_min_chars = 2\r\n"
-    "\r\n"
-    "; Фильтр Everything, добавляется к каждому запросу файлов. Пример: !C:\\Windows\\ !\\AppData\\\r\n"
-    "everything_filter =\r\n"
-    "\r\n"
-    "; Скрывать деинсталляторы из списка приложений (1/0)\r\n"
-    "hide_uninstallers = 1\r\n"
-    "\r\n"
-    "; Через сколько секунд после закрытия окна сбрасывать введённый запрос\r\n"
-    "keep_query_seconds = 60\r\n"
-    "\r\n"
-    "; Проверять обновления на GitHub раз в несколько часов (1/0)\r\n"
-    "update_check = 1\r\n"
-    "\r\n"
-    "; Кнопка Пуск на панели задач Windows 11 открывает лаунчер (1/0)\r\n"
-    "taskbar_button = 1\r\n"
-    "; Рисовать на ней наш значок вместо значка Windows (1/0)\r\n"
-    "taskbar_replace_icon = 1\r\n"
-    "; Её значок: diamond (ромб) | grid (сетка) | petals (лепестки) | layers (слои) | dots (точки) | custom (свой файл PNG/ICO/JPG из taskbar_icon_path)\r\n"
-    "taskbar_icon = diamond\r\n"
-    "taskbar_icon_path =\r\n"
-    "; Клик по поиску на панели задач Windows 10/11 открывает лаунчер (1/0)\r\n"
-    "taskbar_search = 0\r\n"
-    "\r\n"
-    "; «Сейчас играет» на панели задач: обложка, название и кнопки управления музыкой и видео (1/0)\r\n"
-    "media_widget = 1\r\n"
-    "; Где: left (слева) | right (справа, у значков в трее). При значках, выровненных по левому краю, всегда справа\r\n"
-    "media_position = left\r\n"
-    "; Кнопки «назад», «пауза», «вперёд» (1/0) и скрывать виджет, пока ничего не играет (1/0)\r\n"
-    "media_controls = 1\r\n"
-    "media_hide_paused = 0\r\n"
-    "; Прокручивать название и исполнителя, если они не помещаются (1/0)\r\n"
-    "media_marquee = 1\r\n"
-    "\r\n"
-    "; Уменьшение движения (1/0): без анимаций и задержек, всё происходит сразу. Настройки анимаций ниже сохраняются.\r\n"
-    "reduced_motion = 0\r\n"
-    "\r\n"
-    "; Анимации открытия и закрытия (1/0). Выключаются и системной настройкой «Эффекты анимации».\r\n"
-    "animations = 1\r\n"
-    "\r\n"
-    "; Тонкая настройка анимаций (миллисекунды). anim_speed - общая скорость в процентах (200 = вдвое быстрее),\r\n"
-    "; anim_open_scale - с какого масштаба (в процентах) проявляется окно, anim_cascade - каскад строк (1/0).\r\n"
-    "; Выделение и прокрутка движутся на пружине: значение - примерное время, за которое она доезжает.\r\n"
-    "anim_speed = 100\r\n"
-    "anim_open_ms = 160\r\n"
-    "anim_close_ms = 90\r\n"
-    "anim_open_scale = 97\r\n"
-    "anim_cascade = 1\r\n"
-    "anim_row_ms = 200\r\n"
-    "anim_stagger_ms = 12\r\n"
-    "anim_select_ms = 120\r\n"
-    "anim_scroll_ms = 160\r\n"
-    "anim_menu_ms = 140\r\n"
-    "anim_page_ms = 220\r\n";
-
-static const char k_default_config_en[] =
-    "; MixLauncher settings. Easier to change in the settings window (Settings button in the launcher or Ctrl+,).\r\n"
-    "\r\n"
-    "; The key or shortcut that opens and closes the launcher. Whatever it did before is turned off\r\n"
-    "; (Win no longer opens Start, Win+D no longer shows the desktop).\r\n"
-    "; Examples: win, alt+space, ctrl+space, win+d, f13, rctrl (a tap of the right Ctrl key)\r\n"
-    "hotkey = win\r\n"
-    "\r\n"
-    "; Language: auto (follows Windows) | ru | en\r\n"
-    "language = auto\r\n"
-    "\r\n"
-    "; Theme: auto | dark | light\r\n"
-    "theme = auto\r\n"
-    "\r\n"
-    "; Window background: blur (translucent glass, macOS-like) | acrylic (Windows 11 system acrylic) | solid\r\n"
-    "backdrop = blur\r\n"
-    "\r\n"
-    "; Launcher style: standard | raycast | fluent | compact | windows | windows10 (like the Windows 11 and 10 Start menus)\r\n"
-    "style = standard\r\n"
-    "; Position: center (screen center) | bottom-left (like Start on the left) | bottom-center (like Start in the center).\r\n"
-    "; The windows and windows10 styles are always at the bottom.\r\n"
-    "position = center\r\n"
-    "; Highlight the query matches in names (1/0)\r\n"
-    "match_highlight = 1\r\n"
-    "\r\n"
-    "; Window width in logical pixels and number of visible list rows\r\n"
-    "width = 720\r\n"
-    "rows = 9\r\n"
-    "\r\n"
-    "; How many apps to show while searching (files from Everything load as you scroll)\r\n"
-    "max_apps = 8\r\n"
-    "\r\n"
-    "; Minimum query length for file search\r\n"
-    "file_min_chars = 2\r\n"
-    "\r\n"
-    "; Everything filter appended to every file query. Example: !C:\\Windows\\ !\\AppData\\\r\n"
-    "everything_filter =\r\n"
-    "\r\n"
-    "; Hide uninstallers from the app list (1/0)\r\n"
-    "hide_uninstallers = 1\r\n"
-    "\r\n"
-    "; Seconds after closing before the typed query is cleared\r\n"
-    "keep_query_seconds = 60\r\n"
-    "\r\n"
-    "; Check GitHub for updates every few hours (1/0)\r\n"
-    "update_check = 1\r\n"
-    "\r\n"
-    "; The Windows 11 taskbar Start button opens the launcher (1/0)\r\n"
-    "taskbar_button = 1\r\n"
-    "; Draw our icon on it instead of the Windows logo (1/0)\r\n"
-    "taskbar_replace_icon = 1\r\n"
-    "; Its icon: diamond | grid | petals | layers | dots | custom (a PNG/ICO/JPG file from taskbar_icon_path)\r\n"
-    "taskbar_icon = diamond\r\n"
-    "taskbar_icon_path =\r\n"
-    "; Clicking the search on the Windows 10/11 taskbar opens the launcher (1/0)\r\n"
-    "taskbar_search = 0\r\n"
-    "\r\n"
-    "; Now playing on the taskbar: cover, title and playback buttons for music and video (1/0)\r\n"
-    "media_widget = 1\r\n"
-    "; Where: left | right (next to the tray icons). Always right when taskbar icons are aligned left\r\n"
-    "media_position = left\r\n"
-    "; Previous / pause / next buttons (1/0) and hiding the widget while nothing plays (1/0)\r\n"
-    "media_controls = 1\r\n"
-    "media_hide_paused = 0\r\n"
-    "; Scroll the title and artist when they do not fit (1/0)\r\n"
-    "media_marquee = 1\r\n"
-    "\r\n"
-    "; Reduced motion (1/0): no animations or delays, everything happens at once. The animation settings below are kept.\r\n"
-    "reduced_motion = 0\r\n"
-    "\r\n"
-    "; Open/close animations (1/0). Also off when Windows \"Animation effects\" are disabled.\r\n"
-    "animations = 1\r\n"
-    "\r\n"
-    "; Fine-tuning of animations (milliseconds). anim_speed is a global speed in percent (200 = twice as fast),\r\n"
-    "; anim_open_scale is the scale (percent) the window opens from, anim_cascade cascades the rows in (1/0).\r\n"
-    "; Selection and scrolling move on a spring: the value is roughly the time it takes to arrive.\r\n"
-    "anim_speed = 100\r\n"
-    "anim_open_ms = 160\r\n"
-    "anim_close_ms = 90\r\n"
-    "anim_open_scale = 97\r\n"
-    "anim_cascade = 1\r\n"
-    "anim_row_ms = 200\r\n"
-    "anim_stagger_ms = 12\r\n"
-    "anim_select_ms = 120\r\n"
-    "anim_scroll_ms = 160\r\n"
-    "anim_menu_ms = 140\r\n"
-    "anim_page_ms = 220\r\n";
+// ---- keys and hotkeys: "ctrl+alt+k", "win", "rctrl"
 
 typedef struct KeyName { u8 vk; const char *name; const WCHAR *label; } KeyName;
 
@@ -262,6 +279,13 @@ static const KeyName k_key_names[] = {
     { VK_DECIMAL, "num.", L"Num ." }, { VK_DIVIDE, "num/", L"Num /" },
 };
 
+static const KeyName *key_entry(u32 vk)
+{
+    for (int i = 0; i < countof(k_key_names); i++)
+        if (k_key_names[i].vk == vk) return &k_key_names[i];
+    return NULL;
+}
+
 static u8 vk_mod_bit(u32 vk)
 {
     switch (vk) {
@@ -273,6 +297,7 @@ static u8 vk_mod_bit(u32 vk)
     return 0;
 }
 
+// The bound key matches the pressed one; a generic modifier matches either side.
 static bool hk_vk_match(u32 bind, u32 vk)
 {
     if (bind == vk) return true;
@@ -309,31 +334,30 @@ static int key_by_name(const char *name)
 
 static void key_name(u32 vk, char *out, size_t cap)
 {
-    for (int i = 0; i < countof(k_key_names); i++)
-        if (k_key_names[i].vk == vk) {
-            snprintf(out, cap, "%s", k_key_names[i].name);
-            return;
-        }
-    if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) snprintf(out, cap, "%c", (char)tolower((int)vk));
+    const KeyName *k = key_entry(vk);
+    if (k) snprintf(out, cap, "%s", k->name);
+    else if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) snprintf(out, cap, "%c", (char)tolower((int)vk));
     else if (vk >= VK_F1 && vk <= VK_F24) snprintf(out, cap, "f%u", vk - VK_F1 + 1);
     else if (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD9) snprintf(out, cap, "num%u", vk - VK_NUMPAD0);
     else snprintf(out, cap, "vk%02x", vk & 0xFF);
 }
 
+// What a keycap shows; *side is "L" or "R" for a sided modifier.
 static void key_label(u32 vk, WCHAR *out, int cap, const WCHAR **side)
 {
     *side = NULL;
     if (vk == VK_LCONTROL || vk == VK_LMENU || vk == VK_LSHIFT || vk == VK_LWIN) *side = L"L";
     if (vk == VK_RCONTROL || vk == VK_RMENU || vk == VK_RSHIFT || vk == VK_RWIN) *side = L"R";
-    for (int i = 0; i < countof(k_key_names); i++)
-        if (k_key_names[i].vk == vk) {
-            wcopy(out, cap, k_key_names[i].label);
-            return;
-        }
-    if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) wfmt(out, cap, L"%c", (WCHAR)vk);
-    else if (vk >= VK_F1 && vk <= VK_F24) wfmt(out, cap, L"F%u", vk - VK_F1 + 1);
-    else if (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD9) wfmt(out, cap, L"Num %u", vk - VK_NUMPAD0);
-    else {
+    const KeyName *k = key_entry(vk);
+    if (k) {
+        wcopy(out, cap, k->label);
+    } else if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) {
+        wfmt(out, cap, L"%c", (WCHAR)vk);
+    } else if (vk >= VK_F1 && vk <= VK_F24) {
+        wfmt(out, cap, L"F%u", vk - VK_F1 + 1);
+    } else if (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD9) {
+        wfmt(out, cap, L"Num %u", vk - VK_NUMPAD0);
+    } else {
         UINT sc = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC_EX);
         LONG lp = (LONG)((sc & 0xFF) << 16) | ((sc & 0xE000) ? (1 << 24) : 0);
         if (!sc || GetKeyNameTextW(lp, out, cap) <= 0) wfmt(out, cap, L"VK %02X", vk & 0xFF);
@@ -359,7 +383,7 @@ static bool hotkey_parse(const WCHAR *s, Hotkey *out)
         int vk = key_by_name(tok);
         *cur = save;
         if (!vk) return false;
-        if (last) {
+        if (last) {  // every key but the last is a modifier
             u8 m = vk_mod_bit((u32)last);
             if (!m) return false;
             h.mods |= m;
@@ -382,46 +406,16 @@ static void hotkey_format(Hotkey h, WCHAR *out, int cap)
     utf8_to_w(buf, -1, out, cap);
 }
 
-static void config_anim_defaults(Config *c)
-{
-    c->anim_speed = 100;
-    c->anim_open_ms = 160;
-    c->anim_close_ms = 90;
-    c->anim_open_scale = 97;
-    c->anim_cascade = 1;
-    c->anim_row_ms = 200;
-    c->anim_stagger_ms = 12;
-    c->anim_select_ms = 120;
-    c->anim_scroll_ms = 160;
-    c->anim_menu_ms = 140;
-    c->anim_page_ms = 220;
-}
+// ---- config.ini
 
-static void config_defaults(Config *c)
+static void config_defaults(void)
 {
-    memset(c, 0, sizeof(*c));
-    wcopy(c->hotkey, countof(c->hotkey), L"win");
-    c->hk.vk = VK_ANYWIN;
-    c->theme = 0;
-    c->backdrop = BACKDROP_BLUR;
-    c->match_highlight = true;
-    c->start10_width = 648;
-    c->start10_height = 608;
-    c->width = 720;
-    c->rows = 9;
-    c->max_apps = 8;
-    c->file_min_chars = 2;
-    c->hide_uninstallers = true;
-    c->keep_query_seconds = 60;
-    c->update_check = true;
-    c->animations = true;
-    c->taskbar_button = true;
-    c->taskbar_replace_icon = true;
-    c->taskbar_icon = 0;
-    c->media_widget = true;
-    c->media_controls = true;
-    c->media_marquee = true;
-    config_anim_defaults(c);
+    memset(&g_cfg, 0, sizeof g_cfg);
+    for (int id = 1; id < CF__COUNT; id++) {
+        if (k_cfg[id].kind == CK_TEXT) wcopy((WCHAR *)cfg_ptr(id), k_cfg[id].hi, k_cfg[id].text);
+        else cfg_put(id, k_cfg[id].def);
+    }
+    g_cfg.hk.vk = VK_ANYWIN;
 }
 
 static char *trim(char *s)
@@ -432,87 +426,38 @@ static char *trim(char *s)
     return s;
 }
 
-static bool parse_bool(const char *v) { return v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T' || !_stricmp(v, "on"); }
-
 static void config_path(WCHAR *out) { data_path(out, L"config.ini"); }
 
-static bool config_value(const char *k, char *out, size_t cap)
+static void buf_comment(Buf *b, const char *text)
 {
-    if (!strcmp(k, "hotkey")) w_to_utf8(g_cfg.hotkey, -1, out, (int)cap);
-    else if (!strcmp(k, "language")) snprintf(out, cap, "%s", g_cfg.language == 1 ? "ru" : g_cfg.language == 2 ? "en" : "auto");
-    else if (!strcmp(k, "theme")) snprintf(out, cap, "%s", g_cfg.theme == 1 ? "dark" : g_cfg.theme == 2 ? "light" : "auto");
-    else if (!strcmp(k, "backdrop")) snprintf(out, cap, "%s", g_cfg.backdrop == BACKDROP_SOLID ? "solid" : g_cfg.backdrop == BACKDROP_ACRYLIC ? "acrylic" : "blur");
-    else if (!strcmp(k, "style")) snprintf(out, cap, "%s", k_style_names[CLAMP(g_cfg.style, 0, STYLE__COUNT - 1)]);
-    else if (!strcmp(k, "position")) snprintf(out, cap, "%s", k_pos_names[CLAMP(g_cfg.position, 0, POS__COUNT - 1)]);
-    else if (!strcmp(k, "start10_width")) snprintf(out, cap, "%d", g_cfg.start10_width);
-    else if (!strcmp(k, "start10_height")) snprintf(out, cap, "%d", g_cfg.start10_height);
-    else if (!strcmp(k, "match_highlight")) snprintf(out, cap, "%d", g_cfg.match_highlight ? 1 : 0);
-    else if (!strcmp(k, "width")) snprintf(out, cap, "%d", g_cfg.width);
-    else if (!strcmp(k, "rows")) snprintf(out, cap, "%d", g_cfg.rows);
-    else if (!strcmp(k, "max_apps")) snprintf(out, cap, "%d", g_cfg.max_apps);
-    else if (!strcmp(k, "file_min_chars")) snprintf(out, cap, "%d", g_cfg.file_min_chars);
-    else if (!strcmp(k, "everything_filter")) w_to_utf8(g_cfg.everything_filter, -1, out, (int)cap);
-    else if (!strcmp(k, "hide_uninstallers")) snprintf(out, cap, "%d", g_cfg.hide_uninstallers ? 1 : 0);
-    else if (!strcmp(k, "keep_query_seconds")) snprintf(out, cap, "%d", g_cfg.keep_query_seconds);
-    else if (!strcmp(k, "update_check")) snprintf(out, cap, "%d", g_cfg.update_check ? 1 : 0);
-    else if (!strcmp(k, "animations")) snprintf(out, cap, "%d", g_cfg.animations ? 1 : 0);
-    else if (!strcmp(k, "reduced_motion")) snprintf(out, cap, "%d", g_cfg.reduced_motion ? 1 : 0);
-    else if (!strcmp(k, "taskbar_button")) snprintf(out, cap, "%d", g_cfg.taskbar_button ? 1 : 0);
-    else if (!strcmp(k, "taskbar_replace_icon")) snprintf(out, cap, "%d", g_cfg.taskbar_replace_icon ? 1 : 0);
-    else if (!strcmp(k, "taskbar_icon")) snprintf(out, cap, "%s", k_tbi_names[CLAMP(g_cfg.taskbar_icon, 0, TBI__COUNT - 1)]);
-    else if (!strcmp(k, "taskbar_icon_path")) w_to_utf8(g_cfg.taskbar_icon_path, -1, out, (int)cap);
-    else if (!strcmp(k, "taskbar_search")) snprintf(out, cap, "%d", g_cfg.taskbar_search ? 1 : 0);
-    else if (!strcmp(k, "media_widget")) snprintf(out, cap, "%d", g_cfg.media_widget ? 1 : 0);
-    else if (!strcmp(k, "media_position")) snprintf(out, cap, "%s", g_cfg.media_position ? "right" : "left");
-    else if (!strcmp(k, "media_controls")) snprintf(out, cap, "%d", g_cfg.media_controls ? 1 : 0);
-    else if (!strcmp(k, "media_hide_paused")) snprintf(out, cap, "%d", g_cfg.media_hide_paused ? 1 : 0);
-    else if (!strcmp(k, "media_marquee")) snprintf(out, cap, "%d", g_cfg.media_marquee ? 1 : 0);
-    else if (!strcmp(k, "anim_speed")) snprintf(out, cap, "%d", g_cfg.anim_speed);
-    else if (!strcmp(k, "anim_open_ms")) snprintf(out, cap, "%d", g_cfg.anim_open_ms);
-    else if (!strcmp(k, "anim_close_ms")) snprintf(out, cap, "%d", g_cfg.anim_close_ms);
-    else if (!strcmp(k, "anim_open_scale")) snprintf(out, cap, "%d", g_cfg.anim_open_scale);
-    else if (!strcmp(k, "anim_cascade")) snprintf(out, cap, "%d", g_cfg.anim_cascade);
-    else if (!strcmp(k, "anim_row_ms")) snprintf(out, cap, "%d", g_cfg.anim_row_ms);
-    else if (!strcmp(k, "anim_stagger_ms")) snprintf(out, cap, "%d", g_cfg.anim_stagger_ms);
-    else if (!strcmp(k, "anim_select_ms")) snprintf(out, cap, "%d", g_cfg.anim_select_ms);
-    else if (!strcmp(k, "anim_scroll_ms")) snprintf(out, cap, "%d", g_cfg.anim_scroll_ms);
-    else if (!strcmp(k, "anim_menu_ms")) snprintf(out, cap, "%d", g_cfg.anim_menu_ms);
-    else if (!strcmp(k, "anim_page_ms")) snprintf(out, cap, "%d", g_cfg.anim_page_ms);
-    else return false;
-    return true;
+    for (const char *p = text; *p;) {
+        const char *e = strchr(p, '\n');
+        size_t n = e ? (size_t)(e - p) : strlen(p);
+        buf_str(b, "; ");
+        buf_put(b, p, n);
+        buf_str(b, "\r\n");
+        p += n + (e ? 1 : 0);
+    }
 }
 
+// Writes the whole file, with comments, in the UI language.
 static void config_write_all(void)
 {
-    const char *def = g_lang_ru ? k_default_config_ru : k_default_config_en;
     Buf b = { 0 };
     buf_put(&b, "\xEF\xBB\xBF", 3);
-    for (const char *p = def; *p;) {
-        const char *e = strstr(p, "\r\n");
-        size_t n = e ? (size_t)(e - p) : strlen(p);
-        char line[256], key[64], val[1100];
-        snprintf(line, sizeof line, "%.*s", (int)MIN(n, sizeof line - 1), p);
-        char *eq = strchr(line, '=');
-        bool done = false;
-        if (line[0] != ';' && eq) {
-            *eq = 0;
-            snprintf(key, sizeof key, "%s", trim(line));
-            if (config_value(key, val, sizeof val)) {
-                if (val[0]) buf_printf(&b, "%s = %s\r\n", key, val);
-                else buf_printf(&b, "%s =\r\n", key);
-                done = true;
-            }
-        }
-        if (!done) {
-            buf_put(&b, p, n);
-            buf_put(&b, "\r\n", 2);
-        }
-        p += n + (e ? 2 : 0);
+    buf_comment(&b, g_lang_ru ? "MixLauncher - настройки. Удобнее менять в окне настроек (кнопка «Настройки» в лаунчере или Ctrl+,)."
+                              : "MixLauncher settings. Easier to change in the settings window (Settings button in the launcher or Ctrl+,).");
+    for (int id = 1; id < CF__COUNT; id++) {
+        const CfgField *f = &k_cfg[id];
+        char val[1100];
+        cfg_format(id, val, sizeof val);
+        if (f->gap) buf_str(&b, "\r\n");
+        if (f->ru) buf_comment(&b, g_lang_ru ? f->ru : f->en);
+        buf_printf(&b, val[0] ? "%s = %s\r\n" : "%s =%s\r\n", f->key, val);
     }
     WCHAR path[MAX_PATH];
     config_path(path);
-    write_file_atomic(path, b.data, (DWORD)b.len);
-    free(b.data);
+    buf_save(&b, path);
 }
 
 static void lang_apply(void)
@@ -522,7 +467,7 @@ static void lang_apply(void)
 
 static void config_load(void)
 {
-    config_defaults(&g_cfg);
+    config_defaults();
     WCHAR path[MAX_PATH];
     config_path(path);
     char *text = read_file(path, NULL);
@@ -535,9 +480,7 @@ static void config_load(void)
         return;
     }
     int old_win_key = -1;
-    char *cur = text;
-    if ((u8)cur[0] == 0xEF && (u8)cur[1] == 0xBB && (u8)cur[2] == 0xBF) cur += 3;
-    char *line;
+    char *cur = utf8_bom(text) ? text + 3 : text, *line;
     while ((line = next_line(&cur)) != NULL) {
         line = trim(line);
         if (!*line || *line == ';' || *line == '#' || *line == '[') continue;
@@ -545,55 +488,9 @@ static void config_load(void)
         if (!eq) continue;
         *eq = 0;
         char *k = trim(line), *v = trim(eq + 1);
-        if (!_stricmp(k, "win_key")) old_win_key = parse_bool(v);
-        else if (!_stricmp(k, "hotkey")) utf8_to_w(v, -1, g_cfg.hotkey, countof(g_cfg.hotkey));
-        else if (!_stricmp(k, "language")) g_cfg.language = !_stricmp(v, "ru") ? 1 : !_stricmp(v, "en") ? 2 : 0;
-        else if (!_stricmp(k, "theme")) g_cfg.theme = !_stricmp(v, "dark") ? 1 : !_stricmp(v, "light") ? 2 : 0;
-        else if (!_stricmp(k, "backdrop")) g_cfg.backdrop = !_stricmp(v, "solid") ? BACKDROP_SOLID : !_stricmp(v, "acrylic") ? BACKDROP_ACRYLIC : BACKDROP_BLUR;
-        else if (!_stricmp(k, "style")) {
-            for (int i = 0; i < STYLE__COUNT; i++)
-                if (!_stricmp(v, k_style_names[i])) g_cfg.style = i;
-        } else if (!_stricmp(k, "start10_width")) {
-            g_cfg.start10_width = CLAMP(atoi(v), 300, 4000);
-        } else if (!_stricmp(k, "start10_height")) {
-            g_cfg.start10_height = CLAMP(atoi(v), 420, 2000);
-        } else if (!_stricmp(k, "position")) {
-            for (int i = 0; i < POS__COUNT; i++)
-                if (!_stricmp(v, k_pos_names[i])) g_cfg.position = i;
-        } else if (!_stricmp(k, "match_highlight")) g_cfg.match_highlight = parse_bool(v);
-        else if (!_stricmp(k, "width")) g_cfg.width = CLAMP(atoi(v), 480, 1600);
-        else if (!_stricmp(k, "rows")) g_cfg.rows = CLAMP(atoi(v), 4, 20);
-        else if (!_stricmp(k, "max_apps")) g_cfg.max_apps = CLAMP(atoi(v), 1, 50);
-        else if (!_stricmp(k, "file_min_chars")) g_cfg.file_min_chars = CLAMP(atoi(v), 1, 10);
-        else if (!_stricmp(k, "everything_filter")) utf8_to_w(v, -1, g_cfg.everything_filter, countof(g_cfg.everything_filter));
-        else if (!_stricmp(k, "hide_uninstallers")) g_cfg.hide_uninstallers = parse_bool(v);
-        else if (!_stricmp(k, "keep_query_seconds")) g_cfg.keep_query_seconds = CLAMP(atoi(v), 0, 24 * 3600);
-        else if (!_stricmp(k, "update_check")) g_cfg.update_check = parse_bool(v);
-        else if (!_stricmp(k, "animations")) g_cfg.animations = parse_bool(v);
-        else if (!_stricmp(k, "reduced_motion")) g_cfg.reduced_motion = parse_bool(v);
-        else if (!_stricmp(k, "taskbar_button")) g_cfg.taskbar_button = parse_bool(v);
-        else if (!_stricmp(k, "taskbar_replace_icon")) g_cfg.taskbar_replace_icon = parse_bool(v);
-        else if (!_stricmp(k, "taskbar_icon")) {
-            for (int i = 0; i < TBI__COUNT; i++)
-                if (!_stricmp(v, k_tbi_names[i])) g_cfg.taskbar_icon = i;
-        } else if (!_stricmp(k, "taskbar_icon_path")) utf8_to_w(v, -1, g_cfg.taskbar_icon_path, countof(g_cfg.taskbar_icon_path));
-        else if (!_stricmp(k, "taskbar_search")) g_cfg.taskbar_search = parse_bool(v);
-        else if (!_stricmp(k, "media_widget")) g_cfg.media_widget = parse_bool(v);
-        else if (!_stricmp(k, "media_position")) g_cfg.media_position = !_stricmp(v, "right") ? 1 : 0;
-        else if (!_stricmp(k, "media_controls")) g_cfg.media_controls = parse_bool(v);
-        else if (!_stricmp(k, "media_hide_paused")) g_cfg.media_hide_paused = parse_bool(v);
-        else if (!_stricmp(k, "media_marquee")) g_cfg.media_marquee = parse_bool(v);
-        else if (!_stricmp(k, "anim_speed")) g_cfg.anim_speed = CLAMP(atoi(v), 30, 400);
-        else if (!_stricmp(k, "anim_open_ms")) g_cfg.anim_open_ms = CLAMP(atoi(v), 0, 1000);
-        else if (!_stricmp(k, "anim_close_ms")) g_cfg.anim_close_ms = CLAMP(atoi(v), 0, 1000);
-        else if (!_stricmp(k, "anim_open_scale")) g_cfg.anim_open_scale = CLAMP(atoi(v), 80, 100);
-        else if (!_stricmp(k, "anim_cascade")) g_cfg.anim_cascade = CLAMP(atoi(v), 0, 1);
-        else if (!_stricmp(k, "anim_row_ms")) g_cfg.anim_row_ms = CLAMP(atoi(v), 0, 1000);
-        else if (!_stricmp(k, "anim_stagger_ms")) g_cfg.anim_stagger_ms = CLAMP(atoi(v), 0, 60);
-        else if (!_stricmp(k, "anim_select_ms")) g_cfg.anim_select_ms = CLAMP(atoi(v), 0, 600);
-        else if (!_stricmp(k, "anim_scroll_ms")) g_cfg.anim_scroll_ms = CLAMP(atoi(v), 0, 600);
-        else if (!_stricmp(k, "anim_menu_ms")) g_cfg.anim_menu_ms = CLAMP(atoi(v), 0, 600);
-        else if (!_stricmp(k, "anim_page_ms")) g_cfg.anim_page_ms = CLAMP(atoi(v), 0, 800);
+        int id = cfg_find(k);
+        if (id) cfg_parse(id, v);
+        else if (!_stricmp(k, "win_key")) old_win_key = parse_bool(v);  // before hotkey existed
     }
     free(text);
     lang_apply();
@@ -606,6 +503,7 @@ static void config_load(void)
     if (old_win_key >= 0) config_write_all();
 }
 
+// Rewrites one key in the file, keeping everything else (comments, the user's own lines) as it is.
 static void config_set(const char *key, const char *value)
 {
     WCHAR path[MAX_PATH];
@@ -613,29 +511,37 @@ static void config_set(const char *key, const char *value)
     char *text = read_file(path, NULL);
     Buf b = { 0 };
     bool found = false;
-    if (text) {
-        char *cur = text;
-        char *line;
-        while ((line = next_line(&cur)) != NULL) {
-            char *p = line;
-            if ((u8)p[0] == 0xEF && (u8)p[1] == 0xBB && (u8)p[2] == 0xBF) {
-                buf_put(&b, p, 3);
-                p += 3;
-            }
-            char *t = p;
-            while (*t == ' ' || *t == '\t') t++;
-            size_t kl = strlen(key);
-            if (!found && !_strnicmp(t, key, kl) && (t[kl] == ' ' || t[kl] == '=' || t[kl] == '\t')) {
-                buf_printf(&b, "%s = %s\r\n", key, value);
-                found = true;
-            } else {
-                buf_put(&b, p, strlen(p));
-                buf_put(&b, "\r\n", 2);
-            }
+    size_t kl = strlen(key);
+    char *cur = text, *line;
+    while (text && (line = next_line(&cur)) != NULL) {
+        if (utf8_bom(line)) {
+            buf_put(&b, line, 3);
+            line += 3;
         }
-        free(text);
+        char *t = line;
+        while (*t == ' ' || *t == '\t') t++;
+        if (!found && !_strnicmp(t, key, kl) && (t[kl] == ' ' || t[kl] == '=' || t[kl] == '\t')) {
+            buf_printf(&b, "%s = %s\r\n", key, value);
+            found = true;
+        } else {
+            buf_str(&b, line);
+            buf_str(&b, "\r\n");
+        }
     }
+    free(text);
     if (!found) buf_printf(&b, "%s = %s\r\n", key, value);
-    write_file_atomic(path, b.data, (DWORD)b.len);
-    free(b.data);
+    buf_save(&b, path);
+}
+
+static void cfg_save(int id)
+{
+    char val[1100];
+    cfg_format(id, val, sizeof val);
+    config_set(k_cfg[id].key, val);
+}
+
+static void cfg_set(int id, int v)
+{
+    cfg_put(id, v);
+    cfg_save(id);
 }

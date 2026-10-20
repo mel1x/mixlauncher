@@ -11,6 +11,7 @@ static void open_settings_from_launcher(void)
     }
 }
 
+// Keys go to the tag dialog, the menu and the Start styles first; true when handled.
 static bool ui_keydown(WPARAM vk)
 {
     if (tg_key(vk)) return true;
@@ -110,16 +111,11 @@ static void ui_char(WCHAR c)
     edit_replace(U.anchor, U.caret, &c, 1);
 }
 
-static bool in_update_button(int x, int y)
-{
-    return x >= U.update_btn[0] && x < U.update_btn[2] && y >= U.update_btn[1] && y < U.update_btn[3];
-}
+static bool in_update_button(int x, int y) { return in_box(U.update_btn, (f32)x, (f32)y); }
+static bool in_settings_button(int x, int y) { return in_box(U.settings_btn, (f32)x, (f32)y); }
 
-static bool in_settings_button(int x, int y)
-{
-    return x >= U.settings_btn[0] && x < U.settings_btn[2] && y >= U.settings_btn[1] && y < U.settings_btn[3];
-}
-
+// The pointer goes to what is on top: the tag dialog, the menu, a resize, the update chip, the Start styles,
+// then the scrollbar, the settings button, the query and the rows.
 static void ui_mouse_move(int x, int y)
 {
     if (x == U.mouse_x && y == U.mouse_y) return;

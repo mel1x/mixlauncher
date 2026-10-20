@@ -149,7 +149,7 @@ static void draw_coin_icon(int i, f32 x, f32 y, f32 sz)
     }
     const WCHAR *sym = logo == LOGO_BTC ? L"\x20BF" : logo == LOGO_LTC ? L"\x0141" : L"$";
     f32 fs = sz * (logo == LOGO_USDC ? 0.40f : 0.56f), w = text_width(FONT_TEXT_SEMIBOLD, fs, sym, -1);
-    text_draw(FONT_TEXT_SEMIBOLD, fs, floorf(cx - w * 0.5f + 0.5f), baseline_for(FONT_TEXT_SEMIBOLD, fs, cy), sym, -1, white);
+    text_draw(FONT_TEXT_SEMIBOLD, fs, floorf(cx - w * 0.5f + 0.5f), text_baseline(FONT_TEXT_SEMIBOLD, fs, cy), sym, -1, white);
 }
 
 #define DON_HOV_LINK 8
@@ -267,13 +267,6 @@ static void don_copy(int w)
     settings_invalidate();
 }
 
-static void box_set(f32 *b, f32 x, f32 y, f32 w, f32 h)
-{
-    b[0] = x;
-    b[1] = y;
-    b[2] = x + w;
-    b[3] = y + h;
-}
 
 #define DON_STAGGER 0.035f
 #define DON_ITEM_DUR 0.32f
@@ -340,9 +333,7 @@ static void draw_donate(const Theme *t, const SColors *c)
     SW.don.scroll = CLAMP(SW.don.scroll, 0.f, ms);
     f32 px = floorf(((f32)SW.W - pw) * 0.5f), py = floorf(((f32)SW.H - ph) * 0.5f + (1.f - e) * SSR(SW.don.closing ? 8.f : 22.f));
     box_set(SW.don.panel, px, py, pw, ph);
-    r_rect_ex(px, py + SSR(14), pw, ph, c->shadow, SSR(16), 0, SSR(30));
-    r_rect(px, py, pw, ph, t->dark ? RGBA(36, 36, 39, 255) : RGBA(252, 252, 253, 255), SSR(16));
-    r_rect_ex(px, py, pw, ph, c->pop_border, SSR(16), 1.f, 0);
+    r_panel(px, py, pw, ph, SSR(16), t->dark ? RGBA(36, 36, 39, 255) : RGBA(252, 252, 253, 255), c->pop_border, c->shadow, SSR(14), SSR(30));
 
     r_set_clip(px, py + 1, px + pw, py + ph - 1);
     f32 x0 = px + SSR(20), x1 = px + pw - SSR(20), y = py + SSR(20) - floorf(SW.don.scroll + 0.5f);
@@ -356,8 +347,8 @@ static void draw_donate(const Theme *t, const SColors *c)
     {
         DON_BLOCK(dy);
         f32 hy = y + dy;
-        text_draw(FONT_TEXT_SEMIBOLD, SSC(17), x0, baseline_for(FONT_TEXT_SEMIBOLD, SSC(17), hy + SSR(12)),
-                  ss((Str){ L"Поддержать автора", L"Support the author" }), -1, t->text);
+        text_draw(FONT_TEXT_SEMIBOLD, SSC(17), x0, text_baseline(FONT_TEXT_SEMIBOLD, SSC(17), hy + SSR(12)),
+                  TR("Поддержать автора", "Support the author"), -1, t->text);
         f32 cb = SSR(30), hv = SW.don.hov[DON_HOV_CLOSE];
         box_set(SW.don.close, x1 - cb + SSR(6), y - SSR(3), cb, cb);
         if (hv > 0) r_rect(SW.don.close[0], SW.don.close[1] + dy, cb, cb, color_alpha(c->ctl_hover, hv), SSR(8));
@@ -371,7 +362,7 @@ static void draw_donate(const Theme *t, const SColors *c)
         f32 mod = floorf(qr_sz / (DON_QR_N + 7)), tile = mod * (DON_QR_N + 7), qo = floorf((tile - mod * DON_QR_N) * 0.5f);
         f32 qx = floorf(px + (pw - tile) * 0.5f), qy = y + floorf((qr_sz - tile) * 0.5f) + dy;
         r_rect(qx, qy, tile, tile, RGBA(255, 255, 255, 255), SSR(10));
-        if (!t->dark) r_rect_ex(qx, qy, tile, tile, RGBA(0, 0, 0, 20), SSR(10), 1.f, 0);
+        if (!t->dark) r_border(qx, qy, tile, tile, RGBA(0, 0, 0, 20), SSR(10));
         for (int r = 0; r < DON_QR_N; r++) {
             u64 bits = k_don_qr[r];
             for (int col = 0; col < DON_QR_N;) {
@@ -396,15 +387,15 @@ static void draw_donate(const Theme *t, const SColors *c)
         f32 bx = floorf(px + (pw - bw) * 0.5f);
         box_set(SW.don.link, bx, y, bw, link_h);
         r_rect(bx, y + dy, bw, link_h, color_mix(c->ctl, c->ctl_hover, hv), link_h * 0.5f);
-        text_draw(FONT_TEXT_SEMIBOLD, fs, bx + SSR(16), baseline_for(FONT_TEXT_SEMIBOLD, fs, cy), lbl, -1, t->text);
+        text_draw(FONT_TEXT_SEMIBOLD, fs, bx + SSR(16), text_baseline(FONT_TEXT_SEMIBOLD, fs, cy), lbl, -1, t->text);
         text_draw_icon(0xE8A7, SSC(11), bx + SSR(16) + lw + SSR(8) + SSR(6), cy, color_mix(t->dim, t->text, hv));
     }
     y += link_h + SSR(22);
 
     {
         DON_BLOCK(dy);
-        text_draw(FONT_TEXT_SEMIBOLD, SSC(12.5f), x0 + SSR(2), baseline_for(FONT_TEXT_SEMIBOLD, SSC(12.5f), y + dy + SSR(6)),
-                  ss((Str){ L"Криптовалюта", L"Crypto" }), -1, color_mix(t->dim, t->text, 0.35f));
+        text_draw(FONT_TEXT_SEMIBOLD, SSC(12.5f), x0 + SSR(2), text_baseline(FONT_TEXT_SEMIBOLD, SSC(12.5f), y + dy + SSR(6)),
+                  TR("Криптовалюта", "Crypto"), -1, color_mix(t->dim, t->text, 0.35f));
     }
     y += SSR(20);
 
@@ -418,9 +409,9 @@ static void draw_donate(const Theme *t, const SColors *c)
         f32 isz = SSR(34), ix = x0 + SSR(10);
         draw_coin_icon(i, ix, cy - isz * 0.5f, isz);
         f32 tx = ix + isz + SSR(12), nfs = SSC(14.5f), afs = SSC(12);
-        text_draw(FONT_TEXT_SEMIBOLD, nfs, tx, baseline_for(FONT_TEXT_SEMIBOLD, nfs, cy - SSR(9)), k_coins[i].name, -1, t->text);
+        text_draw(FONT_TEXT_SEMIBOLD, nfs, tx, text_baseline(FONT_TEXT_SEMIBOLD, nfs, cy - SSR(9)), k_coins[i].name, -1, t->text);
         if (nets > 1) {
-            text_draw(FONT_TEXT, afs, tx, baseline_for(FONT_TEXT, afs, cy + SSR(10)), L"Tether", -1, t->faint);
+            text_draw(FONT_TEXT, afs, tx, text_baseline(FONT_TEXT, afs, cy + SSR(10)), L"Tether", -1, t->faint);
             f32 xr = x1 - SSR(10), chh = SSR(30), cfs = SSC(12.5f);
             for (int n = nets - 1; n >= 0; n--) {
                 int wi = w0 + n;
@@ -432,7 +423,7 @@ static void draw_donate(const Theme *t, const SColors *c)
                 if (hv > 0) r_rect(chx, chy, cw, chh, color_alpha(c->ctl_hover, hv), SSR(8));
                 if (cp > 0) r_rect(chx, chy, cw, chh, color_alpha(ok_col, 0.16f * cp), SSR(8));
                 u32 col = color_mix(color_mix(t->dim, t->text, hv), ok_col, cp);
-                text_draw(FONT_TEXT, cfs, chx + SSR(10), baseline_for(FONT_TEXT, cfs, cy), lbl, -1, col);
+                text_draw(FONT_TEXT, cfs, chx + SSR(10), text_baseline(FONT_TEXT, cfs, cy), lbl, -1, col);
                 f32 gx = chx + cw - SSR(10) - SSR(5), slide = SSR(7);
                 r_set_clip(chx, MAX(chy, py + 1), chx + cw, MIN(chy + chh, py + ph - 1));
                 R.opacity = base_op * (1.f - cp);
@@ -448,9 +439,9 @@ static void draw_donate(const Theme *t, const SColors *c)
             const WCHAR *a = k_wallets[w0].addr;
             int n = wlen(a);
             wfmt(shortaddr, countof(shortaddr), L"%ls  \x00B7  %.6ls\x2026%ls", k_wallets[w0].net, a, a + n - 4);
-            text_draw(FONT_TEXT, afs, tx, baseline_for(FONT_TEXT, afs, cy + SSR(10)), shortaddr, -1, t->faint);
+            text_draw(FONT_TEXT, afs, tx, text_baseline(FONT_TEXT, afs, cy + SSR(10)), shortaddr, -1, t->faint);
             f32 hv = SW.don.hov[w0], cp = SW.don.cp[w0];
-            const WCHAR *l0 = ss((Str){ L"Копировать", L"Copy" }), *l1 = ss((Str){ L"Скопировано", L"Copied" });
+            const WCHAR *l0 = TR("Копировать", "Copy"), *l1 = TR("Скопировано", "Copied");
             f32 hfs = SSC(12.5f), phh = SSR(30), slide = SSR(9);
             f32 w0p = floorf(SSR(11) + text_width(FONT_TEXT, hfs, l0, -1) + SSR(8) + SSR(14) + SSR(10));
             f32 w1p = floorf(SSR(11) + text_width(FONT_TEXT, hfs, l1, -1) + SSR(8) + SSR(14) + SSR(10));
@@ -458,7 +449,7 @@ static void draw_donate(const Theme *t, const SColors *c)
             if (hv > 0) r_rect(hx, hy, pw2, phh, color_alpha(c->ctl_hover, hv * (1.f - cp)), SSR(8));
             if (cp > 0) r_rect(hx, hy, pw2, phh, color_alpha(ok_col, 0.16f * cp), SSR(8));
             r_set_clip(hx, MAX(hy, py + 1), hx + pw2, MIN(hy + phh, py + ph - 1));
-            f32 gx = hx + pw2 - SSR(10) - SSR(7), base = baseline_for(FONT_TEXT, hfs, cy);
+            f32 gx = hx + pw2 - SSR(10) - SSR(7), base = text_baseline(FONT_TEXT, hfs, cy);
             u32 c0 = color_mix(t->dim, t->text, hv);
             R.opacity = base_op * (1.f - cp);
             text_draw(FONT_TEXT, hfs, hx + SSR(11), base - cp * slide, l0, -1, c0);
@@ -473,7 +464,7 @@ static void draw_donate(const Theme *t, const SColors *c)
     }
 #undef DON_BLOCK
     R.opacity = e;
-    r_set_clip(0, 0, (f32)SW.W, (f32)SW.H);
+    r_clip_all();
     if (ms > 0 && SW.don.sb_t > 0.f) {
         f32 vh = ph - SSR(24), bar_h = MAX(SSR(28), vh * ph / content), bw = SSR(3);
         r_rect(px + pw - SSR(6) - bw, floorf(py + SSR(12) + (vh - bar_h) * SW.don.scroll / ms), bw, floorf(bar_h), color_alpha(t->faint, SW.don.sb_t),

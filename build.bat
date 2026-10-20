@@ -54,9 +54,15 @@ echo [msvc %MODE% %OUT%]
 set RCFLAGS=/nologo
 if defined RCDEF set RCFLAGS=/nologo /d %RCDEF%
 rc %RCFLAGS% /fo build\%OUT%.res res\mixlauncher.rc || exit /b 1
-set CFLAGS=/nologo /utf-8 /W3 /WX /std:c11 /GS- /Gw /Gy /MT /DNDEBUG
-if "%MODE%"=="debug" (set CFLAGS=/nologo /utf-8 /W3 /WX /std:c11 /Zi /Od /MTd)
-cl %CFLAGS% /O2 src\main.c build\%OUT%.res /Fe:build\%OUT%.exe /Fo:build\ /Fd:build\ /link /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /INCREMENTAL:NO || exit /b 1
+rem /O1: a third smaller than /O2, and the hot paths (search, CPU drawing) stay far under a millisecond.
+rem The C runtime: vcruntime linked in, the UCRT from Windows (ucrtbase.dll, part of Windows 10) - 180 KB less.
+set CFLAGS=/nologo /utf-8 /W3 /WX /std:c11 /O1 /GS- /Gw /Gy /MT /DNDEBUG
+set LFLAGS=/OPT:REF /OPT:ICF /NODEFAULTLIB:libucrt.lib ucrt.lib
+if "%MODE%"=="debug" (
+    set CFLAGS=/nologo /utf-8 /W3 /WX /std:c11 /Zi /Od /MTd
+    set LFLAGS=/DEBUG
+)
+cl %CFLAGS% src\main.c build\%OUT%.res /Fe:build\%OUT%.exe /Fo:build\ /Fd:build\ /link /SUBSYSTEM:WINDOWS /INCREMENTAL:NO %LFLAGS% || exit /b 1
 goto :done
 
 :gcc
@@ -69,8 +75,8 @@ echo [%CC% %MODE% %OUT%]
 set RCFLAGS=
 if defined RCDEF set RCFLAGS=-D%RCDEF%
 windres %RCFLAGS% -I res res\mixlauncher.rc -O coff -o build\%OUT%.res.o || exit /b 1
-rem (no -fdata-sections: MinGW's PE linker would move .bss into .data and bloat the exe)
-set CFLAGS=-std=c11 -O2 -s -DNDEBUG
+rem -Os and unused functions dropped; no -fdata-sections: MinGW's PE linker would move .bss into .data and bloat the exe
+set CFLAGS=-std=c11 -Os -s -DNDEBUG -ffunction-sections -Wl,--gc-sections
 if "%MODE%"=="debug" set CFLAGS=-std=c11 -O0 -g
 %CC% %CFLAGS% -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wno-missing-field-initializers -Wno-cast-function-type -mwindows ^
     src\main.c build\%OUT%.res.o -o build\%OUT%.exe -static ^

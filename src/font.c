@@ -1,3 +1,6 @@
+// Text through DirectWrite glyph runs, rasterized once per size and subpixel phase into the glyph atlas.
+// Characters a face lacks come from the first fallback family that has them.
+
 enum { FONT_TEXT, FONT_TEXT_SEMIBOLD, FONT_DISPLAY, FONT_ICON, FONT__COUNT };
 
 typedef struct Face {
@@ -12,7 +15,7 @@ static const WCHAR *k_fallback_families[] = {
     L"Ebrima", L"Gadugi", L"Myanmar Text", L"Javanese Text", L"Mongolian Baiti", L"Microsoft Himalaya",
     L"Sylfaen", L"Segoe MDL2 Assets",
 };
-#define FALLBACK_COUNT ((int)(sizeof(k_fallback_families) / sizeof(k_fallback_families[0])))
+#define FALLBACK_COUNT countof(k_fallback_families)
 
 static struct {
     DWFactory *dw;
@@ -164,7 +167,7 @@ static GlyphMap *glyph_map(int font, u32 cp)
     return glyph_map(font, cp);
 }
 
-static u32 g_atlas_gen;  // bumped on every reset, so cached atlas regions know they are gone
+static u32 g_atlas_gen;  // bumped on every reset: cached atlas regions know they are gone
 
 static void font_reset_atlas(void)
 {
@@ -196,9 +199,10 @@ static bool atlas_alloc(int w, int h, int *ox, int *oy)
     return true;
 }
 
-static void glyph_rasterize(GlyphRaster *out, Face *f, u16 glyph, f32 size_px, int phase)
+// A glyph's coverage drawn at (ox, oy): grayscale, or ClearType averaged down where only that is offered.
+// b gets its pixel box, out its w*h bytes (cap at most). False when it is empty or does not fit.
+static bool glyph_alpha(Face *f, u16 glyph, f32 size_px, f32 ox, f32 oy, RECT *b, u8 *out, int cap)
 {
-    out->w = out->h = 0;
     FLOAT adv = 0;
     DW_GLYPH_OFFSET off = { 0, 0 };
     DW_GLYPH_RUN run;
@@ -211,54 +215,46 @@ static void glyph_rasterize(GlyphRaster *out, Face *f, u16 glyph, f32 size_px, i
     run.glyphOffsets = &off;
 
     DWGlyphRunAnalysis *ana = NULL;
-    UINT32 tex_type = DW_TEXTURE_CLEARTYPE_3x1;
-    f32 origin_x = (f32)phase * 0.25f;
+    UINT32 tex = DW_TEXTURE_CLEARTYPE_3x1;
     HRESULT hr = E_FAIL;
     if (F.v2) {
         hr = F.dw->lpVtbl->CreateGlyphRunAnalysis2(F.dw, &run, NULL, DW_RENDERING_MODE_NATURAL_SYMMETRIC, DW_MEASURING_MODE_NATURAL,
-                                                   DW_GRID_FIT_MODE_DEFAULT, DW_TEXT_ANTIALIAS_MODE_GRAYSCALE, origin_x, 0, &ana);
-        tex_type = DW_TEXTURE_ALIASED_1x1;
+                                                   DW_GRID_FIT_MODE_DEFAULT, DW_TEXT_ANTIALIAS_MODE_GRAYSCALE, ox, oy, &ana);
+        tex = DW_TEXTURE_ALIASED_1x1;
     }
     if (FAILED(hr)) {
-        hr = F.dw->lpVtbl->CreateGlyphRunAnalysis(F.dw, &run, 1.0f, NULL, DW_RENDERING_MODE_NATURAL_SYMMETRIC, DW_MEASURING_MODE_NATURAL,
-                                                  origin_x, 0, &ana);
-        tex_type = DW_TEXTURE_CLEARTYPE_3x1;
+        hr = F.dw->lpVtbl->CreateGlyphRunAnalysis(F.dw, &run, 1.0f, NULL, DW_RENDERING_MODE_NATURAL_SYMMETRIC, DW_MEASURING_MODE_NATURAL, ox, oy, &ana);
+        tex = DW_TEXTURE_CLEARTYPE_3x1;
     }
-    if (FAILED(hr) || !ana) return;
-
-    RECT b = { 0, 0, 0, 0 };
-    ana->lpVtbl->GetAlphaTextureBounds(ana, tex_type, &b);
-    if (b.right <= b.left && tex_type == DW_TEXTURE_ALIASED_1x1) {
-        tex_type = DW_TEXTURE_CLEARTYPE_3x1;
-        ana->lpVtbl->GetAlphaTextureBounds(ana, tex_type, &b);
+    if (FAILED(hr) || !ana) return false;
+    memset(b, 0, sizeof *b);
+    ana->lpVtbl->GetAlphaTextureBounds(ana, tex, b);
+    if (b->right <= b->left && tex == DW_TEXTURE_ALIASED_1x1) {
+        tex = DW_TEXTURE_CLEARTYPE_3x1;
+        ana->lpVtbl->GetAlphaTextureBounds(ana, tex, b);
     }
-    int w = b.right - b.left, h = b.bottom - b.top;
-    if (w <= 0 || h <= 0 || w > 512 || h > 512) {
-        ana->lpVtbl->Release(ana);
-        return;
-    }
-    int bpp = tex_type == DW_TEXTURE_CLEARTYPE_3x1 ? 3 : 1;
-    static u8 tmp[512 * 512 * 3];
-    if (FAILED(ana->lpVtbl->CreateAlphaTexture(ana, tex_type, &b, tmp, (UINT32)(w * h * bpp)))) {
-        ana->lpVtbl->Release(ana);
-        return;
-    }
+    int n = (b->right - b->left) * (b->bottom - b->top), bpp = tex == DW_TEXTURE_CLEARTYPE_3x1 ? 3 : 1;
+    bool ok = b->right > b->left && b->bottom > b->top && n * bpp <= cap &&
+              SUCCEEDED(ana->lpVtbl->CreateAlphaTexture(ana, tex, b, out, (UINT32)(n * bpp)));
     ana->lpVtbl->Release(ana);
+    if (ok && bpp == 3)
+        for (int i = 0; i < n; i++) out[i] = (u8)(((int)out[i * 3] + out[i * 3 + 1] + out[i * 3 + 2]) / 3);  // in place: i <= 3i
+    return ok;
+}
 
-    int ax, ay;
+static void glyph_rasterize(GlyphRaster *out, Face *f, u16 glyph, f32 size_px, int phase)
+{
+    out->w = out->h = 0;
+    static u8 tmp[512 * 512 * 3];
+    RECT b;
+    if (!glyph_alpha(f, glyph, size_px, (f32)phase * 0.25f, 0, &b, tmp, sizeof tmp)) return;
+    int w = b.right - b.left, h = b.bottom - b.top, ax, ay;
+    if (w > 512 || h > 512) return;
     if (!atlas_alloc(w, h, &ax, &ay)) {
         F.overflow = true;
         return;
     }
-    for (int y = 0; y < h; y++) {
-        u8 *dst = R.glyph_cpu + (size_t)(ay + y) * GLYPH_ATLAS + ax;
-        if (bpp == 1) {
-            memcpy(dst, tmp + y * w, (size_t)w);
-        } else {
-            const u8 *src = tmp + (size_t)y * w * 3;
-            for (int x = 0; x < w; x++) dst[x] = (u8)(((int)src[x * 3] + src[x * 3 + 1] + src[x * 3 + 2]) / 3);
-        }
-    }
+    for (int y = 0; y < h; y++) memcpy(R.glyph_cpu + (size_t)(ay + y) * GLYPH_ATLAS + ax, tmp + (size_t)y * w, (size_t)w);
     r_glyph_dirty(ax, ay, w, h);
     out->x = (u16)ax;
     out->y = (u16)ay;
@@ -312,6 +308,9 @@ static f32 font_cap_height(int font, f32 size) { return F.faces[font].cap_height
 static f32 font_ascent(int font, f32 size) { return F.faces[font].ascent / F.faces[font].upem * size; }
 static f32 font_descent(int font, f32 size) { return F.faces[font].descent / F.faces[font].upem * size; }
 
+// The baseline that centers capitals on cy.
+static f32 text_baseline(int font, f32 size, f32 cy) { return floorf(cy + font_cap_height(font, size) * 0.5f + 0.5f); }
+
 static f32 text_width(int font, f32 size, const WCHAR *s, int len)
 {
     if (len < 0) len = wlen(s);
@@ -335,6 +334,24 @@ static void text_offsets(int font, f32 size, const WCHAR *s, int len, f32 *out)
         w += glyph_map(font, cp)->adv * size;
     }
     out[len] = w;
+}
+
+// The character boundary nearest to x (offs from text_offsets).
+static int offset_at(const f32 *offs, int len, f32 x)
+{
+    int best = 0;
+    for (int i = 0; i <= len; i++)
+        if (fabsf(offs[i] - x) < fabsf(offs[best] - x)) best = i;
+    return best;
+}
+
+// Keeps a one-line field's caret in view: scroll is how far its text is shifted left, width the room it has.
+static void field_scroll(f32 *scroll, const f32 *offs, int caret, int len, f32 width)
+{
+    f32 cx = offs[caret];
+    if (cx - *scroll > width) *scroll = cx - width;
+    if (cx - *scroll < 0) *scroll = cx;
+    if (offs[len] - *scroll < width) *scroll = MAX(0.f, offs[len] - width);
 }
 
 static f32 text_draw(int font, f32 size, f32 x, f32 baseline, const WCHAR *s, int len, u32 color)
@@ -420,4 +437,16 @@ static void text_draw_icon(u32 codepoint, f32 size, f32 cx, f32 cy, u32 color)
     f32 asc = font_ascent(FONT_ICON, size), desc = font_descent(FONT_ICON, size);
     f32 baseline = cy + (asc - desc) * 0.5f;
     text_draw(FONT_ICON, size, floorf(cx - w * 0.5f + 0.5f), baseline, s, 1, color);
+}
+
+// Starts a frame and draws it; when the glyph atlas ran full meanwhile, clears it and draws the frame again.
+static void r_draw(void (*draw)(void))
+{
+    r_begin();
+    draw();
+    if (!F.overflow) return;
+    font_reset_atlas();
+    r_begin();
+    draw();
+    F.overflow = false;
 }

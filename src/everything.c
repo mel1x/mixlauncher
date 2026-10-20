@@ -1,4 +1,8 @@
+// File search through Everything's IPC (WM_COPYDATA, QUERY2): a worker thread asks, ranks and posts the results
+// (WM_APP_FILES_READY), then fetches more pages as the list scrolls.
+
 #define EV_COPYDATA_QUERY2W 18
+// fields of a QUERY2 reply, in the order they come (only those up to DATE_MODIFIED are parsed)
 #define EV_REQ_NAME 0x00000001
 #define EV_REQ_PATH 0x00000002
 #define EV_REQ_FULL_PATH 0x00000004
@@ -6,15 +10,6 @@
 #define EV_REQ_SIZE 0x00000010
 #define EV_REQ_DATE_CREATED 0x00000020
 #define EV_REQ_DATE_MODIFIED 0x00000040
-#define EV_REQ_DATE_ACCESSED 0x00000080
-#define EV_REQ_ATTRIBUTES 0x00000100
-#define EV_REQ_FILE_LIST_FILE_NAME 0x00000200
-#define EV_REQ_RUN_COUNT 0x00000400
-#define EV_REQ_DATE_RUN 0x00000800
-#define EV_REQ_DATE_RECENTLY_CHANGED 0x00001000
-#define EV_REQ_HIGHLIGHTED_NAME 0x00002000
-#define EV_REQ_HIGHLIGHTED_PATH 0x00004000
-#define EV_REQ_HIGHLIGHTED_FULL_PATH 0x00008000
 #define EV_SORT_DATE_MODIFIED_DESC 14
 #define EV_ITEM_FOLDER 0x1
 #define EV_ITEM_DRIVE 0x2
@@ -50,6 +45,18 @@ static void fileresults_free(FileResults *r)
     if (!r) return;
     arena_release(&r->arena);
     free(r);
+}
+
+// The folder part of a path (its length) and the name after it. A drive root ("C:\") is all name.
+static int path_split(const WCHAR *full, const WCHAR **name)
+{
+    const WCHAR *slash = wcsrchr(full, '\\');
+    if (!slash || !slash[1]) {
+        *name = full;
+        return 0;
+    }
+    *name = slash + 1;
+    return (int)(slash - full);
 }
 
 typedef struct RawFile {
@@ -157,13 +164,7 @@ static void ev_parse(const u8 *data, DWORD size)
             }
         }
         if (!p || !name) continue;
-        if (E.raw_count == E.raw_cap) {
-            int nc = E.raw_cap ? E.raw_cap * 2 : 512;
-            RawFile *nr = (RawFile *)realloc(E.raw, sizeof(RawFile) * nc);
-            if (!nr) return;
-            E.raw = nr;
-            E.raw_cap = nc;
-        }
+        if (!GROW(E.raw, E.raw_cap, E.raw_count + 1, 512)) return;
         RawFile *r = &E.raw[E.raw_count++];
         r->name = wdup(&E.scratch, name, -1);
         r->path = wdup(&E.scratch, path ? path : L"", -1);
@@ -183,15 +184,6 @@ static LRESULT CALLBACK ev_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
         return TRUE;
     }
     return DefWindowProcW(h, m, w, l);
-}
-
-static void ev_pump(void)
-{
-    MSG msg;
-    while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
-    }
 }
 
 // Built-in Everything (Everything\Everything.exe next to ours): a hidden instance with its index in our data folder,
@@ -252,7 +244,6 @@ static void ev_own_start(void)
     CreateDirectoryW(dir, NULL);
     wfmt(ini, MAX_PATH, L"%s\\Everything.ini", dir);
     wfmt(db, MAX_PATH, L"%s\\Everything.db", dir);
-    ini[MAX_PATH - 1] = db[MAX_PATH - 1] = 0;
     if (GetFileAttributesW(ini) == INVALID_FILE_ATTRIBUTES) {
         static const char k_ini[] = "[Everything]\r\n"
                                     "show_tray_icon=0\r\n"
@@ -292,7 +283,7 @@ static HWND ev_find_window(void)
     return h;
 }
 
-// 1 = ok, 0 = error, -1 = cancelled by a newer request
+// Sends a query and pumps messages until the reply comes. 1 = ok, 0 = error, -1 = cancelled by a newer request.
 static int ev_send_query(HWND ev, const WCHAR *search, DWORD offset, DWORD max_results, DWORD sort)
 {
     int len = wlen(search);
@@ -320,23 +311,24 @@ static int ev_send_query(HWND ev, const WCHAR *search, DWORD offset, DWORD max_r
     f64 t0 = time_now();
     // Our copy builds its index on the very first run and answers once it is done.
     f64 limit = g_ev_own_started && t0 - g_ev_own_started < 60.0 ? 30.0 : 5.0;
+    int result = 1;
     while (!E.got) {
         if (ev_superseded()) {
-            E.waiting_tag = 0;
-            return -1;
+            result = -1;
+            break;
         }
-        f64 el = time_now() - t0;
-        if (el > limit) {
-            E.waiting_tag = 0;
-            return 0;
+        if (time_now() - t0 > limit) {
+            result = 0;
+            break;
         }
         MsgWaitForMultipleObjects(0, NULL, FALSE, 15, QS_ALLINPUT);
-        ev_pump();
+        pump_messages();
     }
     E.waiting_tag = 0;
-    return 1;
+    return result;
 }
 
+// No Everything syntax (paths, wildcards, operators): ranked as a plain name.
 static bool query_is_simple(const WCHAR *q)
 {
     for (; *q; q++)
@@ -483,6 +475,20 @@ static void ev_build(FileResults *res, size_t reserve)
     qsort(res->items, res->count, sizeof(FileItem), cmp_file_score);
 }
 
+// The query with the user's filter: "<query> filter", or "prefix<query> filter".
+static void ev_search_text(WCHAR *out, int cap, const WCHAR *prefix, const WCHAR *query, const WCHAR *filter)
+{
+    if (filter[0]) wfmt(out, cap, L"%s<%s> %s", prefix, query, filter);
+    else wfmt(out, cap, L"%s%s", prefix, query);
+}
+
+static void ev_post(FileResults *res)
+{
+    if (!PostMessageW(g_hwnd, WM_APP_FILES_READY, 0, (LPARAM)res)) fileresults_free(res);
+}
+
+// A new query: the first page by date, plus (for a plain name) the names that start with it, which a big
+// first page by date could miss.
 static void ev_run(u32 id, const WCHAR *query, const WCHAR *filter)
 {
     FileResults *res = (FileResults *)calloc(1, sizeof(FileResults));
@@ -491,7 +497,7 @@ static void ev_run(u32 id, const WCHAR *query, const WCHAR *filter)
     HWND ev = ev_find_window();
     if (!ev) {
         res->status = EV_NOT_RUNNING;
-        if (!PostMessageW(g_hwnd, WM_APP_FILES_READY, 0, (LPARAM)res)) free(res);
+        ev_post(res);
         return;
     }
     arena_reset(&E.scratch);
@@ -500,9 +506,7 @@ static void ev_run(u32 id, const WCHAR *query, const WCHAR *filter)
     E.cur_id = 0;
 
     WCHAR search[2048];
-    if (filter[0]) wfmt(search, countof(search), L"<%s> %s", query, filter);
-    else wfmt(search, countof(search), L"%s", query);
-
+    ev_search_text(search, countof(search), L"", query, filter);
     int ok = ev_send_query(ev, search, 0, EV_FIRST_PAGE, EV_SORT_DATE_MODIFIED_DESC);
     if (ok < 0) {
         free(res);
@@ -511,10 +515,10 @@ static void ev_run(u32 id, const WCHAR *query, const WCHAR *filter)
     u32 main_count = (u32)E.raw_count;
     bool plain = query_is_simple(query);
     if (ok > 0 && plain && E.raw_total > (u32)E.raw_count && !ev_superseded()) {
-        if (filter[0]) wfmt(search, countof(search), L"startwith:<%s> %s", query, filter);
-        else wfmt(search, countof(search), L"startwith:%s", query);
+        WCHAR starts[2048];
+        ev_search_text(starts, countof(starts), L"startwith:", query, filter);
         u32 total = E.raw_total;
-        int ok2 = ev_send_query(ev, search, 0, 128, EV_SORT_DATE_MODIFIED_DESC);
+        int ok2 = ev_send_query(ev, starts, 0, 128, EV_SORT_DATE_MODIFIED_DESC);
         E.raw_total = total;
         if (ok2 < 0) {
             free(res);
@@ -523,7 +527,7 @@ static void ev_run(u32 id, const WCHAR *query, const WCHAR *filter)
     }
     if (ok == 0) {
         res->status = EV_ERROR;
-        if (!PostMessageW(g_hwnd, WM_APP_FILES_READY, 0, (LPARAM)res)) free(res);
+        ev_post(res);
         return;
     }
 
@@ -531,8 +535,7 @@ static void ev_run(u32 id, const WCHAR *query, const WCHAR *filter)
     norm_str(E.cur_qn, query, E.cur_qlen);
     while (E.cur_qlen && E.cur_qn[E.cur_qlen - 1] == ' ') E.cur_qn[--E.cur_qlen] = 0;
     E.cur_plain = plain;
-    if (filter[0]) wfmt(E.cur_search, countof(E.cur_search), L"<%s> %s", query, filter);
-    else wfmt(E.cur_search, countof(E.cur_search), L"%s", query);
+    wcopy(E.cur_search, countof(E.cur_search), search);
     if (E.seen) memset(E.seen, 0, sizeof(u64) * E.seen_cap);
     E.seen_count = 0;
 
@@ -541,9 +544,10 @@ static void ev_run(u32 id, const WCHAR *query, const WCHAR *filter)
     E.cur_id = id;
     E.cur_total = E.raw_total;
     E.cur_fetched = res->fetched = main_count;
-    if (!PostMessageW(g_hwnd, WM_APP_FILES_READY, 0, (LPARAM)res)) fileresults_free(res);
+    ev_post(res);
 }
 
+// The next page of the current query, as the list scrolls toward its end.
 static void ev_run_more(u32 id)
 {
     if (id != E.cur_id || E.cur_fetched >= E.cur_total) return;
@@ -568,19 +572,13 @@ static void ev_run_more(u32 id)
     }
     res->total = E.cur_total;
     res->fetched = E.cur_fetched;
-    if (!PostMessageW(g_hwnd, WM_APP_FILES_READY, 0, (LPARAM)res)) fileresults_free(res);
+    ev_post(res);
 }
 
 static DWORD WINAPI ev_thread(void *param)
 {
     (void)param;
-    WNDCLASSW wc;
-    memset(&wc, 0, sizeof wc);
-    wc.lpfnWndProc = ev_wndproc;
-    wc.hInstance = GetModuleHandleW(NULL);
-    wc.lpszClassName = L"MixLauncherEverythingReply";
-    RegisterClassW(&wc);
-    E.reply = CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, wc.hInstance, NULL);
+    E.reply = message_window(L"MixLauncherEverythingReply", ev_wndproc);
     // We run elevated and Everything does not: its replies must pass UIPI.
     if (E.reply) ChangeWindowMessageFilterEx(E.reply, WM_COPYDATA, MSGFLT_ALLOW, NULL);
     arena_init(&E.scratch, 64ull << 20);
@@ -595,7 +593,7 @@ static DWORD WINAPI ev_thread(void *param)
 
     for (;;) {
         MsgWaitForMultipleObjects(1, &E.event, FALSE, INFINITE, QS_ALLINPUT);
-        ev_pump();
+        pump_messages();
         u32 id;
         WCHAR q[1024], filter[512];
         AcquireSRWLockExclusive(&E.lock);
@@ -616,6 +614,5 @@ static void ev_start(void)
 {
     InitializeSRWLock(&E.lock);
     E.event = CreateEventW(NULL, FALSE, FALSE, NULL);
-    HANDLE t = CreateThread(NULL, 0, ev_thread, NULL, 0, NULL);
-    if (t) CloseHandle(t);
+    thread_start(ev_thread, NULL);
 }

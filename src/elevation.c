@@ -16,15 +16,20 @@ static void uipi_allow(HWND h, UINT msg)
     if (h && msg) ChangeWindowMessageFilterEx(h, msg, MSGFLT_ALLOW, NULL);
 }
 
-ML_GUID(ML_CLSID_ShellWindows,         0x9ba05972, 0xf6a8, 0x11cf, 0xa4, 0x42, 0x00, 0xa0, 0xc9, 0x0a, 0x8f, 0x39);
-ML_GUID(ML_IID_IShellWindows,          0x85cb6900, 0x4d95, 0x11cf, 0x96, 0x0c, 0x00, 0x80, 0xc7, 0xf4, 0xee, 0x85);
-ML_GUID(ML_IID_IServiceProvider,       0x6d5140c1, 0x7436, 0x11ce, 0x80, 0x34, 0x00, 0xaa, 0x00, 0x60, 0x09, 0xfa);
-ML_GUID(ML_SID_STopLevelBrowser,       0x4c96be40, 0x915c, 0x11cf, 0x99, 0xd3, 0x00, 0xaa, 0x00, 0x4a, 0xe8, 0x37);
-ML_GUID(ML_IID_IShellBrowser,          0x000214e2, 0x0000, 0x0000, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
-ML_GUID(ML_IID_IDispatch,              0x00020400, 0x0000, 0x0000, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
-ML_GUID(ML_IID_IShellFolderViewDual,   0xe7a1af80, 0x4d96, 0x11cf, 0x96, 0x0c, 0x00, 0x80, 0xc7, 0xf4, 0xee, 0x85);
-ML_GUID(ML_IID_IShellDispatch2,        0xa4c6892c, 0x3ba9, 0x11d2, 0x9d, 0xea, 0x00, 0xc0, 0x4f, 0xb1, 0x61, 0x62);
+// A BSTR variant, or an empty one for no text (the shell then uses its default).
+static VARIANT variant_str(const WCHAR *s)
+{
+    VARIANT v;
+    VariantInit(&v);
+    if (s && *s) {
+        v.vt = VT_BSTR;
+        v.bstrVal = SysAllocString(s);
+    }
+    return v;
+}
 
+// ShellExecute through Explorer's own Shell.Application, so the program starts at the user's (not our
+// elevated) level.
 static bool shell_exec_unelevated_ex(const WCHAR *file, const WCHAR *args, const WCHAR *dir, const WCHAR *verb, int show)
 {
     bool ok = false;
@@ -50,23 +55,8 @@ static bool shell_exec_unelevated_ex(const WCHAR *file, const WCHAR *args, const
         SUCCEEDED(IDispatch_QueryInterface(bg, &ML_IID_IShellFolderViewDual, (void **)&fvd)) &&
         SUCCEEDED(IShellFolderViewDual_get_Application(fvd, &app)) && app &&
         SUCCEEDED(IDispatch_QueryInterface(app, &ML_IID_IShellDispatch2, (void **)&sd))) {
-        VARIANT va, vd, vo, vs;
-        VariantInit(&va);
-        VariantInit(&vd);
-        VariantInit(&vo);
+        VARIANT va = variant_str(args), vd = variant_str(dir), vo = variant_str(verb), vs;
         VariantInit(&vs);
-        if (args && *args) {
-            va.vt = VT_BSTR;
-            va.bstrVal = SysAllocString(args);
-        }
-        if (dir && *dir) {
-            vd.vt = VT_BSTR;
-            vd.bstrVal = SysAllocString(dir);
-        }
-        if (verb && *verb) {
-            vo.vt = VT_BSTR;
-            vo.bstrVal = SysAllocString(verb);
-        }
         vs.vt = VT_I4;
         vs.lVal = show;
         BSTR bfile = SysAllocString(file);
@@ -93,6 +83,7 @@ static bool shell_exec_unelevated(const WCHAR *file, const WCHAR *args, const WC
     return shell_exec_unelevated_ex(file, args, dir, verb, SW_SHOWNORMAL);
 }
 
+// Runs a console tool hidden and waits for it. True when it finished in time.
 static bool run_tool(const WCHAR *exe, const WCHAR *args, DWORD wait_ms, DWORD *exit_code)
 {
     WCHAR cmd[2048];
@@ -115,6 +106,7 @@ static bool run_tool(const WCHAR *exe, const WCHAR *args, DWORD wait_ms, DWORD *
 #define OLD_HELPER_TASK L"MixLauncher Admin Hook"
 static const WCHAR k_run_key[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
+// Autostart: elevated, a logon task in Task Scheduler (no UAC prompt at sign-in); otherwise the Run key.
 static bool task_exists(const WCHAR *name)
 {
     WCHAR path[MAX_PATH], sys[MAX_PATH];
@@ -227,6 +219,8 @@ static bool autostart_set(bool on)
     return !task_exists(AUTOSTART_TASK);
 }
 
+// An elevated start cleans up after older versions: their helper task, and a Run key autostart that now
+// becomes a task (the Run key cannot start an elevated exe without a UAC prompt).
 static DWORD WINAPI elevation_housekeeping(void *param)
 {
     (void)param;
@@ -240,8 +234,4 @@ static DWORD WINAPI elevation_housekeeping(void *param)
 
 static void elevation_init(void) { g_elevated = process_is_elevated(); }
 
-static void elevation_housekeeping_start(void)
-{
-    HANDLE t = CreateThread(NULL, 0, elevation_housekeeping, NULL, 0, NULL);
-    if (t) CloseHandle(t);
-}
+static void elevation_housekeeping_start(void) { thread_start(elevation_housekeeping, NULL); }
