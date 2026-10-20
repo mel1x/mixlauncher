@@ -237,6 +237,7 @@ static void ui_hide_finish(void)
     U.closing = false;
     U.vis = U.vis_target = 0;
     ShowWindow(g_hwnd, SW_HIDE);
+    bd_close();
     set_click_through(false);
     set_app_window_mode(false);
     hook_watchdog_sync();
@@ -282,14 +283,13 @@ static void ui_show(void)
         U.caret = U.qlen;
     }
 
-    bool was_dark = TH.dark;
     theme_update();
-    if (was_dark != TH.dark) U.backdrop_ok = backdrop_apply(g_hwnd);
     ui_place_window();
+    RECT win = { U.win_x, U.win_y, U.win_x + U.W, U.win_y + U.H };
+    bd_open(win, U.mon);  // what it shows through, starting while it is still hidden
     set_app_window_mode(taskbar_covered(MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST)));
     // Take the keyboard while still transparent, so keys typed right after Win land here.
     SetLayeredWindowAttributes(g_hwnd, 0, 0, LWA_ALPHA);
-    SendMessageW(g_hwnd, WM_NCACTIVATE, TRUE, -1);  // acrylic from the first frame, see WM_NCACTIVATE
     U.alpha = 0;
     set_click_through(false);
     if (g_pinned) {

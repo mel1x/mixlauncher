@@ -126,7 +126,9 @@ static void settings_draw(void)
     }
     if (SW.don.open) draw_donate(t, &c);
     confetti_draw();
-    if (SW.tip_on && SW.tip_row < SW.nrows && item_locked(&k_sitems[SW.rows[SW.tip_row].item])) draw_tip(t, &c);
+    int tip_key;
+    const WCHAR *tip = SW.tip_on ? tip_at(&tip_key) : NULL;
+    if (tip && tip_key == SW.tip_row) draw_tip(t, &c, tip);
 }
 
 static void tip_hide(void)
@@ -136,12 +138,11 @@ static void tip_hide(void)
     if (SW.hwnd) KillTimer(SW.hwnd, SETTINGS_TIMER_TIP);
 }
 
-// Arms the tooltip when the mouse comes onto a locked row; it shows after a pause, like a system tooltip.
+// Arms the tooltip when the mouse comes to one; it shows after a pause, like a system tooltip.
 static void tip_track(void)
 {
-    int row = SW.hover.type == HT_ROW && SW.hover.idx >= 0 && SW.hover.idx < SW.nrows && item_locked(&k_sitems[SW.rows[SW.hover.idx].item])
-                  ? SW.hover.idx
-                  : -1;
+    int row;
+    tip_at(&row);
     if (row == SW.tip_row) return;
     tip_hide();
     SW.tip_row = row;
@@ -663,9 +664,9 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         if (hit.type != SW.hover.type || hit.idx != SW.hover.idx || hit.part != SW.hover.part) {
             SW.hover = hit;
             if (SW.pop_open && hit.type == HT_POPITEM) SW.pop_hover = hit.idx;
-            tip_track();
             settings_invalidate();
         }
+        tip_track();  // also from one option of a control to the next
         track_mouse_leave(h);
         return 0;
     }

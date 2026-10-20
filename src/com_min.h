@@ -9,6 +9,7 @@
 ML_GUID(ML_IID_IDXGIDevice,          0x54ec77fa, 0x1377, 0x44e6, 0x8c, 0x32, 0x88, 0xfd, 0x5f, 0x44, 0xc8, 0x4c);
 ML_GUID(ML_IID_IDXGIFactory2,        0x50c83a1c, 0xe072, 0x4c48, 0x87, 0xb0, 0x36, 0x30, 0xfa, 0x36, 0xa6, 0xd0);
 ML_GUID(ML_IID_IDXGISwapChain2,      0xa8be2ac4, 0x199f, 0x4946, 0xb3, 0x31, 0x79, 0x59, 0x9f, 0xb9, 0x8d, 0xe7);
+ML_GUID(ML_IID_IDXGIOutput1,         0x00cddea8, 0x939b, 0x4b83, 0xa3, 0x40, 0xa6, 0x85, 0x22, 0x66, 0x66, 0xcc);
 ML_GUID(ML_IID_ID3D11Texture2D,      0x6f15aaf2, 0xd208, 0x4e89, 0x9a, 0xb4, 0x48, 0x95, 0x35, 0xd3, 0x4f, 0x9c);
 ML_GUID(ML_IID_IDCompositionDevice,  0xc37ea93a, 0xe7aa, 0x450d, 0xb1, 0x6f, 0x97, 0x46, 0xcb, 0x04, 0x07, 0xf3);
 ML_GUID(ML_IID_IDWriteFactory,       0xb859ee5a, 0xd838, 0x4b5b, 0xa2, 0xe8, 0x1a, 0xdc, 0x7d, 0x93, 0xdb, 0x48);
@@ -223,18 +224,3 @@ typedef HRESULT (WINAPI *PFN_DCompositionCreateDevice)(IDXGIDevice *, REFIID, vo
 typedef HRESULT (WINAPI *PFN_D3DCompile)(LPCVOID src, SIZE_T len, LPCSTR name, const D3D_SHADER_MACRO *defines,
                                          ID3DInclude *include, LPCSTR entry, LPCSTR target, UINT flags1, UINT flags2,
                                          ID3DBlob **code, ID3DBlob **errors);
-
-typedef struct ML_ACCENT_POLICY {
-    int accent_state;
-    int accent_flags;
-    DWORD gradient_color;
-    int animation_id;
-} ML_ACCENT_POLICY;
-
-typedef struct ML_WINCOMPATTR_DATA {
-    int attrib;
-    PVOID data;
-    SIZE_T size;
-} ML_WINCOMPATTR_DATA;
-
-typedef BOOL (WINAPI *PFN_SetWindowCompositionAttribute)(HWND, ML_WINCOMPATTR_DATA *);

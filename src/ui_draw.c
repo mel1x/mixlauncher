@@ -359,7 +359,12 @@ static void ui_draw(void)
     Theme *t = &TH;
     icons_begin_frame();
     hl_prepare();
-    r_rect(0, 0, (f32)U.W, (f32)U.H, U.backdrop_ok ? t->bg : t->bg_solid, 0);
+    // rounded as DWM rounds the window, so the zoom keeps the corners
+    bool glass = U.backdrop_ok && bd_ready();
+    f32 rad = backdrop_radius();
+    if (glass) r_backdrop(0, 0, (f32)U.W, (f32)U.H, rad);
+    // the Start styles tint the glass with their own fill (TH.veil) instead
+    r_rect(0, 0, (f32)U.W, (f32)U.H, !glass ? t->bg_solid : st_on() || w10_on() ? 0 : t->bg, rad);
     if (st_on()) {
         st_draw_chrome();
     } else if (w10_on()) {
@@ -454,11 +459,13 @@ static bool renderer_recover(void)
 {
     settings_device_lost();
     pm_close();
+    bd_close();  // its screen duplication belongs to the old device
     r_shutdown();
     if (!r_init(g_hwnd, U.W, U.H)) return false;
     font_reset_atlas();
     icons_reset(ui_icon_px());
     settings_device_restored();
+    bd_refresh();
     return true;
 }
 
@@ -538,6 +545,7 @@ static void ui_render(void)
     r_draw(ui_draw);
     apply_window_alpha();
     apply_window_slide();
+    bd_place();
     r_end_and_present();
     U.dirty = false;
     if (U.closing && U.vis <= 0.f) ui_hide_finish();

@@ -2,7 +2,8 @@
 // swap chain (DirectComposition) per window. Also the CPU rasterizing helpers of the taskbar windows and icons.
 
 // One instance. mode: 0 rounded rect, 1 glyph (atlas coverage), 2 icon (atlas BGRA), 3 rounded rect turned by
-// the 2x2 matrix in u0..v1. border > 0 draws only an outline that wide, soft blurs the edge (shadows).
+// the 2x2 matrix in u0..v1, 4 rounded rect of backdrop (the screen behind the window, see r_backdrop).
+// border > 0 draws only an outline that wide, soft blurs the edge (shadows).
 typedef struct RInst {
     f32 x0, y0, x1, y1;
     f32 u0, v0, u1, v1;
@@ -169,6 +170,14 @@ typedef struct RTarget {
     bool ok;
 } RTarget;
 
+// A texture the backdrop's passes read, and (with rtv) write.
+typedef struct RTex {
+    ID3D11Texture2D *tex;
+    ID3D11ShaderResourceView *srv;
+    ID3D11RenderTargetView *rtv;
+    int w, h;
+} RTex;
+
 typedef struct Renderer {
     ID3D11Device *dev;
     ID3D11DeviceContext *ctx;
@@ -187,6 +196,15 @@ typedef struct Renderer {
     ID3D11ShaderResourceView *glyph_srv;
     ID3D11Texture2D *icon_tex;
     ID3D11ShaderResourceView *icon_srv;
+    ID3D11VertexShader *fx_vs;
+    ID3D11PixelShader *fx_down, *fx_blur;
+    ID3D11Buffer *fx_cbuf;
+    // The backdrop: the screen behind the window (src), halved, quartered and blurred there (quarter_b; quarter_t
+    // holds the blur's first pass).
+    RTex bd_src, bd_half, bd_quarter, bd_quarter_t, bd_quarter_b;
+    f32 bd_sigma;  // the blur, src px
+    bool bd_dirty; // src changed: blur again before the frame
+    f32 bd[8];     // the backdrop's constants (bd0, bd1 in the shader)
 
     RTarget main;
     RTarget *t;
@@ -205,9 +223,13 @@ typedef struct Renderer {
 static Renderer R;
 
 // The vertex shader spreads an instance over its quad (grown by the soft edge) and applies the open/close zoom
-// (vp.z); the pixel shader clips, then shades the rect's distance field, a contrast-boosted glyph or an icon.
+// (vp.z); the pixel shader clips, then shades the rect's distance field, a contrast-boosted glyph, an icon or the
+// backdrop. The backdrop is the blurred screen behind the window, sampled
+// where each pixel really is on the screen. bd0: window px to source px, 1 / source size; bd1: kind, dark.
+//   glass   - the blur, more saturated (vibrancy, as macOS has it), under the theme's tint
+//   acrylic - the Fluent recipe: a luminosity layer, then the tint (Windows 11 base acrylic, a little clearer)
 static const char k_shader_src[] =
-    "cbuffer C : register(b0) { float4 vp; float4 gamma; float4 misc; };\n"
+    "cbuffer C : register(b0) { float4 vp; float4 gamma; float4 misc; float4 bd0; float4 bd1; };\n"
     "struct I { float4 r : RECT; float4 uv : UV; float4 c : COLOR; float4 clip : CLIP; float4 p : PARAM; uint vid : SV_VertexID; };\n"
     "struct V { float4 pos : SV_Position; float2 uv : UV; float2 local : LOCAL; float2 cpos : CPOS;\n"
     "  nointerpolation float2 hs : HALF; nointerpolation float4 c : COLOR;\n"
@@ -220,7 +242,7 @@ static const char k_shader_src[] =
     "  float2 p = lerp(i.r.xy - pad, i.r.zw + pad, t);\n"
     "  float2 mid = (i.r.xy + i.r.zw) * 0.5;\n"
     "  o.local = p - mid;\n"
-    "  if (i.p.w > 2.5) p = mid + o.local.x * i.uv.xy + o.local.y * i.uv.zw;\n"
+    "  if (i.p.w > 2.5 && i.p.w < 3.5) p = mid + o.local.x * i.uv.xy + o.local.y * i.uv.zw;\n"
     "  o.cpos = p;\n"
     "  float2 ctr = 0.5 / vp.xy;\n"
     "  float2 q = ctr + (p - ctr) * vp.z;\n"
@@ -232,12 +254,36 @@ static const char k_shader_src[] =
     "}\n"
     "Texture2D<float> gtex : register(t0);\n"
     "Texture2D<float4> itex : register(t1);\n"
+    "Texture2D<float4> btex : register(t2);\n"
     "SamplerState sp : register(s0);\n"
     "SamplerState sl : register(s1);\n"
     "float sdrr(float2 p, float2 b, float r) { float2 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }\n"
+    "float lum(float3 c) { return dot(c, float3(0.30, 0.59, 0.11)); }\n"
+    "float3 clip_color(float3 c) {\n"
+    "  float l = lum(c), n = min(c.r, min(c.g, c.b)), x = max(c.r, max(c.g, c.b));\n"
+    "  if (n < 0.0) c = l + (c - l) * l / max(l - n, 1e-4);\n"
+    "  if (x > 1.0) c = l + (c - l) * (1.0 - l) / max(x - l, 1e-4);\n"
+    "  return c;\n"
+    "}\n"
+    "float3 with_lum(float3 c, float l) { return clip_color(c + (l - lum(c))); }\n"
+    "float4 backdrop(V i) {\n"
+    "  float r = min(i.p.x, min(i.hs.x, i.hs.y));\n"
+    "  float a = saturate(0.5 - sdrr(i.local, i.hs, r)) * i.c.a;\n"
+    "  float3 c = btex.SampleLevel(sl, (i.pos.xy + bd0.xy) * bd0.zw, 0).rgb;\n"
+    "  bool dark = bd1.y > 0.5;\n"
+    "  if (bd1.x < 0.5) {\n"
+    "    c = lerp(lum(c).xxx, c, 1.5);\n"
+    "  } else {\n"
+    "    float3 tint = dark ? float3(0.173, 0.173, 0.173) : float3(0.988, 0.988, 0.988);\n"
+    "    c = lerp(c, with_lum(c, lum(tint)), dark ? 0.88 : 0.78);\n"
+    "    c = lerp(c, with_lum(tint, lum(c)), dark ? 0.15 : 0.0);\n"
+    "  }\n"
+    "  return float4(saturate(c) * a, a);\n"
+    "}\n"
     "float4 ps(V i) : SV_Target {\n"
     "  float2 fp = i.cpos;\n"
     "  if (fp.x < i.clip.x || fp.y < i.clip.y || fp.x > i.clip.z || fp.y > i.clip.w) discard;\n"
+    "  if (i.p.w > 3.5) return backdrop(i);\n"
     "  float4 c = i.c;\n"
     "  float a;\n"
     "  if (i.p.w < 0.5 || i.p.w > 2.5) {\n"
@@ -258,6 +304,33 @@ static const char k_shader_src[] =
     "  }\n"
     "  a *= c.a;\n"
     "  return float4(c.rgb * a, a);\n"
+    "}\n";
+
+// The backdrop's blur passes over a full-target triangle: fdown halves (a 2x2 box: one bilinear tap between four
+// texels), fblur is one direction of a gaussian. fx: one texel along the blur, sigma, taps each way.
+static const char k_fx_src[] =
+    "struct F { float4 pos : SV_Position; float2 uv : UV; };\n"
+    "F fvs(uint id : SV_VertexID) {\n"
+    "  F o;\n"
+    "  float2 t = float2((id << 1) & 2, id & 2);\n"
+    "  o.uv = t;\n"
+    "  o.pos = float4(t.x * 2.0 - 1.0, 1.0 - t.y * 2.0, 0.0, 1.0);\n"
+    "  return o;\n"
+    "}\n"
+    "cbuffer X : register(b0) { float4 fx; };\n"
+    "Texture2D<float4> src : register(t0);\n"
+    "SamplerState sl : register(s0);\n"
+    "float4 fdown(F i) : SV_Target { return float4(src.SampleLevel(sl, i.uv, 0).rgb, 1.0); }\n"
+    "float4 fblur(F i) : SV_Target {\n"
+    "  float3 acc = 0;\n"
+    "  float sum = 0;\n"
+    "  int n = (int)fx.w;\n"
+    "  [loop] for (int j = -n; j <= n; j++) {\n"
+    "    float w = exp(-0.5 * j * j / (fx.z * fx.z));\n"
+    "    acc += w * src.SampleLevel(sl, i.uv + fx.xy * j, 0).rgb;\n"
+    "    sum += w;\n"
+    "  }\n"
+    "  return float4(acc / sum, 1.0);\n"
     "}\n";
 
 static bool r_target_views(RTarget *t)
@@ -354,6 +427,8 @@ static void r_resize(int w, int h) { r_target_resize(&R.main, w, h); }
 
 static void r_use(RTarget *t) { R.t = t; }
 
+static void r_bd_free(void);
+
 static void r_shutdown(void)
 {
     r_target_release(&R.main);
@@ -363,6 +438,11 @@ static void r_shutdown(void)
     SAFE_RELEASE(R.glyph_tex);
     SAFE_RELEASE(R.icon_srv);
     SAFE_RELEASE(R.icon_tex);
+    r_bd_free();
+    SAFE_RELEASE(R.fx_cbuf);
+    SAFE_RELEASE(R.fx_blur);
+    SAFE_RELEASE(R.fx_down);
+    SAFE_RELEASE(R.fx_vs);
     SAFE_RELEASE(R.samp_point);
     SAFE_RELEASE(R.samp_linear);
     SAFE_RELEASE(R.raster);
@@ -377,10 +457,10 @@ static void r_shutdown(void)
     R.ok = false;
 }
 
-static bool r_compile(PFN_D3DCompile compile, const char *entry, const char *target, ID3DBlob **out)
+static bool r_compile(PFN_D3DCompile compile, const char *src, const char *entry, const char *target, ID3DBlob **out)
 {
     ID3DBlob *err = NULL;
-    HRESULT hr = compile(k_shader_src, sizeof(k_shader_src) - 1, "mixlauncher", NULL, NULL, entry, target,
+    HRESULT hr = compile(src, strlen(src), "mixlauncher", NULL, NULL, entry, target,
                          (1 << 15) /*OPTIMIZATION_LEVEL3*/, 0, out, &err);
     if (FAILED(hr)) {
         if (err) {
@@ -435,7 +515,7 @@ static bool r_init(HWND hwnd, int w, int h)
         return false;
     }
     ID3DBlob *vsb = NULL, *psb = NULL;
-    if (!r_compile(compile, "vs", "vs_4_0", &vsb) || !r_compile(compile, "ps", "ps_4_0", &psb)) {
+    if (!r_compile(compile, k_shader_src, "vs", "vs_4_0", &vsb) || !r_compile(compile, k_shader_src, "ps", "ps_4_0", &psb)) {
         SAFE_RELEASE(vsb);
         r_shutdown();
         return false;
@@ -452,6 +532,14 @@ static bool r_init(HWND hwnd, int w, int h)
     ID3D11Device_CreateInputLayout(R.dev, il, countof(il), ID3D10Blob_GetBufferPointer(vsb), ID3D10Blob_GetBufferSize(vsb), &R.layout);
     ID3D10Blob_Release(vsb);
     ID3D10Blob_Release(psb);
+    ID3DBlob *fx[3] = { NULL, NULL, NULL };
+    if (r_compile(compile, k_fx_src, "fvs", "vs_4_0", &fx[0]) && r_compile(compile, k_fx_src, "fdown", "ps_4_0", &fx[1]) &&
+        r_compile(compile, k_fx_src, "fblur", "ps_4_0", &fx[2])) {
+        ID3D11Device_CreateVertexShader(R.dev, ID3D10Blob_GetBufferPointer(fx[0]), ID3D10Blob_GetBufferSize(fx[0]), NULL, &R.fx_vs);
+        ID3D11Device_CreatePixelShader(R.dev, ID3D10Blob_GetBufferPointer(fx[1]), ID3D10Blob_GetBufferSize(fx[1]), NULL, &R.fx_down);
+        ID3D11Device_CreatePixelShader(R.dev, ID3D10Blob_GetBufferPointer(fx[2]), ID3D10Blob_GetBufferSize(fx[2]), NULL, &R.fx_blur);
+    }
+    for (int i = 0; i < 3; i++) SAFE_RELEASE(fx[i]);
     if (!R.vs || !R.ps || !R.layout) {
         r_shutdown();
         return false;
@@ -465,9 +553,11 @@ static bool r_init(HWND hwnd, int w, int h)
     bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     ID3D11Device_CreateBuffer(R.dev, &bd, NULL, &R.ibuf);
 
-    bd.ByteWidth = 48;
+    bd.ByteWidth = 80;
     bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     ID3D11Device_CreateBuffer(R.dev, &bd, NULL, &R.cbuf);
+    bd.ByteWidth = 16;
+    ID3D11Device_CreateBuffer(R.dev, &bd, NULL, &R.fx_cbuf);
 
     D3D11_BLEND_DESC blend = { 0 };
     blend.RenderTarget[0].BlendEnable = TRUE;
@@ -659,6 +749,126 @@ static void r_icon(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, f
     q->mode = 2;
 }
 
+// A rounded rect of the backdrop (R.bd_src, blurred), shaded as R.bd says.
+static void r_backdrop(f32 x, f32 y, f32 w, f32 h, f32 radius)
+{
+    if (!R.bd_src.srv || !R.fx_blur) return;
+    RInst *q = r_push();
+    if (!q) return;
+    q->x0 = x;
+    q->y0 = y;
+    q->x1 = x + w;
+    q->y1 = y + h;
+    q->u0 = q->v0 = q->u1 = q->v1 = 0;
+    q->color = RGBA(255, 255, 255, (u32)(CLAMP(R.opacity, 0.f, 1.f) * 255.f + 0.5f));
+    q->radius = radius;
+    q->border = q->soft = 0;
+    q->mode = 4;
+}
+
+// ---- the backdrop's textures and blur passes
+
+static void rtex_free(RTex *t)
+{
+    SAFE_RELEASE(t->rtv);
+    SAFE_RELEASE(t->srv);
+    SAFE_RELEASE(t->tex);
+    t->w = t->h = 0;
+}
+
+// Makes t w x h BGRA (its pixels undefined after a change), a render target too with target.
+static bool rtex_fit(RTex *t, int w, int h, bool target)
+{
+    w = MAX(w, 1);
+    h = MAX(h, 1);
+    if (t->tex && t->w == w && t->h == h) return true;
+    rtex_free(t);
+    D3D11_TEXTURE2D_DESC td = { 0 };
+    td.Width = (UINT)w;
+    td.Height = (UINT)h;
+    td.MipLevels = td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE | (target ? D3D11_BIND_RENDER_TARGET : 0);
+    if (FAILED(ID3D11Device_CreateTexture2D(R.dev, &td, NULL, &t->tex)) ||
+        FAILED(ID3D11Device_CreateShaderResourceView(R.dev, (ID3D11Resource *)t->tex, NULL, &t->srv)) ||
+        (target && FAILED(ID3D11Device_CreateRenderTargetView(R.dev, (ID3D11Resource *)t->tex, NULL, &t->rtv)))) {
+        rtex_free(t);
+        return false;
+    }
+    t->w = w;
+    t->h = h;
+    return true;
+}
+
+static void r_bd_free(void)
+{
+    RTex *all[] = { &R.bd_src, &R.bd_half, &R.bd_quarter, &R.bd_quarter_t, &R.bd_quarter_b };
+    for (int i = 0; i < countof(all); i++) rtex_free(all[i]);
+}
+
+// The source: w x h px of the screen, copied in (screen capture) or uploaded (r_bd_upload).
+static bool r_bd_source(int w, int h)
+{
+    return R.ok && R.fx_blur && rtex_fit(&R.bd_src, w, h, false);
+}
+
+static void r_bd_upload(const u32 *bgra)
+{
+    ID3D11DeviceContext_UpdateSubresource(R.ctx, (ID3D11Resource *)R.bd_src.tex, 0, NULL, bgra, (UINT)R.bd_src.w * 4, 0);
+    R.bd_dirty = true;
+}
+
+// One full-target pass of ps from in to out; (dx, dy) is the blur's direction.
+static void r_fx(ID3D11PixelShader *ps, RTex *in, RTex *out, f32 dx, f32 dy, f32 sigma)
+{
+    D3D11_MAPPED_SUBRESOURCE m;
+    if (SUCCEEDED(ID3D11DeviceContext_Map(R.ctx, (ID3D11Resource *)R.fx_cbuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
+        f32 *c = (f32 *)m.pData;
+        c[0] = dx / (f32)in->w;
+        c[1] = dy / (f32)in->h;
+        c[2] = MAX(sigma, 0.5f);
+        c[3] = ceilf(MAX(sigma, 0.5f) * 2.5f);
+        ID3D11DeviceContext_Unmap(R.ctx, (ID3D11Resource *)R.fx_cbuf, 0);
+    }
+    ID3D11ShaderResourceView *none = NULL;
+    ID3D11DeviceContext_PSSetShaderResources(R.ctx, 0, 1, &none);
+    ID3D11DeviceContext_OMSetRenderTargets(R.ctx, 1, &out->rtv, NULL);
+    D3D11_VIEWPORT vp = { 0, 0, (FLOAT)out->w, (FLOAT)out->h, 0, 1 };
+    ID3D11DeviceContext_RSSetViewports(R.ctx, 1, &vp);
+    ID3D11DeviceContext_PSSetShader(R.ctx, ps, NULL, 0);
+    ID3D11DeviceContext_PSSetShaderResources(R.ctx, 0, 1, &in->srv);
+    ID3D11DeviceContext_Draw(R.ctx, 3, 0);
+}
+
+// The blur of the source: halved twice, then a gaussian at a quarter size. A few hundred thousand texels: well
+// under a millisecond, so it runs for every new image of the screen.
+static void r_bd_blur(void)
+{
+    R.bd_dirty = false;
+    RTex *s = &R.bd_src;
+    if (!s->srv) return;
+    int hw = (s->w + 1) / 2, hh = (s->h + 1) / 2, qw = (hw + 1) / 2, qh = (hh + 1) / 2;
+    if (!rtex_fit(&R.bd_half, hw, hh, true) || !rtex_fit(&R.bd_quarter, qw, qh, true) || !rtex_fit(&R.bd_quarter_t, qw, qh, true) ||
+        !rtex_fit(&R.bd_quarter_b, qw, qh, true))
+        return;
+    FLOAT bf[4] = { 0, 0, 0, 0 };
+    ID3D11DeviceContext_OMSetBlendState(R.ctx, NULL, bf, 0xFFFFFFFF);
+    ID3D11DeviceContext_RSSetState(R.ctx, R.raster);
+    ID3D11DeviceContext_IASetInputLayout(R.ctx, NULL);
+    ID3D11DeviceContext_IASetPrimitiveTopology(R.ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ID3D11DeviceContext_VSSetShader(R.ctx, R.fx_vs, NULL, 0);
+    ID3D11DeviceContext_PSSetConstantBuffers(R.ctx, 0, 1, &R.fx_cbuf);
+    ID3D11DeviceContext_PSSetSamplers(R.ctx, 0, 1, &R.samp_linear);
+    r_fx(R.fx_down, s, &R.bd_half, 0, 0, 0);
+    r_fx(R.fx_down, &R.bd_half, &R.bd_quarter, 0, 0, 0);
+    r_fx(R.fx_blur, &R.bd_quarter, &R.bd_quarter_t, 1, 0, R.bd_sigma / 4.f);
+    r_fx(R.fx_blur, &R.bd_quarter_t, &R.bd_quarter_b, 0, 1, R.bd_sigma / 4.f);
+    ID3D11ShaderResourceView *none = NULL;
+    ID3D11DeviceContext_PSSetShaderResources(R.ctx, 0, 1, &none);
+}
+
 static void r_glyph_dirty(int x, int y, int w, int h)
 {
     R.dirty_x0 = MIN(R.dirty_x0, x);
@@ -701,8 +911,11 @@ static bool r_end_and_present(void)
         c[7] = -0.3234f / 4.f;
         c[8] = 1.0f;
         c[9] = c[10] = c[11] = 0;
+        memcpy(c + 12, R.bd, sizeof R.bd);
         ID3D11DeviceContext_Unmap(R.ctx, (ID3D11Resource *)R.cbuf, 0);
     }
+
+    if (R.bd_dirty) r_bd_blur();
 
     FLOAT clear[4] = { 0, 0, 0, 0 };
     ID3D11DeviceContext_OMSetRenderTargets(R.ctx, 1, &t->rtv, NULL);
@@ -720,8 +933,8 @@ static bool r_end_and_present(void)
     ID3D11DeviceContext_VSSetConstantBuffers(R.ctx, 0, 1, &R.cbuf);
     ID3D11DeviceContext_PSSetShader(R.ctx, R.ps, NULL, 0);
     ID3D11DeviceContext_PSSetConstantBuffers(R.ctx, 0, 1, &R.cbuf);
-    ID3D11ShaderResourceView *srvs[2] = { R.glyph_srv, R.icon_srv };
-    ID3D11DeviceContext_PSSetShaderResources(R.ctx, 0, 2, srvs);
+    ID3D11ShaderResourceView *srvs[3] = { R.glyph_srv, R.icon_srv, R.bd_quarter_b.srv };
+    ID3D11DeviceContext_PSSetShaderResources(R.ctx, 0, 3, srvs);
     ID3D11SamplerState *samps[2] = { R.scale != 1.0f ? R.samp_linear : R.samp_point, R.samp_linear };
     ID3D11DeviceContext_PSSetSamplers(R.ctx, 0, 2, samps);
 

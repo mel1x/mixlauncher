@@ -16,6 +16,7 @@
 #include "update.c"
 #include "theme.c"
 #include "ui.c"
+#include "backdrop.c"
 #include "ui_window.c"
 #include "ui_draw.c"
 #include "ctxmenu.c"
@@ -89,6 +90,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             icons_reset(ui_icon_px());
             int cx = (sug->left + sug->right) / 2, cy = (sug->top + sug->bottom) / 2;
             SetWindowPos(h, HWND_TOPMOST, cx - U.W / 2, cy - U.H / 2, U.W, U.H, SWP_NOACTIVATE);
+            bd_refresh();  // another monitor behind it
             rebuild_rows(true);
             snap_highlight();
             ui_invalidate();
@@ -220,6 +222,9 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_APP_PRTSC:
         prtsc_handoff();
+        return 0;
+    case WM_APP_SCREENSHOT:
+        bd_screenshot();
         return 0;
     case WM_APP_CLICK_OUTSIDE:
         if (U.visible && !U.closing && !U.menu_open && !g_pinned) {
@@ -540,6 +545,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+        if (U.visible) bd_poll();
         bool rendered = false, anim = false;
         if (settings_needs_render()) {
             settings_render();
@@ -558,6 +564,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
         }
         if (anim) DwmFlush();  // composition swap chains give no back-pressure
         if (rendered) continue;
+        // a live backdrop waits on the screen behind instead, a few ms at a time, input between
+        if (U.visible && !HIWORD(GetQueueStatus(QS_ALLINPUT)) && bd_wait(4)) continue;
         MsgWaitForMultipleObjectsEx(0, NULL, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
     }
 done:

@@ -18,6 +18,7 @@ static struct {
     HWND volatile capture;        // the settings' hotkey recorder gets every key
     bool tap_down;                // a modifier-only hotkey (Win, rctrl) is down; armed while nothing else came
     bool tap_armed;
+    bool tap_mouse;               // the mouse was used while it was down (Win, Alt): its release goes out masked
     DWORD tap_vk;
     DWORD swallow_vk;
     DWORD swallow_time;
@@ -179,6 +180,9 @@ static LRESULT CALLBACK ll_keyboard(int code, WPARAM wp, LPARAM lp)
             return 1;
         }
         if (!(k->flags & LLKHF_INJECTED) && b.vk && key_class(vk) == key_class(b.vk)) K.hook_presses++;
+        // a screenshot: the launcher, left out of screen captures for its live backdrop, goes back in
+        if (K.ui_visible && (vk == VK_SNAPSHOT || (vk == 'S' && (held_mods() & (HK_WIN | HK_SHIFT)) == (HK_WIN | HK_SHIFT))))
+            PostMessageW(g_hwnd, WM_APP_SCREENSHOT, 0, 0);
         if (K.tap_armed && vk != K.tap_vk) K.tap_armed = false;
         // Our elevated window in front: Windows holds PrtSc back from the hooks and hotkeys of normal screenshot
         // tools (Lightshot, Snipaste). Hand the foreground to an ordinary window before the key goes on; a key
@@ -201,6 +205,7 @@ static LRESULT CALLBACK ll_keyboard(int code, WPARAM wp, LPARAM lp)
                 K.tap_down = true;
                 K.tap_vk = vk;
                 K.tap_armed = (held_mods() & ~bit) == b.mods;
+                K.tap_mouse = false;
                 PostThreadMessageW(K.tid, WM_HOOK_MOUSE, 0, 0);
             }
         } else if (!bit && hk_vk_match(b.vk, vk) && held_mods() == b.mods) {
@@ -220,11 +225,18 @@ static LRESULT CALLBACK ll_keyboard(int code, WPARAM wp, LPARAM lp)
         if (K.tap_down && vk == K.tap_vk) {
             K.tap_down = false;
             PostThreadMessageW(K.tid, WM_HOOK_MOUSE, 0, 0);
-            bool armed = K.tap_armed;
-            K.tap_armed = false;
+            bool armed = K.tap_armed, mouse = K.tap_mouse;
+            K.tap_armed = K.tap_mouse = false;
             if (armed && b.vk && hk_vk_match(b.vk, vk)) {
                 K.toggle_pending = true;
                 K.pending_vk = vk;
+                PostThreadMessageW(K.tid, WM_HOOK_MASK, vk, 0);
+                ktrace(k, wp, 's');
+                return 1;
+            }
+            // Only the mouse came between (a click, the wheel), which Windows does not count: let go as it is, Win
+            // would open Start, Alt the menu bar. It goes out as a tap's does, after vkE8, just without the toggle.
+            if (mouse) {
                 PostThreadMessageW(K.tid, WM_HOOK_MASK, vk, 0);
                 ktrace(k, wp, 's');
                 return 1;
@@ -240,7 +252,10 @@ pass:
 static LRESULT CALLBACK ll_mouse(int code, WPARAM wp, LPARAM lp)
 {
     if (code == HC_ACTION && wp != WM_MOUSEMOVE) {
-        if (K.tap_down) K.tap_armed = false;
+        if (K.tap_down && K.tap_armed) {
+            K.tap_armed = false;
+            K.tap_mouse = (vk_mod_bit(K.tap_vk) & (HK_WIN | HK_ALT)) != 0;
+        }
         // A press on the taskbar's search toggles the launcher instead; its release goes nowhere either.
         if (wp == WM_LBUTTONUP && K.swallow_lup) {
             K.swallow_lup = false;

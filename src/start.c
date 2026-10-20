@@ -506,7 +506,7 @@ static void st_draw_chrome(void)
     Theme *t = &TH;
     memset(U.st.title_btn, 0, sizeof U.st.title_btn);  // set again when the title is drawn, so not once it scrolls away
     // a dense acrylic close to the taskbar's color, as Start has; the page a shade lighter
-    r_rect(0, 0, (f32)U.W, (f32)U.H, t->dark ? RGBA(38, 38, 39, 236) : RGBA(243, 243, 243, 236), 0);
+    r_rect(0, 0, (f32)U.W, (f32)U.H, color_alpha(t->dark ? RGBA(38, 38, 39, 236) : RGBA(243, 243, 243, 236), t->veil), 0);
     r_rect(0, U.list_y0, (f32)U.W, U.list_y1 - U.list_y0, t->dark ? RGBA(255, 255, 255, 6) : RGBA(255, 255, 255, 60), 0);
     f32 fx0, fx1, cy;
     search_field(&fx0, &fx1, &cy);

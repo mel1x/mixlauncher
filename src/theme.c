@@ -6,9 +6,14 @@ typedef struct Theme {
     u32 text, dim, faint;
     u32 sel, sep, accent, text_sel;
     u32 key_bg, key_border, danger, tile;
+    f32 veil;          // how much of their opacity the Start styles' dense fills keep over a see-through backdrop
+    bool transparency;  // Windows' "Transparency effects": off, the backdrop is solid as the system's own are
 } Theme;
 
 static Theme TH;
+
+// The backdrop in effect: the setting, unless Windows has transparency effects off.
+static int backdrop_kind(void) { return TH.transparency ? g_cfg.background : BACKDROP_SOLID; }
 
 static bool system_dark(void)
 {
@@ -23,6 +28,10 @@ static void theme_update(void)
     bool dark = g_cfg.theme == 1 ? true : g_cfg.theme == 2 ? false : system_dark();
     Theme *t = &TH;
     t->dark = dark;
+    DWORD tr = 1;
+    reg_dword(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"EnableTransparency", &tr);
+    t->transparency = tr != 0;
+    int kind = backdrop_kind();
 
     u32 acc = RGBA(0, 120, 212, 255);
     BYTE pal[32];
@@ -37,7 +46,8 @@ static void theme_update(void)
     }
     t->accent = acc;
     if (dark) {
-        t->bg = g_cfg.backdrop == BACKDROP_BLUR ? RGBA(24, 24, 27, 150) : RGBA(28, 28, 30, 90);
+        // over the backdrop: the glass's tint (acrylic tints itself in the shader)
+        t->bg = kind == BACKDROP_BLUR ? RGBA(24, 24, 27, 140) : 0;
         t->bg_solid = RGBA(32, 32, 34, 250);
         t->text = RGBA(255, 255, 255, 236);
         t->dim = RGBA(255, 255, 255, 150);
@@ -49,7 +59,7 @@ static void theme_update(void)
         t->danger = RGBA(255, 107, 107, 255);
         t->tile = RGBA(255, 255, 255, 30);
     } else {
-        t->bg = g_cfg.backdrop == BACKDROP_BLUR ? RGBA(250, 250, 252, 150) : RGBA(252, 252, 253, 110);
+        t->bg = kind == BACKDROP_BLUR ? RGBA(250, 250, 252, 140) : 0;
         t->bg_solid = RGBA(249, 249, 251, 250);
         t->text = RGBA(0, 0, 0, 228);
         t->dim = RGBA(0, 0, 0, 140);
@@ -62,6 +72,7 @@ static void theme_update(void)
         t->tile = RGBA(0, 0, 0, 22);
     }
     t->text_sel = color_alpha(acc, dark ? 0.45f : 0.30f);
+    t->veil = kind == BACKDROP_BLUR ? 0.72f : kind == BACKDROP_ACRYLIC ? 0.5f : 1.f;
     if (g_hwnd) dwm_set(g_hwnd, DWA_DARK, dark);
 }
 
@@ -90,28 +101,12 @@ static const LStyle k_lstyles[STYLE__COUNT] = {
 
 static const LStyle *LS(void) { return &k_lstyles[CLAMP(g_cfg.style, 0, STYLE__COUNT - 1)]; }
 
-// The launcher's corners and background (system acrylic, or the blur behind it). True when it is see-through.
+// The launcher's corners. Its backdrop is not DWM's: the renderer draws it from the screen behind (backdrop.c), so
+// it zooms and slides with the window. True when it is see-through.
 static bool backdrop_apply(HWND h)
 {
     dwm_set(h, DWA_CORNER, (DWORD)LS()->corner);
-    PFN_SetWindowCompositionAttribute swca = (PFN_SetWindowCompositionAttribute)(void *)GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetWindowCompositionAttribute");
-    int mode = g_cfg.backdrop;
-    if (mode == BACKDROP_ACRYLIC) {
-        if (dwm_backdrop(h, DWB_ACRYLIC)) return true;
-        mode = BACKDROP_BLUR;
-    }
-    dwm_set(h, DWA_BACKDROP, DWB_NONE);
-    MARGINS zero = { 0, 0, 0, 0 };
-    DwmExtendFrameIntoClientArea(h, &zero);
-    ML_ACCENT_POLICY ap = { 0, 0, 0, 0 };
-    if (mode == BACKDROP_BLUR) {
-        ap.accent_state = 4;  // ACCENT_ENABLE_ACRYLICBLURBEHIND
-        ap.accent_flags = 2;
-        ap.gradient_color = TH.dark ? 0x30201e1eu : 0x30f8f6f6u;
-    }
-    ML_WINCOMPATTR_DATA d = { 19 /*WCA_ACCENT_POLICY*/, &ap, sizeof ap };
-    bool ok = swca && swca(h, &d);
-    return mode == BACKDROP_BLUR && ok;
+    return backdrop_kind() != BACKDROP_SOLID;
 }
 
 // ---- motion

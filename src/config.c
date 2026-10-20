@@ -20,7 +20,7 @@ typedef struct Config {
     Hotkey hk;  // parsed from hotkey
     int   language;  // 0 auto, 1 ru, 2 en
     int   theme;     // 0 auto, 1 dark, 2 light
-    int   backdrop;
+    int   background;
     int   style;
     int   position;
     bool  match_highlight;
@@ -110,9 +110,11 @@ static const CfgField k_cfg[CF__COUNT] = {
     CFG_E(CF_LANGUAGE, language, 0, k_lang_names, .gap = 1,
           .ru = "Язык: auto (как в Windows) | ru | en", .en = "Language: auto (follows Windows) | ru | en"),
     CFG_E(CF_THEME, theme, 0, k_theme_names, .gap = 1, .ru = "Тема: auto | dark | light", .en = "Theme: auto | dark | light"),
-    CFG_E(CF_BACKDROP, backdrop, BACKDROP_BLUR, k_backdrop_names, .gap = 1,
-          .ru = "Фон окна: blur (полупрозрачное стекло, как в macOS) | acrylic (системный акрил Windows 11) | solid",
-          .en = "Window background: blur (translucent glass, macOS-like) | acrylic (Windows 11 system acrylic) | solid"),
+    CFG_E(CF_BACKDROP, background, BACKDROP_SOLID, k_backdrop_names, .gap = 1,
+          .ru = "Фон окна: solid (сплошной) | blur (полупрозрачное стекло, как в macOS) | acrylic (акрил, как в Windows 11).\n"
+                "Стекло и акрил всё время следят за тем, что под окном, и нагружают видеокарту больше",
+          .en = "Window background: solid | blur (translucent glass, macOS-like) | acrylic (Windows 11 acrylic).\n"
+                "Glass and acrylic keep following what is behind the window and use more of the GPU"),
     CFG_E(CF_STYLE, style, STYLE_STANDARD, k_style_names, .gap = 1,
           .ru = "Стиль лаунчера: standard | raycast | fluent | compact | windows | windows10 (как меню Пуск Windows 11 и 10)",
           .en = "Launcher style: standard | raycast | fluent | compact | windows | windows10 (like the Windows 11 and 10 Start menus)"),
@@ -480,6 +482,7 @@ static void config_load(void)
         return;
     }
     int old_win_key = -1;
+    bool old_backdrop = false;
     char *cur = utf8_bom(text) ? text + 3 : text, *line;
     while ((line = next_line(&cur)) != NULL) {
         line = trim(line);
@@ -491,6 +494,7 @@ static void config_load(void)
         int id = cfg_find(k);
         if (id) cfg_parse(id, v);
         else if (!_stricmp(k, "win_key")) old_win_key = parse_bool(v);  // before hotkey existed
+        else if (!_stricmp(k, "backdrop")) old_backdrop = true;  // blur was the default then: everyone starts on solid
     }
     free(text);
     lang_apply();
@@ -500,7 +504,7 @@ static void config_load(void)
         g_cfg.hk.mods = 0;
         g_cfg.hk.vk = VK_ANYWIN;
     }
-    if (old_win_key >= 0) config_write_all();
+    if (old_win_key >= 0 || old_backdrop) config_write_all();
 }
 
 // Rewrites one key in the file, keeping everything else (comments, the user's own lines) as it is.

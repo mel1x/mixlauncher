@@ -32,6 +32,7 @@ typedef struct SItem {
     int lo, hi, step;  // a stepper; with no range given, its setting's range
     Str unit;
     Str opt[6];
+    u8 warn;  // options marked with a caution sign (bits), the reason in a tooltip (warn_tip)
     u32 glyph;
     u8 dep, dep_val;  // shown only while setting `dep` has the value `dep_val` (and is shown itself)
     u16 dep_mask;     // ...or, with this, one of these values (bits)
@@ -95,9 +96,9 @@ static const SItem k_sitems[] = {
       .title = { L"Тема", L"Theme" }, .desc = { L"«Системная» следует настройке Windows", L"System follows the Windows setting" },
       .opt = { { L"Системная", L"System" }, { L"Тёмная", L"Dark" }, { L"Светлая", L"Light" } } },
     { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_BACKDROP, .title = { L"Фон", L"Background" },
-      .desc = { L"Стекло - полупрозрачное размытие, акрил - как у системных меню Windows 11",
-                L"Glass is a translucent blur, acrylic looks like Windows 11 system menus" },
-      .opt = { { L"Стекло", L"Glass" }, { L"Акрил", L"Acrylic" }, { L"Сплошной", L"Solid" } } },
+      .desc = { L"Стекло - полупрозрачное размытие, акрил - как у системных меню Windows 11",
+                L"Glass is a translucent blur, acrylic looks like Windows 11 system menus" },
+      .opt = { { L"Стекло", L"Glass" }, { L"Акрил", L"Acrylic" }, { L"Сплошной", L"Solid" } }, .warn = 3 },
     { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_STYLE, .group = { L"Лаунчер", L"Launcher" },
       .title = { L"Стиль", L"Style" },
       .desc = { L"Стандарт - мягкая подложка с контуром. Raycast - мелкие значки и плотная подложка. "
@@ -338,7 +339,8 @@ static struct {
     f32 sb_btn[2][4], sb_hov[2];
     f64 sb_seen;
     int mx, my;
-    // Tooltip of a locked row: armed when the mouse enters it, shown at (tip_x, tip_y) after a pause.
+    // Tooltip (a locked row, a marked option): armed when the mouse comes to it (tip_at's key), shown at
+    // (tip_x, tip_y) after a pause.
     int tip_row, tip_x, tip_y;
     bool tip_on;
 } SW = { .focus = -1, .editing = -1, .pop_row = -1, .flash_id = -1, .page_t = 1, .pop_t = 1, .rec_t = 1, .seg_click = -1, .tip_row = -1 };
@@ -427,12 +429,21 @@ static int choice_count(const SItem *it)
 // Short option lists (up to three) are shown as a segmented control instead of a dropdown.
 static bool is_seg(const SItem *it) { return it->kind == SK_CHOICE && choice_count(it) <= 3; }
 
+// Why an option is marked with a caution sign.
+static const WCHAR *warn_tip(void)
+{
+    return TR("Нагружает видеокарту и процессор больше сплошного: фон всё время следит за тем, что под окном",
+              "Uses more GPU and CPU than solid: the background keeps following what is behind the window");
+}
+
+#define WARN_GLYPH_W 20.f  // the caution sign before a label, with its gap
+
 static f32 seg_layout(const SItem *it, f32 x, f32 *xs, f32 *ws)
 {
     f32 fs = SSC(13.5f), x0 = x;
     for (int k = 0; k < choice_count(it); k++) {
         xs[k] = x;
-        ws[k] = floorf(text_width(FONT_TEXT, fs, ss(it->opt[k]), -1) + SSR(28));
+        ws[k] = floorf(text_width(FONT_TEXT, fs, ss(it->opt[k]), -1) + SSR(28) + (it->warn & (1 << k) ? SSR(WARN_GLYPH_W) : 0));
         x += ws[k];
     }
     return x - x0;
@@ -534,6 +545,7 @@ static void sapply(const SItem *it, int v)
     case SID_BACKDROP:
         theme_update();
         U.backdrop_ok = backdrop_apply(g_hwnd);
+        bd_refresh();
         settings_apply_theme();
         break;
     case SID_STYLE:
@@ -1285,9 +1297,11 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
             int hk = chov ? seg_index_at(it, cx, (f32)SW.mx) : -1;
             for (int k = 0; k < n; k++) {
                 const WCHAR *lbl = ss(it->opt[k]);
-                f32 lw = text_width(FONT_TEXT, cfs, lbl, -1);
+                f32 lw = text_width(FONT_TEXT, cfs, lbl, -1), gw = it->warn & (1 << k) ? SSR(WARN_GLYPH_W) : 0;
                 u32 col = k == cur ? t->text : k == hk ? color_mix(t->dim, t->text, 0.6f) : t->dim;
-                text_draw(FONT_TEXT, cfs, floorf(xs[k] + (ws[k] - lw) * 0.5f + 0.5f), text_baseline(FONT_TEXT, cfs, mid), lbl, -1, col);
+                f32 lx = floorf(xs[k] + (ws[k] - lw - gw) * 0.5f + 0.5f);
+                if (gw > 0) text_draw_icon(0xE7BA, SSC(12), lx + SSR(7), mid, col);  // Warning
+                text_draw(FONT_TEXT, cfs, lx + gw, text_baseline(FONT_TEXT, cfs, mid), lbl, -1, col);
             }
             break;
         }
@@ -1388,9 +1402,28 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
     R.opacity = opacity;
 }
 
-static void draw_tip(const Theme *t, const SColors *c)
+// What the tooltip under the pointer says (none: NULL), and *key for its place: a new place arms it again.
+static const WCHAR *tip_at(int *key)
 {
-    const WCHAR *s = TR("Изменение недоступно при включённом уменьшении движения", "Can't be changed while reduced motion is on");
+    *key = -1;
+    if (SW.hover.type != HT_ROW || SW.hover.idx < 0 || SW.hover.idx >= SW.nrows) return NULL;
+    const SItem *it = &k_sitems[SW.rows[SW.hover.idx].item];
+    if (item_locked(it)) {
+        *key = SW.hover.idx * 8;
+        return TR("Изменение недоступно при включённом уменьшении движения", "Can't be changed while reduced motion is on");
+    }
+    if (it->warn && is_seg(it) && SW.hover.part == PART_CONTROL) {
+        int k = seg_index_at(it, SW.rows[SW.hover.idx].cx, (f32)SW.mx);
+        if (it->warn & (1 << k)) {
+            *key = SW.hover.idx * 8 + 1 + k;
+            return warn_tip();
+        }
+    }
+    return NULL;
+}
+
+static void draw_tip(const Theme *t, const SColors *c, const WCHAR *s)
+{
     f32 fs = SSC(12.5f), pad = SSR(10), h = SSR(30), w = floorf(text_width(FONT_TEXT, fs, s, -1) + pad * 2);
     f32 x = floorf(MAX(SSR(8), MIN((f32)SW.tip_x, (f32)SW.W - w - SSR(8)))), y = (f32)SW.tip_y + SSR(22);
     if (y + h > (f32)SW.H - SSR(8)) y = (f32)SW.tip_y - h - SSR(8);

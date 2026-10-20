@@ -508,7 +508,7 @@ static u32 w10_bg(void) { return TH.dark ? RGBA(31, 31, 31, 255) : RGBA(228, 228
 static void w10_draw_chrome(void)
 {
     Theme *t = &TH;
-    r_rect(0, 0, (f32)U.W, (f32)U.H, color_alpha(w10_bg(), 0.86f), 0);
+    r_rect(0, 0, (f32)U.W, (f32)U.H, color_alpha(w10_bg(), 0.86f * t->veil), 0);
     f32 y0, y1;
     search_band(&y0, &y1);
     if (q_active()) {
