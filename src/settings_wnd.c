@@ -400,6 +400,9 @@ static void activate_row(int ri, int part)
         if (part == PART_MINUS) sset(it, sval(it->id) - it->step);
         else if (part == PART_PLUS) sset(it, sval(it->id) + it->step);
         break;
+    case SK_SLIDER:
+        if (part == PART_CONTROL) sset(it, slider_value_at(&SW.rows[ri], (f32)SW.mx));  // dragging goes on in WM_MOUSEMOVE
+        break;
     case SK_TEXT: begin_edit(ri); break;
     case SK_HOTKEY: rec_open(); break;
     case SK_BUTTON: button_action(it); break;
@@ -486,14 +489,14 @@ static void settings_key(UINT vk)
     case VK_LEFT:
     case VK_RIGHT: {
         int d = vk == VK_LEFT ? -1 : 1;
-        if (it->kind == SK_STEPPER) sset(it, sval(it->id) + d * it->step);
+        if (it->kind == SK_STEPPER || it->kind == SK_SLIDER) sset(it, sval(it->id) + d * it->step);
         else if (it->kind == SK_CHOICE) sset(it, sval(it->id) + d);
         else if (it->kind == SK_TOGGLE) sset(it, d > 0);
         break;
     }
     case VK_SPACE:
     case VK_RETURN:
-        activate_row(SW.focus, it->kind == SK_STEPPER ? PART_ROW : PART_CONTROL);
+        activate_row(SW.focus, it->kind == SK_STEPPER || it->kind == SK_SLIDER ? PART_ROW : PART_CONTROL);
         break;
     }
     settings_invalidate();
@@ -659,6 +662,11 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         bool was_hot = sb_hot();
         SW.mx = GET_X_LPARAM(lp);
         SW.my = GET_Y_LPARAM(lp);
+        if (SW.press.type == HT_ROW && SW.press.part == PART_CONTROL && SW.press.idx < SW.nrows &&
+            k_sitems[SW.rows[SW.press.idx].item].kind == SK_SLIDER) {
+            const SItem *it = &k_sitems[SW.rows[SW.press.idx].item];
+            if (!item_locked(it)) sset(it, slider_value_at(&SW.rows[SW.press.idx], (f32)SW.mx));
+        }
         if (sb_hot() != was_hot || (SW.hover.type == HT_ROW && SW.hover.part == PART_CONTROL)) settings_invalidate();
         SHit hit = settings_hit(SW.mx, SW.my);
         if (hit.type != SW.hover.type || hit.idx != SW.hover.idx || hit.part != SW.hover.part) {
@@ -680,6 +688,8 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_LBUTTONDBLCLK:
         SetFocus(h);
         SetCapture(h);
+        SW.mx = GET_X_LPARAM(lp);
+        SW.my = GET_Y_LPARAM(lp);
         settings_mouse_down(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
         return 0;
     case WM_LBUTTONUP:

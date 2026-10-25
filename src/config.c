@@ -1,6 +1,6 @@
 // config.ini: one table (k_cfg) gives every setting its key, type, default, range and comment.
 
-enum { BACKDROP_BLUR, BACKDROP_ACRYLIC, BACKDROP_SOLID };
+enum { BACKDROP_BLUR, BACKDROP_ACRYLIC, BACKDROP_MICA, BACKDROP_SOLID };
 
 // STYLE_START and STYLE_WIN10 lay the launcher out like the Windows 11 and Windows 10 Start menus.
 enum { STYLE_STANDARD, STYLE_RAYCAST, STYLE_FLUENT, STYLE_COMPACT, STYLE_CAPSULE, STYLE_START, STYLE_WIN10, STYLE__COUNT };
@@ -26,6 +26,7 @@ typedef struct Config {
     bool  match_highlight;
     int   width;
     int   rows;
+    int   scale;  // the launcher's size in percent of the system's
     int   start10_width, start10_height;  // the Windows 10 style's size (logical px)
     int   max_apps;
     int   file_min_chars;
@@ -61,7 +62,7 @@ static Config g_cfg;
 // Fields in config.ini order.
 enum {
     CF_NONE,
-    CF_HOTKEY, CF_LANGUAGE, CF_THEME, CF_BACKDROP, CF_STYLE, CF_POSITION, CF_MATCH_HIGHLIGHT, CF_WIDTH, CF_ROWS,
+    CF_HOTKEY, CF_LANGUAGE, CF_THEME, CF_BACKDROP, CF_STYLE, CF_POSITION, CF_MATCH_HIGHLIGHT, CF_WIDTH, CF_ROWS, CF_SCALE,
     CF_START10_WIDTH, CF_START10_HEIGHT, CF_MAX_APPS, CF_FILE_MIN_CHARS, CF_EVERYTHING_FILTER, CF_HIDE_UNINSTALLERS,
     CF_KEEP_QUERY, CF_UPDATE_CHECK, CF_TASKBAR_BUTTON, CF_TASKBAR_REPLACE_ICON, CF_TASKBAR_ICON, CF_TASKBAR_ICON_PATH,
     CF_TASKBAR_SEARCH, CF_MEDIA_WIDGET, CF_MEDIA_POSITION, CF_MEDIA_CONTROLS, CF_MEDIA_HIDE_PAUSED, CF_MEDIA_MARQUEE,
@@ -88,7 +89,7 @@ typedef struct CfgField {
 
 static const char *const k_lang_names[] = { "auto", "ru", "en" };
 static const char *const k_theme_names[] = { "auto", "dark", "light" };
-static const char *const k_backdrop_names[] = { "blur", "acrylic", "solid" };
+static const char *const k_backdrop_names[] = { "blur", "acrylic", "mica", "solid" };
 static const char *const k_style_names[STYLE__COUNT] = { "standard", "raycast", "fluent", "compact", "capsule", "windows", "windows10" };
 static const char *const k_pos_names[POS__COUNT] = { "center", "bottom-left", "bottom-center" };
 static const char *const k_tbi_names[TBI__COUNT] = { "diamond", "grid", "petals", "layers", "dots", "custom" };
@@ -110,10 +111,12 @@ static const CfgField k_cfg[CF__COUNT] = {
     CFG_E(CF_LANGUAGE, language, 0, k_lang_names, .gap = 1,
           .ru = "Язык: auto (как в Windows) | ru | en", .en = "Language: auto (follows Windows) | ru | en"),
     CFG_E(CF_THEME, theme, 0, k_theme_names, .gap = 1, .ru = "Тема: auto | dark | light", .en = "Theme: auto | dark | light"),
-    CFG_E(CF_BACKDROP, background, BACKDROP_SOLID, k_backdrop_names, .gap = 1,
-          .ru = "Фон окна: solid (сплошной) | blur (полупрозрачное стекло, как в macOS) | acrylic (акрил, как в Windows 11).\n"
+    CFG_E(CF_BACKDROP, background, BACKDROP_MICA, k_backdrop_names, .gap = 1,
+          .ru = "Фон окна: blur (полупрозрачное стекло, как в macOS) | acrylic (акрил, как в Windows 11) |\n"
+                "mica (оттенок обоев, как у окон Windows 11) | solid (сплошной).\n"
                 "Стекло и акрил всё время следят за тем, что под окном, и нагружают видеокарту больше",
-          .en = "Window background: solid | blur (translucent glass, macOS-like) | acrylic (Windows 11 acrylic).\n"
+          .en = "Window background: blur (translucent glass, macOS-like) | acrylic (Windows 11 acrylic) |\n"
+                "mica (a tint of the wallpaper, like Windows 11 windows) | solid.\n"
                 "Glass and acrylic keep following what is behind the window and use more of the GPU"),
     CFG_E(CF_STYLE, style, STYLE_STANDARD, k_style_names, .gap = 1,
           .ru = "Стиль лаунчера: standard | raycast | fluent | compact | capsule (поиск и результаты отдельными панелями) |\n"
@@ -131,6 +134,9 @@ static const CfgField k_cfg[CF__COUNT] = {
           .ru = "Ширина окна в логических пикселях и количество видимых строк списка",
           .en = "Window width in logical pixels and number of visible list rows"),
     CFG_I(CF_ROWS, rows, 9, 4, 20),
+    CFG_I(CF_SCALE, scale, 100, 70, 150, .gap = 1,
+          .ru = "Масштаб лаунчера в процентах: 100 - обычный размер, больше - крупнее",
+          .en = "Launcher scale in percent: 100 is the normal size, more is bigger"),
     CFG_I(CF_START10_WIDTH, start10_width, 648, 300, 4000,
           .ru = "Размер стиля windows10 (меняется и перетаскиванием края окна)",
           .en = "Size of the windows10 style (also set by dragging the window edge)"),
@@ -484,7 +490,7 @@ static void config_load(void)
         return;
     }
     int old_win_key = -1;
-    bool old_backdrop = false;
+    bool old_backdrop = false, has_scale = false;
     char *cur = utf8_bom(text) ? text + 3 : text, *line;
     while ((line = next_line(&cur)) != NULL) {
         line = trim(line);
@@ -495,6 +501,7 @@ static void config_load(void)
         char *k = trim(line), *v = trim(eq + 1);
         int id = cfg_find(k);
         if (id) cfg_parse(id, v);
+        if (id == CF_SCALE) has_scale = true;
         else if (!_stricmp(k, "win_key")) old_win_key = parse_bool(v);  // before hotkey existed
         else if (!_stricmp(k, "backdrop")) old_backdrop = true;  // blur was the default then: everyone starts on solid
     }
@@ -506,7 +513,10 @@ static void config_load(void)
         g_cfg.hk.mods = 0;
         g_cfg.hk.vk = VK_ANYWIN;
     }
-    if (old_win_key >= 0 || old_backdrop) config_write_all();
+    // Before scale (2.1.2) solid was the default: everyone on it moves to Mica once.
+    bool to_mica = !has_scale && g_cfg.background == BACKDROP_SOLID;
+    if (to_mica) g_cfg.background = BACKDROP_MICA;
+    if (old_win_key >= 0 || old_backdrop || to_mica) config_write_all();
 }
 
 // Rewrites one key in the file, keeping everything else (comments, the user's own lines) as it is.

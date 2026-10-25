@@ -197,7 +197,7 @@ static int ui_icon_px(void) { return (int)(ICON_LOGICAL * U.s + 0.5f); }
 static void ui_metrics(u32 dpi)
 {
     U.dpi = dpi ? dpi : 96;
-    U.s = (f32)U.dpi / 96.f;
+    U.s = (f32)U.dpi / 96.f * (f32)g_cfg.scale / 100.f;
     U.search_h = SR(LS()->search_h);
     U.footer_h = SR(LS()->footer_h);
     if (st_on()) {

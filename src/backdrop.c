@@ -106,6 +106,21 @@ static bool bd_pull(UINT timeout)
     return got;
 }
 
+// Mica: the wallpaper under BD.rc, as the desktop shows it. A still: it changes only with the wallpaper.
+static bool bd_wallpaper(void)
+{
+    Layer l = { 0 };
+    int w = BD.rc.right - BD.rc.left, h = BD.rc.bottom - BD.rc.top;
+    if (!layer_fit(&l, w, h)) return false;
+    SetViewportOrgEx(l.dc, -BD.rc.left, -BD.rc.top, NULL);  // PaintDesktop draws in screen coordinates
+    bool ok = PaintDesktop(l.dc) != 0;
+    GdiFlush();
+    if (ok) r_bd_upload(l.bits);
+    else log_msg("backdrop: PaintDesktop failed (%lu)", GetLastError());
+    layer_free(&l);
+    return ok;
+}
+
 // A still of BD.rc through GDI.
 static bool bd_snapshot(void)
 {
@@ -144,8 +159,14 @@ static void bd_open(RECT win, HMONITOR mon)
     if (mon != BD.mon) bd_dup_stop();
     BD.rc = rc;
     BD.mon = mon;
-    R.bd_sigma = 30.f * U.s;
+    R.bd_sigma = (kind == BACKDROP_MICA ? 60.f : 30.f) * U.s;
     f64 t0 = time_now();
+    if (kind == BACKDROP_MICA) {  // the wallpaper only: nothing live, the launcher stays in screen captures
+        BD.ok = bd_wallpaper();
+        R.bd_dirty = true;
+        if (g_ktrace_on) log_msg("backdrop mica %ldx%ld %s in %.1f ms", rc.right - rc.left, rc.bottom - rc.top, BD.ok ? "ok" : "none", (time_now() - t0) * 1000.0);
+        return;
+    }
     // Left out of captures from now on: Desktop Duplication (and a still taken while it shows) sees what is behind.
     bool excluded = SetWindowDisplayAffinity(g_hwnd, WDA_EXCLUDEFROMCAPTURE) != 0;
     bool shown = IsWindowVisible(g_hwnd);
@@ -218,7 +239,7 @@ static void bd_place(void)
     R.bd[1] = (f32)(w.top - BD.rc.top);
     R.bd[2] = 1.f / (f32)R.bd_src.w;
     R.bd[3] = 1.f / (f32)R.bd_src.h;
-    R.bd[4] = kind == BACKDROP_BLUR ? 0.f : 1.f;
+    R.bd[4] = kind == BACKDROP_BLUR ? 0.f : kind == BACKDROP_ACRYLIC ? 1.f : 2.f;
     R.bd[5] = TH.dark ? 1.f : 0.f;
     R.bd[6] = R.bd[7] = 0;
 }

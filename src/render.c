@@ -228,6 +228,7 @@ static Renderer R;
 // where each pixel really is on the screen. bd0: window px to source px, 1 / source size; bd1: kind, dark.
 //   glass   - the blur, more saturated (vibrancy, as macOS has it), under the theme's tint
 //   acrylic - the Fluent recipe: a luminosity layer, then the tint (Windows 11 base acrylic, a little clearer)
+//   mica    - the wallpaper (backdrop.c) with the tint's luminosity, under the Windows 11 Mica tint
 static const char k_shader_src[] =
     "cbuffer C : register(b0) { float4 vp; float4 gamma; float4 misc; float4 bd0; float4 bd1; };\n"
     "struct I { float4 r : RECT; float4 uv : UV; float4 c : COLOR; float4 clip : CLIP; float4 p : PARAM; uint vid : SV_VertexID; };\n"
@@ -273,6 +274,9 @@ static const char k_shader_src[] =
     "  bool dark = bd1.y > 0.5;\n"
     "  if (bd1.x < 0.5) {\n"
     "    c = lerp(lum(c).xxx, c, 1.5);\n"
+    "  } else if (bd1.x > 1.5) {\n"
+    "    float3 tint = dark ? float3(0.125, 0.125, 0.125) : float3(0.953, 0.953, 0.953);\n"
+    "    c = lerp(with_lum(c, lum(tint)), tint, dark ? 0.8 : 0.5);\n"
     "  } else {\n"
     "    float3 tint = dark ? float3(0.173, 0.173, 0.173) : float3(0.988, 0.988, 0.988);\n"
     "    c = lerp(c, with_lum(c, lum(tint)), dark ? 0.88 : 0.78);\n"

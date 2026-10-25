@@ -72,7 +72,7 @@ static void theme_update(void)
         t->tile = RGBA(0, 0, 0, 22);
     }
     t->text_sel = color_alpha(acc, dark ? 0.45f : 0.30f);
-    t->veil = kind == BACKDROP_BLUR ? 0.72f : kind == BACKDROP_ACRYLIC ? 0.5f : 1.f;
+    t->veil = kind == BACKDROP_BLUR ? 0.72f : kind == BACKDROP_SOLID ? 1.f : 0.5f;
     if (g_hwnd) dwm_set(g_hwnd, DWA_DARK, dark);
 }
 

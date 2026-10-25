@@ -1,14 +1,14 @@
 // The settings: the items of every page (k_sitems), their values and what changing one does. Layout and
 // drawing of the rows are here too; the window, input and animation are in settings_wnd.c.
 
-enum { SK_TOGGLE, SK_CHOICE, SK_STEPPER, SK_TEXT, SK_HOTKEY, SK_BUTTON, SK_INFO, SK_ABOUT };
+enum { SK_TOGGLE, SK_CHOICE, SK_STEPPER, SK_SLIDER, SK_TEXT, SK_HOTKEY, SK_BUTTON, SK_INFO, SK_ABOUT };
 enum {
     SID_NONE, SID_HOTKEY, SID_AUTOSTART, SID_KEEPQUERY, SID_THEME, SID_BACKDROP, SID_ANIM, SID_WIDTH, SID_ROWS,
     SID_MAXAPPS, SID_HIDENOISE, SID_REINDEX, SID_MINCHARS, SID_FILTER, SID_CLEARHIST, SID_CONFIG,
     SID_DATADIR, SID_ADMIN, SID_EVERYTHING, SID_ABOUT,
     SID_ASPEED, SID_AOPEN, SID_ACLOSE, SID_ASCALE, SID_ACASCADE, SID_AROW, SID_ASTAGGER, SID_ASELECT, SID_ASCROLL, SID_AMENU,
     SID_APAGE, SID_APREVIEW, SID_ARESET, SID_TASKBAR, SID_TBREPLACE, SID_TBICON, SID_TBFILE, SID_MEDIA, SID_MEDIAPOS, SID_MEDIACTL, SID_MEDIAHIDE, SID_MEDIASCROLL, SID_LANG,
-    SID_STYLE, SID_MATCHHL, SID_UPDCHECK, SID_UPDNOW, SID_REDUCED, SID_RMGOTO, SID_POSITION, SID_STARTPOS, SID_TBSEARCH, SID__COUNT
+    SID_STYLE, SID_MATCHHL, SID_UPDCHECK, SID_UPDNOW, SID_REDUCED, SID_RMGOTO, SID_POSITION, SID_STARTPOS, SID_TBSEARCH, SID_SCALE, SID__COUNT
 };
 enum { PG_GENERAL, PG_TASKBAR, PG_APPEARANCE, PG_ANIM, PG_SEARCH, PG_ADVANCED, PG_ABOUT, PG__COUNT };
 
@@ -29,7 +29,7 @@ typedef struct SItem {
     u8 page, kind, id;
     Str group;
     Str title, desc;
-    int lo, hi, step;  // a stepper; with no range given, its setting's range
+    int lo, hi, step;  // a stepper or a slider; with no range given, its setting's range
     Str unit;
     Str opt[7];
     u8 warn;  // options marked with a caution sign (bits), the reason in a tooltip (warn_tip)
@@ -96,17 +96,18 @@ static const SItem k_sitems[] = {
       .title = { L"Тема", L"Theme" }, .desc = { L"«Системная» следует настройке Windows", L"System follows the Windows setting" },
       .opt = { { L"Системная", L"System" }, { L"Тёмная", L"Dark" }, { L"Светлая", L"Light" } } },
     { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_BACKDROP, .title = { L"Фон", L"Background" },
-      .desc = { L"Стекло - полупрозрачное размытие, акрил - как у системных меню Windows 11",
-                L"Glass is a translucent blur, acrylic looks like Windows 11 system menus" },
-      .opt = { { L"Стекло", L"Glass" }, { L"Акрил", L"Acrylic" }, { L"Сплошной", L"Solid" } }, .warn = 3 },
+      .desc = { L"Стекло - полупрозрачное размытие, акрил - как у системных меню, Mica - оттенок обоев, как у окон Windows 11",
+                L"Glass is a translucent blur, acrylic looks like system menus, Mica tints with the wallpaper like Windows 11 windows" },
+      .opt = { { L"Стекло", L"Glass" }, { L"Акрил", L"Acrylic" }, { L"Mica", L"Mica" }, { L"Сплошной", L"Solid" } },
+      .warn = (1 << BACKDROP_BLUR) | (1 << BACKDROP_ACRYLIC) },
     { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_STYLE, .group = { L"Лаунчер", L"Launcher" },
       .title = { L"Стиль", L"Style" },
       .desc = { L"Стандарт - мягкая подложка с контуром. Raycast - мелкие значки и плотная подложка. "
-                L"Fluent - полоска акцента у выбранной строки. Компактный - больше строк на экране. Капсула - поле поиска и результаты отдельными панелями. "
-                L"Windows 11 и Windows 10 - как меню Пуск: закреплённые приложения сеткой или плитками, учётная запись и питание",
+                L"Fluent - полоска акцента у выбранной строки. Компактный - больше строк на экране. Капсула - поиск отдельно от списка. "
+                L"Windows 11 и 10 - как меню Пуск",
                 L"Standard has a soft outlined highlight. Raycast uses small icons and a solid highlight. "
-                L"Fluent marks the selected row with an accent bar. Compact fits more rows on screen. Capsule puts the search field and the results in separate panels. "
-                L"Windows 11 and Windows 10 look like Start: pinned apps as a grid or tiles, account and power" },
+                L"Fluent marks the selected row with an accent bar. Compact fits more rows on screen. Capsule keeps search apart from the list. "
+                L"Windows 11 and 10 look like Start" },
       .opt = { { L"Стандарт", L"Standard" }, { L"Raycast", L"Raycast" }, { L"Fluent", L"Fluent" }, { L"Компактный", L"Compact" }, { L"Капсула", L"Capsule" },
                { L"Windows 11", L"Windows 11" }, { L"Windows 10", L"Windows 10" } } },
     { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_STARTPOS, .dep = SID_STYLE, .dep_mask = STYLES_START_MENU, .title = { L"Положение", L"Position" },
@@ -120,7 +121,10 @@ static const SItem k_sitems[] = {
     { .page = PG_APPEARANCE, .kind = SK_TOGGLE, .id = SID_MATCHHL, .title = { L"Подсветка совпадений", L"Highlight matches" },
       .desc = { L"Буквы, по которым нашлись приложение или файл, выделяются жирным",
                 L"The letters that matched the query are drawn in bold" } },
-    { .page = PG_APPEARANCE, .kind = SK_STEPPER, .id = SID_WIDTH, .dep = SID_STYLE, .dep_mask = STYLES_START_MENU, .dep_not = true, .group = { L"Размер", L"Size" },
+    { .page = PG_APPEARANCE, .kind = SK_SLIDER, .id = SID_SCALE, .group = { L"Размер", L"Size" }, .title = { L"Масштаб", L"Scale" },
+      .desc = { L"Размер всего лаунчера: текста, значков и окна", L"The size of the whole launcher: text, icons and the window" },
+      .step = 5, .unit = { L"%", L"%" } },
+    { .page = PG_APPEARANCE, .kind = SK_STEPPER, .id = SID_WIDTH, .dep = SID_STYLE, .dep_mask = STYLES_START_MENU, .dep_not = true,
       .title = { L"Ширина окна", L"Window width" }, .step = 20, .unit = { L"px", L"px" } },
     { .page = PG_APPEARANCE, .kind = SK_STEPPER, .id = SID_ROWS, .dep = SID_STYLE, .dep_mask = STYLES_START_MENU, .dep_not = true, .title = { L"Строк в списке", L"Visible rows" },
       .step = 1 },
@@ -233,7 +237,7 @@ static const SItem k_sitems[] = {
 // The config.ini field behind an item, when it is a plain setting (its value is the field's).
 static const u8 k_sid_cfg[SID__COUNT] = {
     [SID_LANG] = CF_LANGUAGE, [SID_REDUCED] = CF_REDUCED_MOTION, [SID_THEME] = CF_THEME, [SID_BACKDROP] = CF_BACKDROP,
-    [SID_STYLE] = CF_STYLE, [SID_POSITION] = CF_POSITION, [SID_MATCHHL] = CF_MATCH_HIGHLIGHT, [SID_WIDTH] = CF_WIDTH, [SID_ROWS] = CF_ROWS,
+    [SID_STYLE] = CF_STYLE, [SID_POSITION] = CF_POSITION, [SID_MATCHHL] = CF_MATCH_HIGHLIGHT, [SID_WIDTH] = CF_WIDTH, [SID_ROWS] = CF_ROWS, [SID_SCALE] = CF_SCALE,
     [SID_TASKBAR] = CF_TASKBAR_BUTTON, [SID_TBREPLACE] = CF_TASKBAR_REPLACE_ICON, [SID_TBICON] = CF_TASKBAR_ICON,
     [SID_TBSEARCH] = CF_TASKBAR_SEARCH, [SID_MEDIA] = CF_MEDIA_WIDGET, [SID_MEDIAPOS] = CF_MEDIA_POSITION,
     [SID_MEDIACTL] = CF_MEDIA_CONTROLS, [SID_MEDIAHIDE] = CF_MEDIA_HIDE_PAUSED, [SID_MEDIASCROLL] = CF_MEDIA_MARQUEE,
@@ -426,8 +430,8 @@ static int choice_count(const SItem *it)
     return MAX(n, 1);
 }
 
-// Short option lists (up to three) are shown as a segmented control instead of a dropdown.
-static bool is_seg(const SItem *it) { return it->kind == SK_CHOICE && choice_count(it) <= 3; }
+// Short option lists (up to four) are shown as a segmented control instead of a dropdown.
+static bool is_seg(const SItem *it) { return it->kind == SK_CHOICE && choice_count(it) <= 4; }
 
 // Why an option is marked with a caution sign.
 static const WCHAR *warn_tip(void)
@@ -554,6 +558,7 @@ static void sapply(const SItem *it, int v)
         break;
     case SID_WIDTH:
     case SID_ROWS:
+    case SID_SCALE:
         U.dpi = 0;
         break;
     case SID_UPDCHECK:
@@ -620,7 +625,7 @@ static void sset(const SItem *it, int v)
 {
     int lo, hi;
     item_range(it, &lo, &hi);
-    if (it->kind == SK_STEPPER) v = CLAMP(v, lo, hi);
+    if (it->kind == SK_STEPPER || it->kind == SK_SLIDER) v = CLAMP(v, lo, hi);
     if (it->kind == SK_TOGGLE) v = v ? 1 : 0;
     if (it->kind == SK_CHOICE) v = CLAMP(v, 0, choice_count(it) - 1);
     if (v == sval(it->id) || item_locked(it)) return;
@@ -633,7 +638,7 @@ static void sset(const SItem *it, int v)
     } else {
         SW.pend[it->id].on = true;
         SW.pend[it->id].v = v;
-        SW.pend[it->id].due = time_now() + (it->kind == SK_STEPPER ? 0.45 : 0.25);
+        SW.pend[it->id].due = time_now() + (it->kind == SK_STEPPER || it->kind == SK_SLIDER ? 0.45 : 0.25);
     }
     pend_schedule();
     settings_invalidate();
@@ -970,6 +975,9 @@ static void control_size(const SItem *it, f32 *w, f32 *h)
     case SK_STEPPER:
         *w = SSR(140);
         break;
+    case SK_SLIDER:
+        *w = SSR(240);
+        break;
     case SK_TEXT:
         *w = SSR(250);
         break;
@@ -1214,6 +1222,29 @@ static void draw_sidebar(const Theme *t, const SColors *c)
     }
 }
 
+#define SLIDER_VALUE_W 48.f  // the value at the slider's right
+
+// Where a slider's track runs: from x0 to x1.
+static void slider_track(const SRow *r, f32 *x0, f32 *x1)
+{
+    f32 k = SSR(16);
+    *x0 = r->cx + k * 0.5f;
+    *x1 = r->cx + r->cw - SSR(SLIDER_VALUE_W) - k * 0.5f;
+}
+
+// The value at x on a slider's track, on its steps.
+static int slider_value_at(const SRow *r, f32 x)
+{
+    const SItem *it = &k_sitems[r->item];
+    int lo, hi;
+    item_range(it, &lo, &hi);
+    f32 x0, x1;
+    slider_track(r, &x0, &x1);
+    f32 f = CLAMP((x - x0) / MAX(x1 - x0, 1.f), 0.f, 1.f);
+    int st = MAX(it->step, 1);
+    return lo + (int)floorf(f * (f32)(hi - lo) / (f32)st + 0.5f) * st;
+}
+
 static void draw_toggle(f32 x, f32 cy, f32 on, bool hov, const Theme *t, const SColors *c)
 {
     // Flat: a plain grey track when off, the accent when on; the knob keeps its size and only travels.
@@ -1332,6 +1363,28 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
         f32 nx = floorf(cx + (cw - nw - uw) * 0.5f + 0.5f), base = text_baseline(FONT_TEXT, cfs, mid);
         text_draw(FONT_TEXT, cfs, nx, base, num, -1, t->text);
         if (unit) text_draw(FONT_TEXT, ufs, nx + nw + SSR(4), base, unit, -1, t->dim);
+        break;
+    }
+    case SK_SLIDER: {
+        int v = sval(it->id), lo, hi;
+        item_range(it, &lo, &hi);
+        int def = k_sid_cfg[it->id] ? k_cfg[k_sid_cfg[it->id]].def : lo;
+        f32 x0, x1, th = SSR(4), k = SSR(16);
+        slider_track(r, &x0, &x1);
+        f32 span = MAX((f32)(hi - lo), 1.f);
+        f32 kx = floorf(x0 + (x1 - x0) * (f32)(v - lo) / span + 0.5f), dx = floorf(x0 + (x1 - x0) * (f32)(def - lo) / span + 0.5f);
+        u32 track = t->dark ? RGBA(255, 255, 255, chov ? 50 : 36) : RGBA(0, 0, 0, chov ? 44 : 32);
+        r_rect(x0, floorf(mid - th * 0.5f), x1 - x0, th, track, th * 0.5f);
+        r_rect(dx - SSR(1), floorf(mid - SSR(6)), SSR(2), SSR(12), track, SSR(1));  // the default
+        r_rect(x0, floorf(mid - th * 0.5f), kx - x0, th, t->accent, th * 0.5f);
+        f32 ky = floorf(mid - k * 0.5f + 0.5f);
+        if (!t->dark) r_rect_ex(kx - k * 0.5f, ky + SSR(1), k, k, RGBA(0, 0, 0, 40), k * 0.5f, 0, SSR(2));
+        r_rect(kx - k * 0.5f, ky, k, k, t->dark ? RGBA(235, 235, 237, 255) : RGBA(255, 255, 255, 255), k * 0.5f);
+        r_rect(kx - k * 0.25f, floorf(mid - k * 0.25f + 0.5f), k * 0.5f, k * 0.5f, t->accent, k * 0.25f);
+        WCHAR num[16];
+        wfmt(num, countof(num), L"%d%ls", v, it->unit.ru ? ss(it->unit) : L"");
+        f32 nw = text_width(FONT_TEXT, cfs, num, -1);
+        text_draw(FONT_TEXT, cfs, floorf(cx + cw - nw), text_baseline(FONT_TEXT, cfs, mid), num, -1, t->text);
         break;
     }
     case SK_TEXT: {
