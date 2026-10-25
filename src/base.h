@@ -579,6 +579,7 @@ enum { DWA_NO_TRANSITIONS = 3, DWA_DARK = 20, DWA_CORNER = 33, DWA_BORDER_COLOR 
 enum { DWC_SQUARE = 1, DWC_ROUND = 2, DWC_ROUND_SMALL = 3 };
 enum { DWB_NONE = 1, DWB_MICA = 2, DWB_ACRYLIC = 3 };
 #define DW_COLOR_NONE 0xFFFFFFFEu
+#define DW_COLOR_DEFAULT 0xFFFFFFFFu
 
 static bool dwm_set(HWND h, DWORD attr, DWORD v) { return SUCCEEDED(DwmSetWindowAttribute(h, attr, &v, sizeof v)); }
 

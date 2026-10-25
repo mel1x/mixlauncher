@@ -199,6 +199,10 @@ static void ui_mouse_down(int x, int y, bool dbl)
         if (!cm_inside(x, y)) cm_close(true);
         return;
     }
+    if (cap_on() && cap_outside(x, y)) {  // a click past the panels is a click outside the launcher
+        ui_hide();
+        return;
+    }
     U.press_update = in_update_button(x, y);  // before the search bar and the Windows 10 tiles it can sit over
     if (U.press_update) return;
     if (w10_on() && w10_drag_begin(x, y)) return;

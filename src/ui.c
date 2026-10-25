@@ -210,6 +210,14 @@ static void ui_metrics(u32 dpi)
     }
     f32 list_h = SR(g_cfg.rows * ROW_H + 2 * LIST_PAD);
     U.W = (int)SR((f32)g_cfg.width);
+    if (cap_on()) {  // the query capsule, a gap, then one panel for the list and the footer
+        f32 m = SR(CAP_MARGIN);
+        U.W += (int)(m * 2);
+        U.list_y0 = m + U.search_h + SR(CAP_GAP);
+        U.list_y1 = U.list_y0 + list_h;
+        U.H = (int)(U.list_y1 + U.footer_h + m);
+        return;
+    }
     U.H = (int)(U.search_h + 1 + list_h + 1 + U.footer_h);
     U.list_y0 = U.search_h + 1;
     U.list_y1 = U.list_y0 + list_h;

@@ -23,8 +23,8 @@ enum { RAIL_MENU, RAIL_ACCOUNT, RAIL_EXPLORER, RAIL_DOWNLOADS, RAIL_SETTINGS, RA
 static bool w10_on(void) { return g_cfg.style == STYLE_WIN10; }
 
 // The list pane: the apps column, or the results column of the search pane.
-static f32 list_x0(void) { return w10_on() && !q_active() ? SR(W10_RAIL) : 0; }
-static f32 list_x1(void) { return st_search() ? SR(ST_RESULTS) : !w10_on() ? (f32)U.W : q_active() ? SR(U.w10.wide ? W10_RESULTS_2K : W10_RESULTS) : SR(W10_RAIL + W10_COL); }
+static f32 list_x0(void) { return cap_on() ? SR(CAP_MARGIN) : w10_on() && !q_active() ? SR(W10_RAIL) : 0; }
+static f32 list_x1(void) { return st_search() ? SR(ST_RESULTS) : cap_on() ? (f32)U.W - SR(CAP_MARGIN) : !w10_on() ? (f32)U.W : q_active() ? SR(U.w10.wide ? W10_RESULTS_2K : W10_RESULTS) : SR(W10_RAIL + W10_COL); }
 
 static f32 w10_pane_x(void) { return SR(W10_RAIL + W10_COL + 24); }
 

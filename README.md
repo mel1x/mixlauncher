@@ -20,7 +20,7 @@
 - **Lightweight and very fast.** One native ~410 KB app, no frameworks. Opens instantly and runs lighter and faster than the regular Start menu.
 - **Apps and files.** Apps from Start and the Microsoft Store, files from the whole disk through the bundled [Everything](https://www.voidtools.com/).
 - **Smart search.** Finds apps typed in the wrong layout and by English names on a localized Windows, plus your own tags.
-- **Start menu looks.** Windows 11 and Windows 10 with tiles, or a compact list: Standard, Raycast, Fluent, Compact.
+- **Start menu looks.** Windows 11 and Windows 10 with tiles, or a compact list: Standard, Raycast, Fluent, Compact, Capsule.
 - **Taskbar.** Opens with `Win` or the Start button; a now playing widget with playback controls.
 - **No AI, no telemetry.**
 

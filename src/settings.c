@@ -31,7 +31,7 @@ typedef struct SItem {
     Str title, desc;
     int lo, hi, step;  // a stepper; with no range given, its setting's range
     Str unit;
-    Str opt[6];
+    Str opt[7];
     u8 warn;  // options marked with a caution sign (bits), the reason in a tooltip (warn_tip)
     u32 glyph;
     u8 dep, dep_val;  // shown only while setting `dep` has the value `dep_val` (and is shown itself)
@@ -102,12 +102,12 @@ static const SItem k_sitems[] = {
     { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_STYLE, .group = { L"Лаунчер", L"Launcher" },
       .title = { L"Стиль", L"Style" },
       .desc = { L"Стандарт - мягкая подложка с контуром. Raycast - мелкие значки и плотная подложка. "
-                L"Fluent - полоска акцента у выбранной строки. Компактный - больше строк на экране. "
+                L"Fluent - полоска акцента у выбранной строки. Компактный - больше строк на экране. Капсула - поле поиска и результаты отдельными панелями. "
                 L"Windows 11 и Windows 10 - как меню Пуск: закреплённые приложения сеткой или плитками, учётная запись и питание",
                 L"Standard has a soft outlined highlight. Raycast uses small icons and a solid highlight. "
-                L"Fluent marks the selected row with an accent bar. Compact fits more rows on screen. "
+                L"Fluent marks the selected row with an accent bar. Compact fits more rows on screen. Capsule puts the search field and the results in separate panels. "
                 L"Windows 11 and Windows 10 look like Start: pinned apps as a grid or tiles, account and power" },
-      .opt = { { L"Стандарт", L"Standard" }, { L"Raycast", L"Raycast" }, { L"Fluent", L"Fluent" }, { L"Компактный", L"Compact" },
+      .opt = { { L"Стандарт", L"Standard" }, { L"Raycast", L"Raycast" }, { L"Fluent", L"Fluent" }, { L"Компактный", L"Compact" }, { L"Капсула", L"Capsule" },
                { L"Windows 11", L"Windows 11" }, { L"Windows 10", L"Windows 10" } } },
     { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_STARTPOS, .dep = SID_STYLE, .dep_mask = STYLES_START_MENU, .title = { L"Положение", L"Position" },
       .desc = { L"Как меню Пуск: окно выезжает из-под панели задач", L"Like Start: the window slides up from under the taskbar" },

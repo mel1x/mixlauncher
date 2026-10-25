@@ -3,7 +3,7 @@
 enum { BACKDROP_BLUR, BACKDROP_ACRYLIC, BACKDROP_SOLID };
 
 // STYLE_START and STYLE_WIN10 lay the launcher out like the Windows 11 and Windows 10 Start menus.
-enum { STYLE_STANDARD, STYLE_RAYCAST, STYLE_FLUENT, STYLE_COMPACT, STYLE_START, STYLE_WIN10, STYLE__COUNT };
+enum { STYLE_STANDARD, STYLE_RAYCAST, STYLE_FLUENT, STYLE_COMPACT, STYLE_CAPSULE, STYLE_START, STYLE_WIN10, STYLE__COUNT };
 #define STYLES_START_MENU ((1 << STYLE_START) | (1 << STYLE_WIN10))  // always at the taskbar
 
 enum { POS_CENTER, POS_BOTTOM_LEFT, POS_BOTTOM_CENTER, POS__COUNT };
@@ -89,7 +89,7 @@ typedef struct CfgField {
 static const char *const k_lang_names[] = { "auto", "ru", "en" };
 static const char *const k_theme_names[] = { "auto", "dark", "light" };
 static const char *const k_backdrop_names[] = { "blur", "acrylic", "solid" };
-static const char *const k_style_names[STYLE__COUNT] = { "standard", "raycast", "fluent", "compact", "windows", "windows10" };
+static const char *const k_style_names[STYLE__COUNT] = { "standard", "raycast", "fluent", "compact", "capsule", "windows", "windows10" };
 static const char *const k_pos_names[POS__COUNT] = { "center", "bottom-left", "bottom-center" };
 static const char *const k_tbi_names[TBI__COUNT] = { "diamond", "grid", "petals", "layers", "dots", "custom" };
 static const char *const k_side_names[] = { "left", "right" };
@@ -116,8 +116,10 @@ static const CfgField k_cfg[CF__COUNT] = {
           .en = "Window background: solid | blur (translucent glass, macOS-like) | acrylic (Windows 11 acrylic).\n"
                 "Glass and acrylic keep following what is behind the window and use more of the GPU"),
     CFG_E(CF_STYLE, style, STYLE_STANDARD, k_style_names, .gap = 1,
-          .ru = "Стиль лаунчера: standard | raycast | fluent | compact | windows | windows10 (как меню Пуск Windows 11 и 10)",
-          .en = "Launcher style: standard | raycast | fluent | compact | windows | windows10 (like the Windows 11 and 10 Start menus)"),
+          .ru = "Стиль лаунчера: standard | raycast | fluent | compact | capsule (поиск и результаты отдельными панелями) |\n"
+                "windows | windows10 (как меню Пуск Windows 11 и 10)",
+          .en = "Launcher style: standard | raycast | fluent | compact | capsule (the query and the results as separate panels) |\n"
+                "windows | windows10 (like the Windows 11 and 10 Start menus)"),
     CFG_E(CF_POSITION, position, POS_CENTER, k_pos_names,
           .ru = "Положение: center (по центру экрана) | bottom-left (слева снизу, как Пуск) | bottom-center (снизу по центру).\n"
                 "Стили windows и windows10 всегда снизу.",

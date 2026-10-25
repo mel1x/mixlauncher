@@ -58,7 +58,8 @@ static void ui_place_window(void)
     U.slide = pos != POS_CENTER;
     U.slide_dy = 0;
     if (U.slide) {
-        int m = w10_on() ? 0 : (int)SR(12);  // Windows 10 Start sits right against the taskbar and the screen edge
+        // Windows 10 Start sits right against the taskbar and the screen edge; the capsule has its margin already
+        int m = w10_on() || cap_on() ? 0 : (int)SR(12);
         HWND tray = taskbar_on_monitor(mon);
         RECT tr;
         bool top = tray && GetWindowRect(tray, &tr) && tr.bottom - mr.top < mr.bottom - tr.top;  // taskbar at the top: slide down from it

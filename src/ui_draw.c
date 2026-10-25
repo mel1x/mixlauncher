@@ -40,6 +40,41 @@ static const WCHAR *row_note(Row *r, u32 *col)
     return TR("Команда", "Command");
 }
 
+// The capsule style names what Enter does at the right of the selected row, with the key.
+static const WCHAR *row_action(Row *r, u32 *col)
+{
+    const WCHAR *note = row_note(r, col);
+    if (*col == TH.danger) return note;
+    *col = TH.dim;
+    return r->kind == ROW_APP && r->app->kind == APP_CMD ? TR("Выполнить", "Run") : TR("Открыть", "Open");
+}
+
+#define CAP_KEY_W 22.f
+
+static f32 action_width(Row *r)
+{
+    u32 col;
+    return text_width(FONT_TEXT, S(12.5f), row_action(r, &col), -1) + SR(8 + CAP_KEY_W);
+}
+
+// The action ending at xr, centered on cy: its label and an Enter keycap.
+static void draw_action(f32 xr, f32 cy, const WCHAR *s, u32 col)
+{
+    f32 kw = SR(CAP_KEY_W), kh = SR(20), kx = xr - kw, ky = floorf(cy - kh * 0.5f), fs = S(12.5f);
+    r_rect(kx, ky, kw, kh, TH.key_bg, SR(LS()->key_r));
+    r_border(kx, ky, kw, kh, TH.key_border, SR(LS()->key_r));
+    text_draw_icon(0xE751, S(11), kx + kw * 0.5f, cy, TH.dim);
+    f32 w = text_width(FONT_TEXT, fs, s, -1);
+    text_draw(FONT_TEXT, fs, floorf(kx - SR(8) - w), text_baseline(FONT_TEXT, fs, cy), s, -1, col);
+}
+
+// How far the highlight is from a row at y, 0..1: the row's own note fades out as it comes (the selected row's
+// note is drawn over the highlight, ui_draw).
+static f32 note_away(f32 y, f32 h)
+{
+    return row_selectable(U.sel) ? CLAMP(fabsf(U.list_y0 - floorf(U.scroll + 0.5f) + U.hl_y - y) / h, 0.f, 1.f) : 1.f;
+}
+
 static void hl_prepare(void)
 {
     U.hq_len = g_cfg.match_highlight ? query_norm(U.hq) : 0;
@@ -167,9 +202,11 @@ static void draw_row(Row *r, f32 y, bool selected)
         f32 nw = text_width(FONT_TEXT, fs, f->name, -1);
         f32 dw = text_width(FONT_TEXT, sub_fs, f->dir, -1);
         f32 name_max = nw + gap + dw <= avail ? nw : MAX(avail * 0.55f, avail - dw - gap);
+        if (cap_on() && selected) name_max = MIN(name_max, avail - action_width(r) - gap);  // the action takes the folder's place
         f32 drawn = draw_name(fs, tx, base, name_max, f->name, -1, NULL, NULL, t->text);
         f32 dir_max = avail - drawn - gap;
-        if (dir_max > SR(40) && f->dir[0]) text_draw_fit(FONT_TEXT, sub_fs, right - MIN(dw, dir_max), sub_base, dir_max, f->dir, -1, t->faint, true);
+        u32 dir_col = cap_on() ? color_alpha(t->faint, note_away(y, r->h)) : t->faint;
+        if (dir_max > SR(40) && f->dir[0]) text_draw_fit(FONT_TEXT, sub_fs, right - MIN(dw, dir_max), sub_base, dir_max, f->dir, -1, dir_col, true);
         return;
     }
     App *a = r->app;
@@ -188,10 +225,10 @@ static void draw_row(Row *r, f32 y, bool selected)
     f32 sw = text_width(FONT_TEXT, sub_fs, sub, -1);
     f32 avail = right - tx;
     bool show_sub = !plate && ((selected && !w10_on()) || a->kind == APP_CMD || ls->all_notes);
-    draw_name(fs, tx, base, show_sub ? avail - sw - SR(16) : avail, a->name, a->len, a->norm, a->ws, t->text);
+    f32 note_w = cap_on() && selected ? MAX(sw, action_width(r)) : sw;
+    draw_name(fs, tx, base, show_sub ? avail - note_w - SR(16) : avail, a->name, a->len, a->norm, a->ws, t->text);
     if ((ls->all_notes && a->kind != APP_CMD) || (a->kind == APP_CMD && !plate)) {
-        // the selected row's note is drawn over the highlight (ui_draw): this one fades out as the highlight comes
-        f32 away = row_selectable(U.sel) ? CLAMP(fabsf(U.list_y0 - floorf(U.scroll + 0.5f) + U.hl_y - y) / r->h, 0.f, 1.f) : 1.f;
+        f32 away = note_away(y, r->h);
         text_draw(FONT_TEXT, sub_fs, right - sw, sub_base, sub, -1, color_alpha(a->kind == APP_CMD ? sub_col : t->faint, away));
     }
 }
@@ -253,7 +290,8 @@ static void draw_footer(f32 y0)
 {
     Theme *t = &TH;
     f32 cy = y0 + U.footer_h * 0.5f;
-    f32 xr = (f32)U.W - SR(14);
+    f32 m = cap_on() ? SR(CAP_MARGIN) : 0;  // the capsule's panel stops short of the window's edges
+    f32 xr = (f32)U.W - m - SR(14);
     static const WCHAR *k_enter[] = { L"Enter" };
     static const WCHAR *k_ctrl_enter[] = { L"Ctrl", L"Enter" };
     static const WCHAR *k_admin[] = { L"Ctrl", L"Shift", L"Enter" };
@@ -262,7 +300,7 @@ static void draw_footer(f32 y0)
     if (LS()->footer_tint) r_rect(0, y0, (f32)U.W, U.footer_h, t->dark ? RGBA(255, 255, 255, 10) : RGBA(0, 0, 0, 8), 0);
     const WCHAR *label = TR("Настройки", "Settings");
     f32 lfs = S(12.5f), lw = text_width(FONT_TEXT, lfs, label, -1);
-    f32 bx = SR(8), bh = SR(28), by = floorf(cy - bh * 0.5f);
+    f32 bx = m + SR(8), bh = SR(28), by = floorf(cy - bh * 0.5f);
     f32 bw = floorf(SR(31) + lw + SR(10));
     f32 hov = U.settings_hover_t;
     r_rect(bx, by, bw, bh, color_alpha(t->sel, hov), SR(LS()->key_r + 1));
@@ -270,7 +308,7 @@ static void draw_footer(f32 y0)
     text_draw_icon(0xE713, S(14), bx + SR(16), cy, col);
     text_draw(FONT_TEXT, lfs, bx + SR(31), text_baseline(FONT_TEXT, lfs, cy), label, -1, col);
     box_set(U.settings_btn, bx, by, bw, bh);
-    f32 min_x = SR(150);
+    f32 min_x = m + SR(150);
     memset(U.update_btn, 0, sizeof U.update_btn);
     if (upd_visible()) {
         f32 ux = bx + bw + SR(6);
@@ -282,10 +320,11 @@ static void draw_footer(f32 y0)
     if (!r) {
         draw_hint(xr, cy, TR("Закрыть", "Close"), k_esc, 1, t->dim);
     } else if (r->kind == ROW_APP && r->app->kind == APP_CMD) {
+        if (cap_on()) return;
         bool armed = U.armed == r->app;
         draw_hint(xr, cy, armed ? TR("Подтвердить", "Confirm") : TR("Выполнить", "Run"), k_enter, 1, armed ? t->danger : t->text);
     } else {
-        xr = draw_hint(xr, cy, TR("Открыть", "Open"), k_enter, 1, t->text);
+        if (!cap_on()) xr = draw_hint(xr, cy, TR("Открыть", "Open"), k_enter, 1, t->text);  // the capsule shows it on the row
         if (row_path(r) && xr - SR(230) > min_x) xr = draw_hint(xr, cy, TR("Показать в папке", "Show in folder"), k_ctrl_enter, 2, t->dim);
         if (r->kind == ROW_APP) {
             if (xr - SR(250) > min_x) draw_hint(xr, cy, TR("Администратор", "Run as admin"), k_admin, 3, t->dim);
@@ -298,8 +337,8 @@ static void draw_footer(f32 y0)
 // Where the query field sits: a band across the top, or across the bottom (Windows 10, like the taskbar box).
 static void search_band(f32 *y0, f32 *y1)
 {
-    *y0 = 0;
-    *y1 = w10_on() && !q_active() ? 0 : U.search_h;  // Windows 10 shows the query only once typing starts
+    *y0 = cap_on() ? SR(CAP_MARGIN) : 0;
+    *y1 = w10_on() && !q_active() ? 0 : *y0 + U.search_h;  // Windows 10 shows the query only once typing starts
 }
 
 // The query field: text from x0 to x1, centered on cy. The Start style puts it in a rounded box.
@@ -318,6 +357,13 @@ static void search_field(f32 *x0, f32 *x1, f32 *cy)
         *cy = floorf(U.search_h * 0.5f + SR(4));
         return;
     }
+    if (cap_on()) {
+        f32 m = SR(CAP_MARGIN);
+        *x0 = m + SR(52);
+        *x1 = (f32)U.W - m - SR(28);
+        *cy = floorf(m + U.search_h * 0.5f);
+        return;
+    }
     *x0 = SR(LS()->inset + 42);
     *x1 = (f32)U.W - SR(20);
     *cy = U.search_h * 0.5f;
@@ -329,7 +375,7 @@ static void draw_search(void)
     const LStyle *ls = LS();
     f32 fx0, fx1, cy;
     search_field(&fx0, &fx1, &cy);
-    text_draw_icon(0xE721, S(ls->search_icon), fx0 - SR(23), cy, U.qlen ? t->text : t->dim);
+    text_draw_icon(0xE721, S(ls->search_icon), fx0 - SR(cap_on() ? 26.f : 23.f), cy, U.qlen ? t->text : t->dim);
     f32 fs = S(ls->search_fs);
     f32 base = text_baseline(FONT_DISPLAY, fs, cy);
     f32 sel_top = floorf(cy - fs * 0.62f), sel_h = floorf(fs * 1.24f);
@@ -354,6 +400,41 @@ static void draw_search(void)
     r_clip_all();
 }
 
+// A capsule style panel: a soft shadow, the glass or the solid fill, a hairline outline.
+static void cap_panel(f32 x, f32 y, f32 w, f32 h, f32 rad, bool glass)
+{
+    Theme *t = &TH;
+    r_rect_ex(x, y + SR(4), w, h, t->dark ? RGBA(0, 0, 0, 110) : RGBA(0, 0, 0, 38), rad, 0, SR(12));
+    if (glass) r_backdrop(x, y, w, h, rad);
+    r_rect(x, y, w, h, glass ? t->bg : t->bg_solid, rad);
+    r_border(x, y, w, h, t->dark ? RGBA(255, 255, 255, 20) : RGBA(0, 0, 0, 18), rad);
+}
+
+// The capsule style's query field (round ends) and the results panel under it.
+static void cap_boxes(f32 *search, f32 *panel)
+{
+    f32 m = SR(CAP_MARGIN), w = (f32)U.W - m * 2;
+    box_set(search, m, m, w, U.search_h);
+    box_set(panel, m, U.list_y0, w, U.list_y1 + U.footer_h - U.list_y0);
+}
+
+static void cap_draw_chrome(bool glass)
+{
+    f32 sb[4], pb[4];
+    cap_boxes(sb, pb);
+    cap_panel(sb[0], sb[1], sb[2] - sb[0], U.search_h, floorf(U.search_h * 0.5f), glass);
+    cap_panel(pb[0], pb[1], pb[2] - pb[0], pb[3] - pb[1], SR(18), glass);
+    draw_search();
+}
+
+// The see-through margin and gap around the capsule's panels.
+static bool cap_outside(int x, int y)
+{
+    f32 sb[4], pb[4];
+    cap_boxes(sb, pb);
+    return !in_box(sb, (f32)x, (f32)y) && !in_box(pb, (f32)x, (f32)y);
+}
+
 static void ui_draw(void)
 {
     Theme *t = &TH;
@@ -362,10 +443,12 @@ static void ui_draw(void)
     // rounded as DWM rounds the window, so the zoom keeps the corners
     bool glass = U.backdrop_ok && bd_ready();
     f32 rad = backdrop_radius();
-    if (glass) r_backdrop(0, 0, (f32)U.W, (f32)U.H, rad);
+    if (glass && !cap_on()) r_backdrop(0, 0, (f32)U.W, (f32)U.H, rad);
     // the Start styles tint the glass with their own fill (TH.veil) instead
-    r_rect(0, 0, (f32)U.W, (f32)U.H, !glass ? t->bg_solid : st_on() || w10_on() ? 0 : t->bg, rad);
-    if (st_on()) {
+    if (!cap_on()) r_rect(0, 0, (f32)U.W, (f32)U.H, !glass ? t->bg_solid : st_on() || w10_on() ? 0 : t->bg, rad);
+    if (cap_on()) {
+        cap_draw_chrome(glass);
+    } else if (st_on()) {
         st_draw_chrome();
     } else if (w10_on()) {
         w10_draw_chrome();
@@ -418,7 +501,7 @@ static void ui_draw(void)
     u32 note_col;
     Row *nr_row = sel_row();
     bool quiet = nr_row && (nr_row->cell || st_search() || (w10_on() && nr_row->kind == ROW_APP && nr_row->app->kind != APP_CMD));  // Windows 10 lists no "Application"
-    const WCHAR *note = quiet ? NULL : row_note(nr_row, &note_col);
+    const WCHAR *note = quiet ? NULL : cap_on() && nr_row ? row_action(nr_row, &note_col) : row_note(nr_row, &note_col);
     if (note) {
         U.sub_text = note;
         U.sub_col = note_col;
@@ -428,7 +511,8 @@ static void ui_draw(void)
         f32 nw = text_width(FONT_TEXT, nfs, U.sub_text, -1);
         R.opacity = hl_op * U.sub_t;
         f32 nr = st_on() || w10_on() ? U.hl_x + U.hl_w - SR(12) : (f32)U.W - SR(20);
-        text_draw(FONT_TEXT, nfs, floorf(nr - nw), text_baseline(FONT_TEXT, nfs, cy), U.sub_text, -1, U.sub_col);
+        if (cap_on()) draw_action((f32)U.W - SR(LS()->inset + 8), cy, U.sub_text, U.sub_col);
+        else text_draw(FONT_TEXT, nfs, floorf(nr - nw), text_baseline(FONT_TEXT, nfs, cy), U.sub_text, -1, U.sub_col);
     }
     R.opacity = 1.f;
     r_clip_all();
@@ -446,6 +530,10 @@ static void ui_draw(void)
         st_draw_footer();
     } else if (w10_on()) {
         w10_draw_overlay();
+    } else if (cap_on()) {
+        f32 sx = SR(LS()->inset);
+        r_rect(sx, fy, (f32)U.W - sx * 2, 1, t->sep, 0);
+        draw_footer(fy);
     } else {
         r_rect(0, fy, (f32)U.W, 1, t->sep, 0);
         draw_footer(fy + 1);
@@ -498,7 +586,7 @@ static void animate(f32 dt)
     bool sb_on = max_scroll() > 0 && (U.sb_hot || recent);
     anim |= approach(&U.sb_t, sb_on ? 1.f : 0.f, sb_on ? 20.f : 7.f, dt);
     if (recent && !U.sb_hot && max_scroll() > 0) anim = true;
-    anim |= approach(&U.sub_t, row_selectable(U.sel) && U.rows[U.sel].kind == ROW_APP && !U.rows[U.sel].cell &&
+    anim |= approach(&U.sub_t, row_selectable(U.sel) && (U.rows[U.sel].kind == ROW_APP || cap_on()) && !U.rows[U.sel].cell &&
                                        !(w10_on() && U.rows[U.sel].app->kind != APP_CMD) ? 1.f : 0.f, 24.f, dt);
     if (st_on()) anim |= st_animate(dt);
     if (w10_on()) anim |= w10_animate(dt);

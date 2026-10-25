@@ -90,11 +90,19 @@ typedef struct LStyle {
     bool footer_tint, all_notes;
 } LStyle;
 
+// The capsule style: the query field and the results are two floating panels. The window around them is see-through,
+// with room for their shadows.
+#define CAP_MARGIN 16.f
+#define CAP_GAP 10.f
+
+static bool cap_on(void) { return g_cfg.style == STYLE_CAPSULE; }
+
 static const LStyle k_lstyles[STYLE__COUNT] = {
     [STYLE_STANDARD] = { 42, 30, 28, 12, 60, 20, 17, 14, 40, 8, 8, 7, 5, DWC_ROUND, SEL_PILL, false, false },
     [STYLE_RAYCAST] = { 40, 30, 20, 12, 56, 18, 16, 14, 40, 8, 8, 5, 5, DWC_ROUND, SEL_FILL, true, true },
     [STYLE_FLUENT] = { 40, 32, 24, 14, 56, 18, 16, 14, 42, 6, 4, 4, 4, DWC_ROUND, SEL_BAR, false, false },
     [STYLE_COMPACT] = { 32, 26, 20, 10, 48, 16, 15, 13, 36, 6, 6, 5, 4, DWC_ROUND_SMALL, SEL_PILL, false, false },
+    [STYLE_CAPSULE] = { 44, 30, 22, 12, 60, 20, 17, 14, 46, CAP_MARGIN + 8, 12, 5, 6, DWC_SQUARE, SEL_FILL, false, true },
     [STYLE_START] = { 44, 34, 32, 14, 66, 14, 14, 14, 66, 39, 4, 4, 4, DWC_ROUND, SEL_PILL, false, false },
     [STYLE_WIN10] = { 36, 36, 28, 12, 48, 14, 14, 14, 0, 4, 0, 0, 2, DWC_SQUARE, SEL_PILL, false, false },
 };
@@ -106,6 +114,7 @@ static const LStyle *LS(void) { return &k_lstyles[CLAMP(g_cfg.style, 0, STYLE__C
 static bool backdrop_apply(HWND h)
 {
     dwm_set(h, DWA_CORNER, (DWORD)LS()->corner);
+    dwm_set(h, DWA_BORDER_COLOR, cap_on() ? DW_COLOR_NONE : DW_COLOR_DEFAULT);  // the capsule draws its own outlines
     return backdrop_kind() != BACKDROP_SOLID;
 }
 
