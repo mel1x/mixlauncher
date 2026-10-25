@@ -106,17 +106,24 @@ static bool bd_pull(UINT timeout)
     return got;
 }
 
-// Mica: the wallpaper under BD.rc, as the desktop shows it. A still: it changes only with the wallpaper.
+// The wallpaper under rc (screen px) as the desktop shows it, into l (fit to rc's size).
+static bool wallpaper_paint(Layer *l, RECT rc)
+{
+    if (!layer_fit(l, rc.right - rc.left, rc.bottom - rc.top)) return false;
+    SetViewportOrgEx(l->dc, -rc.left, -rc.top, NULL);  // PaintDesktop draws in screen coordinates
+    bool ok = PaintDesktop(l->dc) != 0;
+    SetViewportOrgEx(l->dc, 0, 0, NULL);
+    GdiFlush();
+    if (!ok) log_msg("backdrop: PaintDesktop failed (%lu)", GetLastError());
+    return ok;
+}
+
+// Mica: the wallpaper under BD.rc. A still: it changes only with the wallpaper.
 static bool bd_wallpaper(void)
 {
     Layer l = { 0 };
-    int w = BD.rc.right - BD.rc.left, h = BD.rc.bottom - BD.rc.top;
-    if (!layer_fit(&l, w, h)) return false;
-    SetViewportOrgEx(l.dc, -BD.rc.left, -BD.rc.top, NULL);  // PaintDesktop draws in screen coordinates
-    bool ok = PaintDesktop(l.dc) != 0;
-    GdiFlush();
+    bool ok = wallpaper_paint(&l, BD.rc);
     if (ok) r_bd_upload(l.bits);
-    else log_msg("backdrop: PaintDesktop failed (%lu)", GetLastError());
     layer_free(&l);
     return ok;
 }
@@ -229,6 +236,9 @@ static bool bd_wait(UINT ms)
 // Whether this frame has a backdrop to draw.
 static bool bd_ready(void) { return BD.ok && backdrop_kind() != BACKDROP_SOLID && R.bd_src.srv; }
 
+// The shader's kind of backdrop (bd1.x).
+static f32 bd_shading(int kind) { return kind == BACKDROP_BLUR ? 0.f : kind == BACKDROP_ACRYLIC ? 1.f : 2.f; }
+
 // The frame's constants: where the window is on the screen as it goes out.
 static void bd_place(void)
 {
@@ -239,7 +249,7 @@ static void bd_place(void)
     R.bd[1] = (f32)(w.top - BD.rc.top);
     R.bd[2] = 1.f / (f32)R.bd_src.w;
     R.bd[3] = 1.f / (f32)R.bd_src.h;
-    R.bd[4] = kind == BACKDROP_BLUR ? 0.f : kind == BACKDROP_ACRYLIC ? 1.f : 2.f;
+    R.bd[4] = bd_shading(kind);
     R.bd[5] = TH.dark ? 1.f : 0.f;
     R.bd[6] = R.bd[7] = 0;
 }

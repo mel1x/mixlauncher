@@ -163,6 +163,10 @@ static void settings_snap_motion(void)
     }
     memset(SW.nav_hov, 0, sizeof SW.nav_hov);
     memset(SW.win_hov, 0, sizeof SW.win_hov);
+    for (int k = 0; k < STYLE__COUNT; k++) {
+        SW.card_hov[k] = SW.hover.type == HT_ROW && SW.hover.part == PART_CARD0 + k ? 1.f : 0.f;
+        SW.card_sel[k] = k == sval(SID_STYLE) ? 1.f : 0.f;
+    }
     SW.scroll_target = SW.scroll;
     SW.scroll_v = 0;
     SW.page_t = SW.pop_t = SW.rec_t = 1.f;
@@ -221,6 +225,11 @@ static bool settings_animate(f32 dt)
         SW.row_hov = 0;
     }
     anim |= approach(&SW.row_hov, rh >= 0 ? 1.f : 0.f, 22.f, dt);
+    bool on_cards = SW.hover.type == HT_ROW && SW.hover.part >= PART_CARD0 && !SW.pop_open;
+    for (int k = 0; k < STYLE__COUNT; k++) {
+        anim |= approach(&SW.card_hov[k], on_cards && SW.hover.part == PART_CARD0 + k ? 1.f : 0.f, 14.f, dt);
+        anim |= approach(&SW.card_sel[k], k == sval(SID_STYLE) ? 1.f : 0.f, 11.f, dt);
+    }
     for (int i = 0; i < 2; i++)
         anim |= approach(&SW.sb_hov[i], SW.hover.type == (i ? HT_DONATE : HT_SBUPDATE) ? 1.f : 0.f, 22.f, dt);
     anim |= don_animate(dt);
@@ -244,6 +253,16 @@ static void settings_render(void)
     f32 dt = (f32)(now - SW.last_frame);
     if (dt > 0.1f || dt <= 0) dt = 1.f / 60.f;
     SW.last_frame = now;
+    if (SW.page == PG_DESIGN) {
+        settings_layout();
+        for (int i = 0; i < SW.nrows; i++)
+            if (k_sitems[SW.rows[i].item].kind == SK_GALLERY) {
+                f32 b[4];
+                gallery_card(&SW.rows[i], 0, b);
+                pv_update((int)(b[2] - b[0] - SSR(16)), (int)gallery_preview_h(b[2] - b[0]));
+            }
+        r_use(&SW.target);
+    }
     settings_layout();
     SW.animating = settings_animate(dt);
     R.scale = 1.f;
@@ -317,6 +336,11 @@ static SHit settings_hit(int mx, int my)
         if (x < r->x || x >= r->x + r->w || cy < r->y || cy >= r->y + r->h) continue;
         h.type = HT_ROW;
         h.idx = i;
+        if (k_sitems[r->item].kind == SK_GALLERY) {
+            int k = gallery_at(r, x, cy);
+            if (k >= 0) h.part = (u8)(PART_CARD0 + k);
+            return h;
+        }
         f32 g = SSR(4);
         if (x >= r->cx - g && x < r->cx + r->cw + g && cy >= r->cy - g && cy < r->cy + r->ch + g) {
             h.part = PART_CONTROL;
@@ -381,6 +405,7 @@ static void set_page(int page)
     SW.hover.type = HT_NONE;
     tip_hide();
     if (page == PG_SEARCH) refresh_status();  // the Everything status
+    if (page == PG_DESIGN) PV.dirty = true;     // the wallpaper or the apps may have changed
     settings_invalidate();
 }
 
@@ -399,6 +424,9 @@ static void activate_row(int ri, int part)
     case SK_STEPPER:
         if (part == PART_MINUS) sset(it, sval(it->id) - it->step);
         else if (part == PART_PLUS) sset(it, sval(it->id) + it->step);
+        break;
+    case SK_GALLERY:
+        if (part >= PART_CARD0) sset(it, part - PART_CARD0);
         break;
     case SK_SLIDER:
         if (part == PART_CONTROL) sset(it, slider_value_at(&SW.rows[ri], (f32)SW.mx));  // dragging goes on in WM_MOUSEMOVE
@@ -491,6 +519,7 @@ static void settings_key(UINT vk)
         int d = vk == VK_LEFT ? -1 : 1;
         if (it->kind == SK_STEPPER || it->kind == SK_SLIDER) sset(it, sval(it->id) + d * it->step);
         else if (it->kind == SK_CHOICE) sset(it, sval(it->id) + d);
+        else if (it->kind == SK_GALLERY) sset(it, k_gal_order[CLAMP(gallery_pos(sval(it->id)) + d, 0, STYLE__COUNT - 1)]);
         else if (it->kind == SK_TOGGLE) sset(it, d > 0);
         break;
     }
@@ -657,6 +686,10 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             SetCursor(LoadCursorW(NULL, (LPCWSTR)IDC_IBEAM));
             return TRUE;
         }
+        if (LOWORD(lp) == HTCLIENT && SW.hover.type == HT_ROW && SW.hover.part >= PART_CARD0) {
+            SetCursor(LoadCursorW(NULL, (LPCWSTR)IDC_HAND));
+            return TRUE;
+        }
         break;
     case WM_MOUSEMOVE: {
         bool was_hot = sb_hot();
@@ -746,6 +779,10 @@ static LRESULT CALLBACK settings_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         if (wp == SETTINGS_TIMER_CARET) SW.caret_on = !SW.caret_on;
         if (wp == SETTINGS_TIMER_FLASH) KillTimer(h, SETTINGS_TIMER_FLASH);
         if (wp == SETTINGS_TIMER_APPLY) pend_flush(false);
+        if (wp == SETTINGS_TIMER_PV) {
+            KillTimer(h, SETTINGS_TIMER_PV);
+            PV.dirty = true;
+        }
         if (wp == SETTINGS_TIMER_TIP) {
             KillTimer(h, SETTINGS_TIMER_TIP);
             SW.tip_on = SW.tip_row >= 0;
@@ -866,5 +903,6 @@ static void settings_device_lost(void) { r_target_release(&SW.target); }
 
 static void settings_device_restored(void)
 {
+    PV.ok = false;
     if (SW.hwnd && r_target_init(&SW.target, SW.hwnd, SW.W, SW.H)) settings_invalidate();
 }

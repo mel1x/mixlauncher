@@ -2,8 +2,10 @@
 // swap chain (DirectComposition) per window. Also the CPU rasterizing helpers of the taskbar windows and icons.
 
 // One instance. mode: 0 rounded rect, 1 glyph (atlas coverage), 2 icon (atlas BGRA), 3 rounded rect turned by
-// the 2x2 matrix in u0..v1, 4 rounded rect of backdrop (the screen behind the window, see r_backdrop).
-// border > 0 draws only an outline that wide, soft blurs the edge (shadows).
+// the 2x2 matrix in u0..v1, 4 rounded rect of backdrop (the screen behind the window, see r_backdrop), 5 rounded
+// rect of R.pv (premultiplied BGRA, see r_image).
+// border > 0 draws only an outline that wide, soft blurs the edge (shadows). A negative radius (SQUIRCLE) gives
+// superellipse corners instead of circular ones.
 typedef struct RInst {
     f32 x0, y0, x1, y1;
     f32 u0, v0, u1, v1;
@@ -12,6 +14,7 @@ typedef struct RInst {
     f32 radius, border, soft, mode;
 } RInst;
 
+#define SQUIRCLE(r) (-(r))
 #define GLYPH_ATLAS 2048
 #define ICON_ATLAS  1024
 #define RGBA(r, g, b, a) ((u32)(r) | ((u32)(g) << 8) | ((u32)(b) << 16) | ((u32)(a) << 24))
@@ -202,6 +205,7 @@ typedef struct Renderer {
     // The backdrop: the screen behind the window (src), halved, quartered and blurred there (quarter_b; quarter_t
     // holds the blur's first pass).
     RTex bd_src, bd_half, bd_quarter, bd_quarter_t, bd_quarter_b;
+    RTex pv, pv_tmp;  // pictures drawn by r_image (the Design page's previews), and the target one is rendered to
     f32 bd_sigma;  // the blur, src px
     bool bd_dirty; // src changed: blur again before the frame
     f32 bd[8];     // the backdrop's constants (bd0, bd1 in the shader)
@@ -239,6 +243,7 @@ static const char k_shader_src[] =
     "  V o;\n"
     "  float2 t = float2(i.vid & 1, i.vid >> 1);\n"
     "  bool sdf = i.p.w < 0.5 || i.p.w > 2.5;\n"
+    "  bool img = i.p.w > 4.5;\n"
     "  float pad = sdf ? (i.p.z + 1.0) : 0.0;\n"
     "  float2 p = lerp(i.r.xy - pad, i.r.zw + pad, t);\n"
     "  float2 mid = (i.r.xy + i.r.zw) * 0.5;\n"
@@ -248,7 +253,7 @@ static const char k_shader_src[] =
     "  float2 ctr = 0.5 / vp.xy;\n"
     "  float2 q = ctr + (p - ctr) * vp.z;\n"
     "  o.pos = float4(q.x * vp.x * 2.0 - 1.0, 1.0 - q.y * vp.y * 2.0, 0.0, 1.0);\n"
-    "  o.uv = lerp(i.uv.xy, i.uv.zw, t);\n"
+    "  o.uv = img ? lerp(i.uv.xy, i.uv.zw, (p - i.r.xy) / max(i.r.zw - i.r.xy, 1.0)) : lerp(i.uv.xy, i.uv.zw, t);\n"
     "  o.hs = (i.r.zw - i.r.xy) * 0.5;\n"
     "  o.c = i.c; o.clip = i.clip; o.p = i.p;\n"
     "  return o;\n"
@@ -256,9 +261,16 @@ static const char k_shader_src[] =
     "Texture2D<float> gtex : register(t0);\n"
     "Texture2D<float4> itex : register(t1);\n"
     "Texture2D<float4> btex : register(t2);\n"
+    "Texture2D<float4> ptex : register(t3);\n"
     "SamplerState sp : register(s0);\n"
     "SamplerState sl : register(s1);\n"
     "float sdrr(float2 p, float2 b, float r) { float2 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }\n"
+    "float sdsq(float2 p, float2 b, float r) {\n"
+    "  float2 q = abs(p) - b + r, m = max(q, 0.0) / max(r, 1e-3);\n"
+    "  m *= m;\n"
+    "  return r * sqrt(sqrt(dot(m, m))) + min(max(q.x, q.y), 0.0) - r;\n"
+    "}\n"
+    "float shape(float2 p, float2 b, float rr) { float r = min(abs(rr), min(b.x, b.y)); return rr < 0.0 ? sdsq(p, b, r) : sdrr(p, b, r); }\n"
     "float lum(float3 c) { return dot(c, float3(0.30, 0.59, 0.11)); }\n"
     "float3 clip_color(float3 c) {\n"
     "  float l = lum(c), n = min(c.r, min(c.g, c.b)), x = max(c.r, max(c.g, c.b));\n"
@@ -268,8 +280,7 @@ static const char k_shader_src[] =
     "}\n"
     "float3 with_lum(float3 c, float l) { return clip_color(c + (l - lum(c))); }\n"
     "float4 backdrop(V i) {\n"
-    "  float r = min(i.p.x, min(i.hs.x, i.hs.y));\n"
-    "  float a = saturate(0.5 - sdrr(i.local, i.hs, r)) * i.c.a;\n"
+    "  float a = saturate(0.5 - shape(i.local, i.hs, i.p.x)) * i.c.a;\n"
     "  float3 c = btex.SampleLevel(sl, (i.pos.xy + bd0.xy) * bd0.zw, 0).rgb;\n"
     "  bool dark = bd1.y > 0.5;\n"
     "  if (bd1.x < 0.5) {\n"
@@ -287,12 +298,14 @@ static const char k_shader_src[] =
     "float4 ps(V i) : SV_Target {\n"
     "  float2 fp = i.cpos;\n"
     "  if (fp.x < i.clip.x || fp.y < i.clip.y || fp.x > i.clip.z || fp.y > i.clip.w) discard;\n"
+    "  if (i.p.w > 4.5) {\n"
+    "    return ptex.SampleLevel(sl, i.uv, 0) * saturate(0.5 - shape(i.local, i.hs, i.p.x)) * i.c.a;\n"
+    "  }\n"
     "  if (i.p.w > 3.5) return backdrop(i);\n"
     "  float4 c = i.c;\n"
     "  float a;\n"
     "  if (i.p.w < 0.5 || i.p.w > 2.5) {\n"
-    "    float r = min(i.p.x, min(i.hs.x, i.hs.y));\n"
-    "    float d = sdrr(i.local, i.hs, r);\n"
+    "    float d = shape(i.local, i.hs, i.p.x);\n"
     "    if (i.p.z > 0.0) a = 1.0 - smoothstep(-i.p.z, i.p.z, d);\n"
     "    else a = saturate(0.5 - d);\n"
     "    if (i.p.y > 0.0) a *= saturate(d + i.p.y + 0.5);\n"
@@ -753,6 +766,26 @@ static void r_icon(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, f
     q->mode = 2;
 }
 
+// A rounded rect of R.pv: u0..v1 is the part of it (0..1), stretched over the rect.
+static void r_image(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, f32 radius)
+{
+    if (!R.pv.srv) return;
+    RInst *q = r_push();
+    if (!q) return;
+    q->x0 = x;
+    q->y0 = y;
+    q->x1 = x + w;
+    q->y1 = y + h;
+    q->u0 = u0;
+    q->v0 = v0;
+    q->u1 = u1;
+    q->v1 = v1;
+    q->color = RGBA(255, 255, 255, (u32)(CLAMP(R.opacity, 0.f, 1.f) * 255.f + 0.5f));
+    q->radius = radius;
+    q->border = q->soft = 0;
+    q->mode = 5;
+}
+
 // A rounded rect of the backdrop (R.bd_src, blurred), shaded as R.bd says.
 static void r_backdrop(f32 x, f32 y, f32 w, f32 h, f32 radius)
 {
@@ -808,8 +841,19 @@ static bool rtex_fit(RTex *t, int w, int h, bool target)
 
 static void r_bd_free(void)
 {
-    RTex *all[] = { &R.bd_src, &R.bd_half, &R.bd_quarter, &R.bd_quarter_t, &R.bd_quarter_b };
+    RTex *all[] = { &R.bd_src, &R.bd_half, &R.bd_quarter, &R.bd_quarter_t, &R.bd_quarter_b, &R.pv, &R.pv_tmp };
     for (int i = 0; i < countof(all); i++) rtex_free(all[i]);
+}
+
+// A target drawn to without a window: the texture's picture, read back with r_image once copied to R.pv.
+static RTarget r_target_tex(RTex *tex)
+{
+    RTarget t = { 0 };
+    t.rtv = tex->rtv;
+    t.w = tex->w;
+    t.h = tex->h;
+    t.ok = tex->rtv != NULL;
+    return t;
 }
 
 // The source: w x h px of the screen, copied in (screen capture) or uploaded (r_bd_upload).
@@ -937,8 +981,8 @@ static bool r_end_and_present(void)
     ID3D11DeviceContext_VSSetConstantBuffers(R.ctx, 0, 1, &R.cbuf);
     ID3D11DeviceContext_PSSetShader(R.ctx, R.ps, NULL, 0);
     ID3D11DeviceContext_PSSetConstantBuffers(R.ctx, 0, 1, &R.cbuf);
-    ID3D11ShaderResourceView *srvs[3] = { R.glyph_srv, R.icon_srv, R.bd_quarter_b.srv };
-    ID3D11DeviceContext_PSSetShaderResources(R.ctx, 0, 3, srvs);
+    ID3D11ShaderResourceView *srvs[4] = { R.glyph_srv, R.icon_srv, R.bd_quarter_b.srv, R.pv.srv };
+    ID3D11DeviceContext_PSSetShaderResources(R.ctx, 0, 4, srvs);
     ID3D11SamplerState *samps[2] = { R.scale != 1.0f ? R.samp_linear : R.samp_point, R.samp_linear };
     ID3D11DeviceContext_PSSetSamplers(R.ctx, 0, 2, samps);
 
@@ -951,6 +995,7 @@ static bool r_end_and_present(void)
         done += n;
     }
 
+    if (!t->swap) return true;  // offscreen (r_target_tex): the picture stays in its texture
     HRESULT hr = IDXGISwapChain1_Present(t->swap, 1, 0);
     if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
         log_msg("device lost 0x%08lx", hr);

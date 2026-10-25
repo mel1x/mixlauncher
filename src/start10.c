@@ -117,7 +117,7 @@ static void w10_refresh_tiles(void)
     for (int o = 0; o < n && U.w10.tile_count < countof(U.w10.tiles); o++) {
         int k = order[o];
         App *a = app_by_id(PIN.p[k].id);
-        if (!a) continue;
+        if (!a || app_hidden(a)) continue;
         int s = PIN.p[k].size, w = k_tile_w[s], h = k_tile_h[s], fx = -1, fy = -1;
         bool dragged = U.w10.tdrag && U.w10.tdrag == a;
         int cx = dragged ? U.w10.drag_cx : PIN.p[k].col, cy = dragged ? U.w10.drag_cy : PIN.p[k].row;

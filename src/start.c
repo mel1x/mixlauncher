@@ -164,13 +164,13 @@ static void st_refresh_tiles(void)
     int cap = countof(U.st.tiles);
     for (int k = 0; k < PIN.n && U.st.tile_count < cap; k++) {
         App *a = app_by_id(PIN.p[k].id);
-        if (a) U.st.tiles[U.st.tile_count++] = a;
+        if (a && !app_hidden(a)) U.st.tiles[U.st.tile_count++] = a;
     }
     App *tmp[512];
     int n = 0;
     for (int i = 0; i < U.apps->shell_count && n < countof(tmp); i++) {
         App *a = &U.apps->apps[i];
-        if (a->frec > 0.f && pin_index(a->id) < 0) tmp[n++] = a;
+        if (a->frec > 0.f && pin_index(a->id) < 0 && !app_hidden(a)) tmp[n++] = a;
     }
     qsort(tmp, n, sizeof(App *), cmp_frequent);
     for (int i = 0; i < n && U.st.rec_count < countof(U.st.recs); i++) U.st.recs[U.st.rec_count++] = tmp[i];
@@ -217,6 +217,7 @@ static void st_all_apps_rows(void)
     WCHAR last = 0;
     for (int i = 0; i < U.apps->shell_count; i++) {
         App *a = &U.apps->apps[i];
+        if (app_hidden(a)) continue;  // before its letter: no header left empty
         WCHAR c = (WCHAR)towupper(a->name[0]);
         if (!iswalpha(c)) c = '#';
         if (c != last && U.st.letter_count < countof(U.st.letters)) {

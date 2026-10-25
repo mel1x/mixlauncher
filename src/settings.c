@@ -1,16 +1,16 @@
 // The settings: the items of every page (k_sitems), their values and what changing one does. Layout and
 // drawing of the rows are here too; the window, input and animation are in settings_wnd.c.
 
-enum { SK_TOGGLE, SK_CHOICE, SK_STEPPER, SK_SLIDER, SK_TEXT, SK_HOTKEY, SK_BUTTON, SK_INFO, SK_ABOUT };
+enum { SK_TOGGLE, SK_CHOICE, SK_STEPPER, SK_SLIDER, SK_TEXT, SK_HOTKEY, SK_BUTTON, SK_INFO, SK_ABOUT, SK_GALLERY };
 enum {
     SID_NONE, SID_HOTKEY, SID_AUTOSTART, SID_KEEPQUERY, SID_THEME, SID_BACKDROP, SID_ANIM, SID_WIDTH, SID_ROWS,
     SID_MAXAPPS, SID_HIDENOISE, SID_REINDEX, SID_MINCHARS, SID_FILTER, SID_CLEARHIST, SID_CONFIG,
     SID_DATADIR, SID_ADMIN, SID_EVERYTHING, SID_ABOUT,
     SID_ASPEED, SID_AOPEN, SID_ACLOSE, SID_ASCALE, SID_ACASCADE, SID_AROW, SID_ASTAGGER, SID_ASELECT, SID_ASCROLL, SID_AMENU,
     SID_APAGE, SID_APREVIEW, SID_ARESET, SID_TASKBAR, SID_TBREPLACE, SID_TBICON, SID_TBFILE, SID_MEDIA, SID_MEDIAPOS, SID_MEDIACTL, SID_MEDIAHIDE, SID_MEDIASCROLL, SID_LANG,
-    SID_STYLE, SID_MATCHHL, SID_UPDCHECK, SID_UPDNOW, SID_REDUCED, SID_RMGOTO, SID_POSITION, SID_STARTPOS, SID_TBSEARCH, SID_SCALE, SID__COUNT
+    SID_STYLE, SID_MATCHHL, SID_UPDCHECK, SID_UPDNOW, SID_REDUCED, SID_RMGOTO, SID_POSITION, SID_STARTPOS, SID_TBSEARCH, SID_SCALE, SID_STYLEGO, SID__COUNT
 };
-enum { PG_GENERAL, PG_TASKBAR, PG_APPEARANCE, PG_ANIM, PG_SEARCH, PG_ADVANCED, PG_ABOUT, PG__COUNT };
+enum { PG_GENERAL, PG_TASKBAR, PG_APPEARANCE, PG_DESIGN, PG_ANIM, PG_SEARCH, PG_ADVANCED, PG_ABOUT, PG__COUNT };
 
 typedef struct Str { const WCHAR *ru, *en; } Str;
 static const WCHAR *ss(Str s) { return g_lang_ru ? s.ru : s.en; }
@@ -19,6 +19,7 @@ static const struct { Str name; u32 glyph; } k_pages[PG__COUNT] = {
     { { L"Общие", L"General" }, 0xE713 },
     { { L"Панель задач", L"Taskbar" }, 0xE7C4 },
     { { L"Внешний вид", L"Appearance" }, 0xE790 },
+    { { L"Дизайн", L"Design" }, 0xE80A },
     { { L"Анимация", L"Animation" }, 0xE916 },
     { { L"Поиск", L"Search" }, 0xE721 },
     { { L"Дополнительно", L"Advanced" }, 0xE90F },
@@ -100,16 +101,10 @@ static const SItem k_sitems[] = {
                 L"Glass is a translucent blur, acrylic looks like system menus, Mica tints with the wallpaper like Windows 11 windows" },
       .opt = { { L"Стекло", L"Glass" }, { L"Акрил", L"Acrylic" }, { L"Mica", L"Mica" }, { L"Сплошной", L"Solid" } },
       .warn = (1 << BACKDROP_BLUR) | (1 << BACKDROP_ACRYLIC) },
-    { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_STYLE, .group = { L"Лаунчер", L"Launcher" },
-      .title = { L"Стиль", L"Style" },
-      .desc = { L"Стандарт - мягкая подложка с контуром. Raycast - мелкие значки и плотная подложка. "
-                L"Fluent - полоска акцента у выбранной строки. Компактный - больше строк на экране. Капсула - поиск отдельно от списка. "
-                L"Windows 11 и 10 - как меню Пуск",
-                L"Standard has a soft outlined highlight. Raycast uses small icons and a solid highlight. "
-                L"Fluent marks the selected row with an accent bar. Compact fits more rows on screen. Capsule keeps search apart from the list. "
-                L"Windows 11 and 10 look like Start" },
-      .opt = { { L"Стандарт", L"Standard" }, { L"Raycast", L"Raycast" }, { L"Fluent", L"Fluent" }, { L"Компактный", L"Compact" }, { L"Капсула", L"Capsule" },
-               { L"Windows 11", L"Windows 11" }, { L"Windows 10", L"Windows 10" } } },
+    { .page = PG_APPEARANCE, .kind = SK_BUTTON, .id = SID_STYLEGO, .group = { L"Лаунчер", L"Launcher" },
+      .title = { L"Дизайн лаунчера", L"Launcher design" },
+      .desc = { L"Стандарт, Капсула, Windows 11 и другие стили с превью", L"Standard, Capsule, Windows 11 and other styles with previews" },
+      .opt = { { L"Выбрать", L"Choose" } }, .glyph = 0xE80A },
     { .page = PG_APPEARANCE, .kind = SK_CHOICE, .id = SID_STARTPOS, .dep = SID_STYLE, .dep_mask = STYLES_START_MENU, .title = { L"Положение", L"Position" },
       .desc = { L"Как меню Пуск: окно выезжает из-под панели задач", L"Like Start: the window slides up from under the taskbar" },
       .opt = { { L"Слева снизу", L"Bottom left" }, { L"Снизу по центру", L"Bottom center" } } },
@@ -202,6 +197,10 @@ static const SItem k_sitems[] = {
       .desc = { L"Добавляется к каждому запросу. Например, !C:\\Windows\\ исключает папку Windows",
                 L"Appended to every query. For example, !C:\\Windows\\ excludes the Windows folder" } },
 
+    { .page = PG_DESIGN, .kind = SK_GALLERY, .id = SID_STYLE,
+      .opt = { { L"Стандарт", L"Standard" }, { L"Raycast", L"Raycast" }, { L"Fluent", L"Fluent" }, { L"Компактный", L"Compact" }, { L"Капсула", L"Capsule" },
+               { L"Windows 11", L"Windows 11" }, { L"Windows 10", L"Windows 10" } } },
+
     { .page = PG_ADVANCED, .kind = SK_BUTTON, .id = SID_CLEARHIST, .group = { L"Данные", L"Data" },
       .title = { L"История запусков", L"Launch history" },
       .desc = { L"Частота запусков и запомненные запросы, по которым строится порядок результатов",
@@ -263,7 +262,7 @@ typedef struct SBox { f32 x, y, w, h; } SBox;
 enum { HT_NONE, HT_NAV, HT_ROW, HT_WINMIN, HT_WINCLOSE, HT_POPITEM, HT_POPOUT, HT_RECCANCEL, HT_RECSAVE, HT_RECPANEL, HT_RECOUT,
        HT_SBUPDATE, HT_DONATE, HT_DON };
 enum { DON_OUT = -1, DON_PANEL = -2, DON_CLOSE = -3, DON_LINK = -4 };
-enum { PART_ROW, PART_CONTROL, PART_MINUS, PART_PLUS };
+enum { PART_ROW, PART_CONTROL, PART_MINUS, PART_PLUS, PART_CARD0 };  // PART_CARD0 + k: the Design page's card k
 
 typedef struct SHit { u8 type, part; int idx; } SHit;
 
@@ -332,6 +331,7 @@ static struct {
     int row_hov_idx;
     f32 seg[SITEMS];
     int seg_click;
+    f32 card_hov[STYLE__COUNT], card_sel[STYLE__COUNT];  // the Design page's cards: hovered, chosen (0..1)
     struct {
         bool open, closing;
         f32 t, scroll, scroll_target, scroll_v, content_h, view_h;
@@ -348,6 +348,21 @@ static struct {
     int tip_row, tip_x, tip_y;
     bool tip_on;
 } SW = { .focus = -1, .editing = -1, .pop_row = -1, .flash_id = -1, .page_t = 1, .pop_t = 1, .rec_t = 1, .seg_click = -1, .tip_row = -1 };
+
+// The Design page's previews: the launcher itself, drawn in each style at the cards' size over the wallpaper of
+// this monitor. R.pv holds them in a 3 x 3 grid of preview-sized cells: the styles, then the wallpaper.
+static struct {
+    int pw, ph;          // the cell: a card's preview, px
+    int tb;              // the schematic taskbar's height
+    bool tb_center;      // Windows 11 icons in the middle (TaskbarAl)
+    bool ok, dirty;
+    f32 x[STYLE__COUNT], y[STYLE__COUNT];  // where the launcher sits in its card
+    int w[STYLE__COUNT], h[STYLE__COUNT];
+    f32 rad[STYLE__COUNT];                 // the corners DWM gives its window (0: the style draws its own)
+} PV;
+
+#define PV_WALL STYLE__COUNT
+#define SETTINGS_TIMER_PV 5
 
 static f32 SSC(f32 v) { return v * SW.s; }
 static f32 SSR(f32 v) { return floorf(v * SW.s + 0.5f); }
@@ -594,6 +609,7 @@ static void sapply(const SItem *it, int v)
         apps_request_reindex();
         break;
     }
+    PV.dirty = true;  // the previews show the launcher as the settings make it
     settings_invalidate();
 }
 
@@ -627,7 +643,7 @@ static void sset(const SItem *it, int v)
     item_range(it, &lo, &hi);
     if (it->kind == SK_STEPPER || it->kind == SK_SLIDER) v = CLAMP(v, lo, hi);
     if (it->kind == SK_TOGGLE) v = v ? 1 : 0;
-    if (it->kind == SK_CHOICE) v = CLAMP(v, 0, choice_count(it) - 1);
+    if (it->kind == SK_CHOICE || it->kind == SK_GALLERY) v = CLAMP(v, 0, choice_count(it) - 1);
     if (v == sval(it->id) || item_locked(it)) return;
     if (it->id == SID_TBICON && v == TBI_CUSTOM && !g_cfg.taskbar_icon_path[0] && !pick_taskbar_icon()) return;
     if (g_cfg.reduced_motion || it->id == SID_REDUCED) {  // nothing to wait for without the animation
@@ -691,6 +707,9 @@ static void button_action(const SItem *it)
         break;
     case SID_RMGOTO:
         settings_open_at(SID_REDUCED);
+        break;
+    case SID_STYLEGO:
+        settings_open_at(SID_STYLE);
         break;
     case SID_UPDNOW:
         if (upd_state() == UPD_AVAILABLE || (upd_state() == UPD_ERROR && UPD.url[0])) upd_download();
@@ -1018,6 +1037,57 @@ static f32 group_vis(int i)
 }
 
 // Every item gets a row (stable indices): a hidden one is 0 tall, an appearing one partly.
+// ---- the Design page: a card for every launcher style, with a preview drawn from shapes
+
+static const Str k_style_desc[STYLE__COUNT] = {
+    [STYLE_STANDARD] = { L"Мягкая подложка с контуром", L"A soft outlined highlight" },
+    [STYLE_RAYCAST] = { L"Мелкие значки, яркий выбор", L"Small icons, a solid highlight" },
+    [STYLE_FLUENT] = { L"Полоска акцента у выбранной", L"An accent bar on the selection" },
+    [STYLE_COMPACT] = { L"Больше строк на экране", L"More rows on screen" },
+    [STYLE_CAPSULE] = { L"Поиск отдельно от списка", L"Search apart from the list" },
+    [STYLE_START] = { L"Как Пуск: сетка значков", L"Like Start: a grid of pins" },
+    [STYLE_WIN10] = { L"Как Пуск: плитки и список", L"Like Start: tiles and a list" },
+};
+
+#define GAL_GAP 14.f
+#define GAL_INFO 64.f  // under the preview: the name, a line about it and the button
+
+static int gallery_cols(const SRow *r)
+{
+    (void)r;
+    return 1;  // one design per row, as wide as the page: big enough to read
+}
+
+static f32 gallery_preview_h(f32 cw) { return floorf((cw - SSR(16)) * 0.6f); }
+
+// The cards in page order: the Start look-alikes first.
+static const u8 k_gal_order[STYLE__COUNT] = { STYLE_START, STYLE_WIN10, STYLE_STANDARD, STYLE_RAYCAST, STYLE_FLUENT, STYLE_COMPACT, STYLE_CAPSULE };
+
+static int gallery_pos(int style)
+{
+    for (int i = 0; i < STYLE__COUNT; i++)
+        if (k_gal_order[i] == style) return i;
+    return 0;
+}
+
+// Style k's card (x0, y0, x1, y1) in the page's content.
+static void gallery_card(const SRow *r, int style, f32 *b)
+{
+    int cols = gallery_cols(r), k = gallery_pos(style);
+    f32 g = SSR(GAL_GAP), cw = floorf((r->w - g * (f32)(cols - 1)) / (f32)cols), ch = SSR(8) + gallery_preview_h(cw) + SSR(GAL_INFO);
+    box_set(b, r->x + (cw + g) * (f32)(k % cols), r->y + (ch + g) * (f32)(k / cols), cw, ch);
+}
+
+static int gallery_at(const SRow *r, f32 x, f32 y)
+{
+    f32 b[4];
+    for (int k = 0; k < STYLE__COUNT; k++) {
+        gallery_card(r, k, b);
+        if (in_box(b, x, y)) return k;
+    }
+    return -1;
+}
+
 static void settings_layout(void)
 {
     SW.nrows = SW.ncards = SW.nheads = 0;
@@ -1033,6 +1103,17 @@ static void settings_layout(void)
         r->item = i;
         r->x = x0;
         r->w = w;
+        if (it->kind == SK_GALLERY) {
+            f32 b[4];
+            r->y = y + SSR(6);
+            gallery_card(r, k_gal_order[STYLE__COUNT - 1], b);
+            r->h = b[3] - y;
+            r->vis = 1.f;
+            y += r->h;
+            card = lead = -1;
+            any = true;
+            continue;
+        }
         if (it->kind == SK_ABOUT) {
             r->y = y;
             r->ndesc = wrap_lines(FONT_TEXT, SSC(13.5f), ss(it->desc), w - SSR(4), r->desc_at, 4);
@@ -1261,6 +1342,316 @@ static void draw_toggle(f32 x, f32 cy, f32 on, bool hov, const Theme *t, const S
     r_rect(kx, ky, k, k, color_mix(off_knob, knob, on), k * 0.5f);
 }
 
+
+static void pv_cell(int k, int *x, int *y)
+{
+    *x = (k % 3) * PV.pw;
+    *y = (k / 3) * PV.ph;
+}
+
+// The wallpaper of the settings' monitor, covering a cell: into the grid, and as the backdrop's source.
+static bool pv_wallpaper(void)
+{
+    MONITORINFO mi;
+    mi.cbSize = sizeof mi;
+    if (!GetMonitorInfoW(MonitorFromWindow(SW.hwnd, MONITOR_DEFAULTTONEAREST), &mi)) return false;
+    RECT mr = mi.rcMonitor;
+    Layer full = { 0 }, cell = { 0 };
+    bool ok = wallpaper_paint(&full, mr) && layer_fit(&cell, PV.pw, PV.ph);
+    if (ok) {
+        int mw = mr.right - mr.left, mh = mr.bottom - mr.top;
+        f32 k = MAX((f32)PV.pw / (f32)mw, (f32)PV.ph / (f32)mh);  // cover
+        int sw = (int)((f32)PV.pw / k), sh = (int)((f32)PV.ph / k);
+        SetStretchBltMode(cell.dc, HALFTONE);
+        SetBrushOrgEx(cell.dc, 0, 0, NULL);
+        StretchBlt(cell.dc, 0, 0, PV.pw, PV.ph, full.dc, (mw - sw) / 2, (mh - sh) / 2, sw, sh, SRCCOPY);
+        GdiFlush();
+        for (int i = 0; i < PV.pw * PV.ph; i++) cell.bits[i] |= 0xFF000000u;
+        int cx, cy;
+        pv_cell(PV_WALL, &cx, &cy);
+        D3D11_BOX box = { (UINT)cx, (UINT)cy, 0, (UINT)(cx + PV.pw), (UINT)(cy + PV.ph), 1 };
+        ID3D11DeviceContext_UpdateSubresource(R.ctx, (ID3D11Resource *)R.pv.tex, 0, &box, cell.bits, (UINT)PV.pw * 4, 0);
+        if (r_bd_source(PV.pw, PV.ph)) r_bd_upload(cell.bits);
+    }
+    layer_free(&full);
+    layer_free(&cell);
+    return ok;
+}
+
+// Draws the launcher in style s into its cell: its own layout and drawing, at the scale that fits the card.
+static void pv_render_style(int s, f32 *bd)
+{
+    g_cfg.style = s;
+    g_cfg.scale = 100;
+    ui_metrics(96);
+    int pos = launcher_position();
+    // the capsule's window has a see-through margin around its panels: it is placed by the panels, as the others
+    f32 cm = s == STYLE_CAPSULE ? CAP_MARGIN * 2.f : 0.f;
+    f32 room = (f32)(PV.ph - PV.tb), fit = pos == POS_CENTER ? 0.86f : 0.92f;
+    f32 k = MIN((f32)PV.pw * 0.86f / ((f32)U.W - cm), room * fit / ((f32)U.H - cm));
+    g_cfg.scale = MAX(1, (int)(k * 100.f));
+    ui_metrics(96);
+    int w = MIN(U.W, PV.pw), h = MIN(U.H, PV.ph);
+    f32 in = s == STYLE_CAPSULE ? SR(CAP_MARGIN) : 0.f, vw = (f32)w - in * 2, vh = (f32)h - in * 2;
+    if (!rtex_fit(&R.pv_tmp, w, h, true)) return;
+    refresh_empty_view();
+    rebuild_rows(false);
+    U.scroll = U.scroll_target = U.scroll_v = 0;
+    snap_highlight();
+    U.sub_t = 1.f;
+    U.sub_text = NULL;
+    // where it opens: as set (the Start styles at the taskbar), Windows 10 against the taskbar and the edge
+    f32 m = s == STYLE_WIN10 ? 0.f : floorf(room * 0.03f);
+    bool left = pos == POS_BOTTOM_LEFT || (s == STYLE_START && !PV.tb_center);
+    f32 x = (left ? m : floorf(((f32)PV.pw - vw) * 0.5f)) - in;
+    f32 y = (pos == POS_CENTER ? floorf((room - vh) * 0.42f) : room - vh - m) - in;
+    PV.x[s] = x;
+    PV.y[s] = y;
+    PV.w[s] = w;
+    PV.h[s] = h;
+    PV.rad[s] = s == STYLE_CAPSULE ? 0.f : backdrop_radius();
+    int kind = backdrop_kind();
+    R.bd_sigma = (kind == BACKDROP_MICA ? 60.f : 30.f) * U.s;
+    R.bd_dirty = true;
+    bd[0] = x;
+    bd[1] = y;
+    memcpy(R.bd, bd, 8 * sizeof(f32));
+    RTarget t = r_target_tex(&R.pv_tmp);
+    r_use(&t);
+    R.scale = 1.f;
+    r_draw(ui_draw);
+    r_end_and_present();
+    r_use(&R.main);
+    int cx, cy;
+    pv_cell(s, &cx, &cy);
+    D3D11_BOX box = { 0, 0, 0, (UINT)w, (UINT)h, 1 };
+    ID3D11DeviceContext_CopySubresourceRegion(R.ctx, (ID3D11Resource *)R.pv.tex, 0, (UINT)cx, (UINT)cy, 0, (ID3D11Resource *)R.pv_tmp.tex, 0, &box);
+}
+
+// Renders every preview again when they are out of date. Not while the launcher shows: it is the same state.
+static void pv_update(int pw, int ph)
+{
+    if (!R.ok || pw < 8 || ph < 8 || U.visible) return;
+    if (PV.ok && !PV.dirty && pw == PV.pw && ph == PV.ph) return;
+    PV.pw = pw;
+    PV.ph = ph;
+    PV.tb = MAX(12, (int)((f32)ph * 0.075f));
+    DWORD al = 1;
+    reg_dword(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", L"TaskbarAl", &al);
+    PV.tb_center = al != 0;
+    PV.dirty = false;
+    PV.ok = rtex_fit(&R.pv, pw * 3, ph * 3, false);
+    if (!PV.ok) return;
+    bool wall = pv_wallpaper();
+    // the launcher's state, given back after
+    int style = g_cfg.style, scale = g_cfg.scale, qlen = U.qlen;
+    u32 dpi = U.dpi;
+    bool search = U.search_mode, bd_ok = BD.ok, backdrop_ok = U.backdrop_ok;
+    f64 open_time = U.open_time;
+    U.qlen = 0;
+    U.search_mode = false;
+    U.open_time = 0;
+    g_hide_ai = true;
+    U.caret_on = true;
+    int kind = backdrop_kind();
+    BD.ok = U.backdrop_ok = wall && kind != BACKDROP_SOLID;
+    f32 bd[8] = { 0, 0, 1.f / (f32)pw, 1.f / (f32)ph, bd_shading(kind), TH.dark ? 1.f : 0.f, 0, 0 };
+    for (int s = 0; s < STYLE__COUNT; s++) pv_render_style(s, bd);
+    g_hide_ai = false;
+    g_cfg.style = style;
+    g_cfg.scale = scale;
+    ui_metrics(dpi ? dpi : 96);
+    U.dpi = dpi;  // 0 still asks the next open to measure (and load the icons) again
+    U.qlen = qlen;
+    U.search_mode = search;
+    U.open_time = open_time;
+    BD.ok = bd_ok;
+    U.backdrop_ok = backdrop_ok;
+    refresh_empty_view();
+    rebuild_rows(false);
+    snap_highlight();
+    // icons still loading show as blank tiles: once more when they are in
+    static int again;
+    if (SW.hwnd && again++ % 2 == 0) SetTimer(SW.hwnd, SETTINGS_TIMER_PV, 700, NULL);
+}
+
+// The apps on the previews' taskbar: the most used ones, then the first of the list.
+static int pv_taskbar_apps(App **out, int max)
+{
+    int n = 0;
+    g_hide_ai = true;
+    for (int i = 0; i < U.frequent_count && n < max; i++)
+        if (!app_hidden(U.frequent[i])) out[n++] = U.frequent[i];
+    for (int i = 0; U.apps && i < U.apps->shell_count && n < max; i++) {
+        App *a = &U.apps->apps[i];
+        bool dup = a->kind == APP_CMD || app_hidden(a);
+        for (int j = 0; j < n && !dup; j++) dup = out[j] == a;
+        if (!dup) out[n++] = a;
+    }
+    g_hide_ai = false;
+    return n;
+}
+
+// A Windows logo: four squares, Windows 11's rounded and light blue, Windows 10's plain.
+static void pv_logo(f32 x, f32 cy, f32 sz, bool w10)
+{
+    f32 g = MAX(1.f, floorf(sz * 0.08f)), q = floorf((sz - g) * 0.5f);
+    u32 c = w10 ? TH.text : TH.dark ? RGBA(76, 194, 255, 255) : RGBA(0, 103, 192, 255);
+    for (int i = 0; i < 4; i++)
+        r_rect(x + (f32)(i % 2) * (q + g), floorf(cy - sz * 0.5f) + (f32)(i / 2) * (q + g), q, q, c, w10 ? 0.f : SQUIRCLE(q * 0.18f));
+}
+
+// The taskbar along the preview's bottom, drawn over everything as the real one is: Windows 11's (icons in the middle
+// or at the left, as Windows has them) or, under its own style, Windows 10's. The apps are yours, the clock is now.
+static void pv_taskbar(int k, f32 x, f32 y, f32 w, f32 h, f32 rad)
+{
+    const Theme *t = &TH;
+    bool w10 = k == STYLE_WIN10;
+    f32 tb = (f32)PV.tb, ty = y + h - tb, cy = floorf(ty + tb * 0.5f);
+    f32 saved[4];
+    memcpy(saved, R.clip, sizeof saved);
+    r_set_clip(MAX(saved[0], x), MAX(saved[1], ty), MIN(saved[2], x + w), MIN(saved[3], y + h));
+    u32 bg = w10 ? (t->dark ? RGBA(16, 16, 18, 242) : RGBA(228, 228, 230, 242)) : (t->dark ? RGBA(32, 32, 34, 238) : RGBA(243, 243, 245, 238));
+    r_rect(x, y, w, h, bg, rad);
+    r_set_clip(saved[0], saved[1], saved[2], saved[3]);
+    r_rect(x, ty, w, 1, t->dark ? RGBA(255, 255, 255, 18) : RGBA(0, 0, 0, 14), 0);
+    u32 dim = color_alpha(t->text, 0.8f), faint = color_alpha(t->text, 0.55f);
+
+    // at the right: the tray's chevron, network and sound, then the time over the date
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    WCHAR tm[16], dt[16];
+    wfmt(tm, countof(tm), L"%d:%02d", st.wHour, st.wMinute);
+    wfmt(dt, countof(dt), L"%02d.%02d.%04d", st.wDay, st.wMonth, st.wYear);
+    f32 cfs = floorf(tb * 0.3f), dw = text_width(FONT_TEXT, cfs, dt, -1), rx = x + w - floorf(tb * 0.35f);
+    f32 tw = text_width(FONT_TEXT, cfs, tm, -1), lh = cfs * 1.15f;
+    text_draw(FONT_TEXT, cfs, floorf(rx - tw), floorf(cy - lh * 0.12f), tm, -1, dim);
+    text_draw(FONT_TEXT, cfs, floorf(rx - dw), floorf(cy + lh * 0.88f), dt, -1, dim);
+    f32 gs = floorf(tb * 0.36f), gx = rx - dw - floorf(tb * 0.55f);
+    static const u32 tray[3] = { 0xE767, 0xE701, 0xE70E };  // Volume, Wifi, ChevronUp
+    for (int i = 0; i < 3; i++) text_draw_icon(tray[i], gs, gx - (f32)i * tb * 0.62f, cy, i == 2 ? faint : dim);
+
+    App *apps[6];
+    int na = pv_taskbar_apps(apps, countof(apps));
+    f32 is = floorf(tb * 0.56f), pitch = floorf(tb * 0.95f);
+    if (w10) {  // the logo, the search box with its prompt, the apps
+        f32 lx = x + floorf(tb * 0.55f);
+        pv_logo(lx, cy, floorf(tb * 0.4f), true);
+        f32 bx = lx + floorf(tb * 0.95f), bw = floorf(w * 0.26f);
+        r_rect(bx, ty + 1, bw, tb - 1, t->dark ? RGBA(255, 255, 255, 34) : RGBA(255, 255, 255, 255), 0);
+        text_draw_icon(0xE721, floorf(tb * 0.32f), bx + floorf(tb * 0.45f), cy, faint);
+        f32 pfs = floorf(tb * 0.3f), px = bx + floorf(tb * 0.85f);
+        text_draw_fit(FONT_TEXT, pfs, px, text_baseline(FONT_TEXT, pfs, cy), bx + bw - px - SSR(4), TR("Введите здесь текст для поиска", "Type here to search"), -1, faint, false);
+        f32 ix = bx + bw + floorf(tb * 0.3f);
+        for (int i = 0; i < na; i++) {
+            f32 ax = ix + pitch * (f32)i;
+            draw_app_icon(apps[i], floorf(ax + (pitch - is) * 0.5f), floorf(cy - is * 0.5f), is);
+            if (i < 2) r_rect(ax + 1, y + h - MAX(2.f, floorf(tb * 0.07f)), pitch - 2, MAX(2.f, floorf(tb * 0.07f)), i ? faint : t->accent, 0);
+        }
+        return;
+    }
+    // Windows 11: Start, the search box, the apps (the first two running, the first in front)
+    f32 sw = floorf(tb * 3.3f), sh = floorf(tb * 0.66f), gap = floorf(tb * 0.25f);
+    f32 total = pitch + gap + sw + gap + pitch * (f32)na;
+    f32 sx = PV.tb_center ? floorf(x + (w - total) * 0.5f) : x + floorf(tb * 0.25f);
+    pv_logo(floorf(sx + (pitch - tb * 0.42f) * 0.5f), cy, floorf(tb * 0.42f), false);
+    f32 bx = sx + pitch + gap;
+    r_rect(bx, cy - floorf(sh * 0.5f), sw, sh, t->dark ? RGBA(255, 255, 255, 16) : RGBA(255, 255, 255, 230), sh * 0.5f);
+    r_border(bx, cy - floorf(sh * 0.5f), sw, sh, t->dark ? RGBA(255, 255, 255, 14) : RGBA(0, 0, 0, 16), sh * 0.5f);
+    text_draw_icon(0xE721, floorf(tb * 0.3f), bx + floorf(sh * 0.55f), cy, dim);
+    f32 pfs = floorf(tb * 0.3f);
+    text_draw(FONT_TEXT, pfs, bx + floorf(sh * 0.55f + tb * 0.32f), text_baseline(FONT_TEXT, pfs, cy), TR("Поиск", "Search"), -1, faint);
+    f32 ix = bx + sw + gap;
+    for (int i = 0; i < na; i++) {
+        f32 ax = ix + pitch * (f32)i;
+        if (i == 0) r_rect(ax + 1, ty + floorf(tb * 0.1f), pitch - 2, tb - floorf(tb * 0.2f), t->dark ? RGBA(255, 255, 255, 18) : RGBA(255, 255, 255, 200), SQUIRCLE(floorf(tb * 0.2f)));
+        draw_app_icon(apps[i], floorf(ax + (pitch - is) * 0.5f), floorf(cy - is * 0.5f - tb * 0.04f), is);
+        if (i < 2) {
+            f32 dw2 = i ? floorf(tb * 0.12f) : floorf(tb * 0.32f), dh = MAX(2.f, floorf(tb * 0.08f));
+            r_rect(floorf(ax + (pitch - dw2) * 0.5f), y + h - floorf(tb * 0.13f) - dh, dw2, dh, i ? faint : t->accent, dh * 0.5f);
+        }
+    }
+}
+
+// Card k's preview at (x, y): the wallpaper, its taskbar, and the launcher with the shadow and outline DWM gives it.
+static void pv_draw(int k, f32 x, f32 y, f32 w, f32 h)
+{
+    f32 rad = SQUIRCLE(SSR(16));
+    if (!PV.ok || PV.pw != (int)w || PV.ph != (int)h) {
+        r_rect(x, y, w, h, TH.dark ? RGBA(0, 0, 0, 64) : RGBA(0, 0, 0, 12), rad);
+        return;
+    }
+    f32 aw = (f32)R.pv.w, ah = (f32)R.pv.h;
+    int cx, cy;
+    pv_cell(PV_WALL, &cx, &cy);
+    r_image(x, y, w, h, (f32)cx / aw, (f32)cy / ah, (f32)(cx + PV.pw) / aw, (f32)(cy + PV.ph) / ah, rad);
+    f32 lx = x + PV.x[k], ly = y + PV.y[k], lw = (f32)PV.w[k], lh = (f32)PV.h[k];
+    f32 saved[4];
+    memcpy(saved, R.clip, sizeof saved);
+    r_set_clip(MAX(saved[0], x), MAX(saved[1], y), MIN(saved[2], x + w), MIN(saved[3], y + h));
+    if (PV.rad[k] > 0.f || k == STYLE_WIN10) {
+        r_rect_ex(lx, ly + SSR(3), lw, lh, RGBA(0, 0, 0, TH.dark ? 110 : 60), PV.rad[k], 0, SSR(10));
+    }
+    pv_cell(k, &cx, &cy);
+    r_image(lx, ly, lw, lh, (f32)cx / aw, (f32)cy / ah, (f32)(cx + PV.w[k]) / aw, (f32)(cy + PV.h[k]) / ah, 0);
+    if (PV.rad[k] > 0.f || k == STYLE_WIN10) r_border(lx, ly, lw, lh, TH.dark ? RGBA(255, 255, 255, 30) : RGBA(0, 0, 0, 40), PV.rad[k]);
+    r_set_clip(saved[0], saved[1], saved[2], saved[3]);
+    pv_taskbar(k, x, y, w, h, rad);  // last, over the launcher's shadow, as the real taskbar is
+}
+
+// The card's button, sel (0..1) of the way from "Select" to "Selected".
+static void gallery_button(const f32 *b, f32 sel, f32 *out)
+{
+    f32 fs = SSC(13);
+    f32 w0 = text_width(FONT_TEXT, fs, TR("Выбрать", "Select"), -1) + SSR(32);
+    f32 w1 = text_width(FONT_TEXT, fs, TR("Выбрано", "Selected"), -1) + SSR(44);
+    f32 w = floorf(w0 + (w1 - w0) * sel + 0.5f), h = SSR(30);
+    box_set(out, b[2] - SSR(12) - w, floorf(b[3] - SSR(GAL_INFO) * 0.5f - h * 0.5f + 0.5f), w, h);
+}
+
+static void draw_gallery(SRow *r, f32 off, const Theme *t, const SColors *c)
+{
+    const SItem *it = &k_sitems[r->item];
+    for (int k = 0; k < STYLE__COUNT; k++) {
+        f32 b[4];
+        gallery_card(r, k, b);
+        b[1] += off;
+        b[3] += off;
+        if (b[3] < top_h() || b[1] > (f32)SW.H) continue;
+        f32 hov = SW.card_hov[k], sel = SW.card_sel[k];
+        f32 cw = b[2] - b[0], ch = b[3] - b[1], cr = SQUIRCLE(SSR(22));
+        r_rect(b[0], b[1], cw, ch, color_mix(c->card, c->ctl_hover, 0.35f * hov * (1.f - sel)), cr);
+        u32 edge = color_mix(color_mix(c->card_border, c->ctl_hover, hov), t->accent, sel);
+        r_rect_ex(b[0], b[1], cw, ch, edge, cr, 1.f + (SSR(1.5f) - 1.f) * sel, 0);
+        f32 px = b[0] + SSR(8), py = b[1] + SSR(8), pw = cw - SSR(16), ph = gallery_preview_h(cw);
+        pv_draw(k, px, py, pw, ph);
+        f32 bt[4];
+        gallery_button(b, sel, bt);
+        f32 ib = py + ph, tx = b[0] + SSR(14), tmax = bt[0] - SSR(10) - tx;
+        text_draw_fit(FONT_TEXT_SEMIBOLD, SSC(14), tx, floorf(ib + SSR(29)), tmax, ss(it->opt[k]), -1, t->text, false);
+        text_draw_fit(FONT_TEXT, SSC(12.5f), tx, floorf(ib + SSR(48)), tmax, ss(k_style_desc[k]), -1, t->dim, false);
+        f32 bw = bt[2] - bt[0], bh = bt[3] - bt[1], bcy = bt[1] + bh * 0.5f, fs = SSC(13);
+        f32 lum = (0.299f * (f32)(t->accent & 255) + 0.587f * (f32)((t->accent >> 8) & 255) + 0.114f * (f32)((t->accent >> 16) & 255)) / 255.f;
+        u32 fg = lum > 0.62f ? RGBA(24, 24, 26, 255) : RGBA(255, 255, 255, 255);
+        r_rect(bt[0], bt[1], bw, bh, color_mix(color_mix(c->ctl, c->ctl_hover, hov), t->accent, sel), SQUIRCLE(SSR(13)));
+        // the labels cross-fade, the check slides in from the left
+        f32 o = R.opacity, base = text_baseline(FONT_TEXT, fs, bcy);
+        if (sel < 1.f) {
+            const WCHAR *l0 = TR("Выбрать", "Select");
+            R.opacity = o * (1.f - sel);
+            text_draw(FONT_TEXT, fs, floorf(bt[0] + (bw - text_width(FONT_TEXT, fs, l0, -1)) * 0.5f + 0.5f), base, l0, -1, t->text);
+        }
+        if (sel > 0.f) {
+            const WCHAR *l1 = TR("Выбрано", "Selected");
+            f32 lx = floorf(bt[0] + (bw - text_width(FONT_TEXT, fs, l1, -1) - SSR(18)) * 0.5f + 0.5f);
+            R.opacity = o * sel;
+            text_draw_icon(0xE73E, SSC(11), lx + SSR(6) - SSR(6) * (1.f - sel), bcy, fg);  // CheckMark
+            text_draw(FONT_TEXT, fs, lx + SSR(18), base, l1, -1, fg);
+        }
+        R.opacity = o;
+    }
+}
+
 static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
 {
     const SItem *it = &k_sitems[r->item];
@@ -1270,6 +1661,10 @@ static void draw_srow(SRow *r, f32 off, const Theme *t, const SColors *c)
     bool hov = SW.hover.type == HT_ROW && SW.hover.idx == ri && !locked;
     f32 fs = SSC(14), dfs = SSC(12.5f), cfs = SSC(13.5f);
 
+    if (it->kind == SK_GALLERY) {
+        draw_gallery(r, off, t, c);
+        return;
+    }
     if (it->kind == SK_ABOUT) {
         f32 tile = SSR(64);
         draw_app_tile(r->x, y + SSR(2), tile);

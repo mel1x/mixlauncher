@@ -253,8 +253,23 @@ static void row_info(const WCHAR *text)
     if (r) r->text = text;
 }
 
+// The Design page's previews leave the AI apps out (pv_update sets this while it draws them).
+static bool g_hide_ai;
+
+static bool app_hidden(const App *a)
+{
+    static const WCHAR *const k[] = { L"ChatGPT", L"Claude", L"Codex", L"Gemini", L"Copilot", L"Perplexity", L"Antigravity", L"OpenAI",
+                                      L"Anthropic", L"Grok", L"DeepSeek", L"Ollama", L"LM Studio", L"Cursor", L"Windsurf", L"Mistral",
+                                      L"Qwen", L"Kimi", L"Kiro", L"Midjourney", L"Character.AI" };
+    if (!g_hide_ai || !a || !a->name) return false;
+    for (int i = 0; i < countof(k); i++)
+        if (StrStrIW(a->name, k[i])) return true;
+    return false;
+}
+
 static void row_app(App *a)
 {
+    if (app_hidden(a)) return;
     Row *r = row_add(ROW_APP, SR(ROW_H));
     if (r) r->app = a;
 }
@@ -446,7 +461,7 @@ static void refresh_empty_view(void)
         App *tmp[512];
         int n = 0;
         for (int i = 0; i < U.apps->shell_count && n < countof(tmp); i++)
-            if (U.apps->apps[i].frec > frec_bonus(0.3)) tmp[n++] = &U.apps->apps[i];
+            if (U.apps->apps[i].frec > frec_bonus(0.3) && !app_hidden(&U.apps->apps[i])) tmp[n++] = &U.apps->apps[i];
         qsort(tmp, n, sizeof(App *), cmp_frequent);
         U.frequent_count = MIN(n, countof(U.frequent));
         memcpy(U.frequent, tmp, sizeof(App *) * U.frequent_count);
