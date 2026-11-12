@@ -460,8 +460,9 @@ static void refresh_empty_view(void)
     if (U.apps) {
         App *tmp[512];
         int n = 0;
+        f32 min_frec = frec_bonus(0.3);
         for (int i = 0; i < U.apps->shell_count && n < countof(tmp); i++)
-            if (U.apps->apps[i].frec > frec_bonus(0.3) && !app_hidden(&U.apps->apps[i])) tmp[n++] = &U.apps->apps[i];
+            if (U.apps->apps[i].frec > min_frec && !app_hidden(&U.apps->apps[i])) tmp[n++] = &U.apps->apps[i];
         qsort(tmp, n, sizeof(App *), cmp_frequent);
         U.frequent_count = MIN(n, countof(U.frequent));
         memcpy(U.frequent, tmp, sizeof(App *) * U.frequent_count);
@@ -731,6 +732,14 @@ static void on_apps_ready(AppList *l)
 {
     AppList *old = U.apps;
     U.apps = l;
+    // what points into the old list or was made for its rows: an armed command, a held or dragged tile, the menu
+    U.armed = NULL;
+    U.press_row = U.w10.press_tile = -1;
+    if (U.w10.tdrag) {
+        U.w10.tdrag = NULL;
+        ReleaseCapture();
+    }
+    cm_close(false);
     refresh_frecency();
     refresh_empty_view();
     search_apps();

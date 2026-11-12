@@ -35,7 +35,9 @@ static struct {
     volatile LONG art_px;
     volatile LONG art_reload;
     volatile LONG want_widgets_btn;
+    volatile LONG epoch;  // counts the times the widget was turned on
     HWND wnd, taskbar;
+    HWINEVENTHOOK moves;  // the taskbar and its tray moving or resizing
     MediaInfo info;
     u32 *art;
     int art_n;
@@ -262,6 +264,7 @@ static DWORD WINAPI media_thread(void *param)
     memset(&last, 0, sizeof last);
     u64 art_hash = 0;
     int art_tries = 0, fast = 0;
+    LONG seen_epoch = 0;
     f64 art_due = 0;
     for (;;) {
         DWORD wait = !M.enabled ? INFINITE : fast > 0 ? 120 : last.has ? 500 : 1500;
@@ -273,6 +276,12 @@ static DWORD WINAPI media_thread(void *param)
             memset(&last, 0, sizeof last);
             art_hash = 0;
             continue;
+        }
+        LONG epoch = M.epoch;
+        if (epoch != seen_epoch) {  // turned off and on again within one turn: what was published is gone, send it all anew
+            seen_epoch = epoch;
+            memset(&last, 0, sizeof last);
+            art_hash = 0;
         }
         if (fast > 0) fast--;
         f64 now = time_now();
@@ -726,6 +735,23 @@ static bool media_place(bool left)
 
 static void media_sync(void);
 
+// The taskbar or its tray moved or changed size (a game switching the resolution, a tray icon coming or going):
+// the widget follows at once, not a second later with the timer.
+static void CALLBACK media_moved(HWINEVENTHOOK hook, DWORD ev, HWND h, LONG obj, LONG child, DWORD tid, DWORD time)
+{
+    (void)hook, (void)ev, (void)tid, (void)time;
+    if (obj != OBJID_WINDOW || child != CHILDID_SELF || !h || !M.enabled || !M.wnd || !M.taskbar) return;
+    if (h == M.taskbar || h == FindWindowExW(M.taskbar, NULL, L"TrayNotifyWnd", NULL)) media_sync();
+}
+
+static void media_watch_moves(HWND taskbar)
+{
+    if (M.moves) UnhookWinEvent(M.moves);
+    M.moves = NULL;
+    DWORD pid = 0, tid = taskbar ? GetWindowThreadProcessId(taskbar, &pid) : 0;
+    if (tid) M.moves = SetWinEventHook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE, NULL, media_moved, pid, tid, WINEVENT_OUTOFCONTEXT);
+}
+
 static bool media_create(void)
 {
     HWND tb = FindWindowW(L"Shell_TrayWnd", NULL);
@@ -744,6 +770,7 @@ static bool media_create(void)
         return false;
     }
     SetTimer(M.wnd, MW_TIMER_SYNC, 1000, NULL);
+    media_watch_moves(tb);
     M.dpi = 0;
     return true;
 }
@@ -1044,9 +1071,11 @@ static void media_set_enabled(bool on)
             M.wake = CreateEventW(NULL, FALSE, FALSE, NULL);
             thread_start(media_thread, NULL);
         }
+        InterlockedIncrement(&M.epoch);
         SetEvent(M.wake);
         media_sync();
     } else {
+        media_watch_moves(NULL);
         if (M.wnd && IsWindow(M.wnd)) DestroyWindow(M.wnd);
         M.wnd = NULL;
         M.want = false;

@@ -301,7 +301,11 @@ static u64 hash_wstr_i(const WCHAR *s, int len)
     u64 h = FNV_BASIS;
     if (len < 0) len = wlen(s);
     for (int i = 0; i < len; i++) {
-        WCHAR c = s[i] < 0x80 ? wlower_ascii(s[i]) : (WCHAR)(uintptr_t)CharLowerW((LPWSTR)(uintptr_t)s[i]);
+        // as CharLowerW gives it (history.tsv keeps these hashes), without the call for ASCII and Cyrillic
+        WCHAR c = s[i];
+        if (c < 0x80) c = wlower_ascii(c);
+        else if (c >= 0x400 && c <= 0x45F) c = c >= 0x430 ? c : (WCHAR)(c + (c >= 0x410 ? 32 : 80));
+        else c = (WCHAR)(uintptr_t)CharLowerW((LPWSTR)(uintptr_t)c);
         h = (h ^ (u64)c) * FNV_PRIME;
     }
     return h ? h : 1;

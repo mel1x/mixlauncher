@@ -322,6 +322,7 @@ static void ui_show(void)
     U.q_scroll = 0;
     if (U.qlen) {
         search_apps();
+        search_tags();
         request_files();
     }
     rebuild_rows(false);

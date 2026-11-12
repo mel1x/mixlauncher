@@ -172,6 +172,9 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             media_theme_changed();
         }
         return 0;
+    case WM_DISPLAYCHANGE:
+        media_sync();  // the taskbar is another size now
+        break;
     case WM_POWERBROADCAST:
         if (wp == PBT_APMRESUMEAUTOMATIC || wp == PBT_APMRESUMESUSPEND) hook_reinstall();
         return TRUE;
@@ -546,6 +549,16 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline_a, int show)
             DispatchMessageW(&msg);
         }
         if (U.visible) bd_poll();
+        // The GPU was reset while only the settings or a menu show: nothing else would bring the device back, and
+        // their frames, never drawn, would spin this loop. No device yet: the frames are dropped, a try a second.
+        if (!R.ok && (settings_needs_render() || pm_needs_render())) {
+            static f64 recover_at;
+            f64 now = time_now();
+            if (now < recover_at || !renderer_recover()) {
+                if (now >= recover_at) recover_at = now + 1.0;
+                SW.dirty = SW.animating = PM.dirty = PM.animating = false;
+            }
+        }
         bool rendered = false, anim = false;
         if (settings_needs_render()) {
             settings_render();

@@ -560,9 +560,14 @@ static void st_draw_label(Row *r, f32 base, const WCHAR *s, int len, u32 col)
 {
     f32 fs = S(12), maxw = r->w - SR(12), lh = SR(16);
     int cut = 0;
-    if (text_width(FONT_TEXT, fs, s, len) > maxw)
-        for (int i = 1; i < len; i++)
-            if (s[i] == ' ' && text_width(FONT_TEXT, fs, s, i) <= maxw) cut = i;
+    if (text_width(FONT_TEXT, fs, s, len) > maxw) {
+        f32 w = 0;  // of the text before i
+        for (int i = 0; i < len;) {
+            if (s[i] == ' ' && i > 0 && w <= maxw) cut = i;
+            u32 cp = utf16_next(s, len, &i);
+            w += glyph_map(FONT_TEXT, cp == '\t' ? ' ' : cp)->adv * fs;
+        }
+    }
     if (cut) {
         f32 w1 = text_width(FONT_TEXT, fs, s, cut);
         text_draw(FONT_TEXT, fs, floorf(r->x + (r->w - w1) * 0.5f), base, s, cut, col);

@@ -122,14 +122,19 @@ static bool ev_superseded(void)
     return r;
 }
 
-static const u8 *ev_read_str(const u8 *p, const u8 *end, const WCHAR **out)
+// A string of a reply: its length, the characters and a terminator. The length is what is trusted: the reply
+// comes through WM_COPYDATA from a process below our level.
+static const u8 *ev_read_str(const u8 *p, const u8 *end, const WCHAR **out, int *out_len)
 {
     if (!p || p + 4 > end) return NULL;
     DWORD len;
     memcpy(&len, p, 4);
     p += 4;
     if ((size_t)(end - p) < ((size_t)len + 1) * 2) return NULL;
-    if (out) *out = (const WCHAR *)p;
+    if (out) {
+        *out = (const WCHAR *)p;
+        *out_len = (int)len;
+    }
     return p + ((size_t)len + 1) * 2;
 }
 
@@ -149,10 +154,11 @@ static void ev_parse(const u8 *data, DWORD size)
         if (it[1] >= size) continue;
         const WCHAR *name = NULL, *path = NULL;
         i64 mtime = 0;
-        if (req & EV_REQ_NAME) p = ev_read_str(p, end, &name);
-        if (req & EV_REQ_PATH) p = ev_read_str(p, end, &path);
-        if (req & EV_REQ_FULL_PATH) p = ev_read_str(p, end, NULL);
-        if (req & EV_REQ_EXTENSION) p = ev_read_str(p, end, NULL);
+        int name_len = 0, path_len = 0;
+        if (req & EV_REQ_NAME) p = ev_read_str(p, end, &name, &name_len);
+        if (req & EV_REQ_PATH) p = ev_read_str(p, end, &path, &path_len);
+        if (req & EV_REQ_FULL_PATH) p = ev_read_str(p, end, NULL, NULL);
+        if (req & EV_REQ_EXTENSION) p = ev_read_str(p, end, NULL, NULL);
         if (p && (req & EV_REQ_SIZE)) p = (p + 8 <= end) ? p + 8 : NULL;
         if (p && (req & EV_REQ_DATE_CREATED)) p = (p + 8 <= end) ? p + 8 : NULL;
         if (p && (req & EV_REQ_DATE_MODIFIED)) {
@@ -166,8 +172,8 @@ static void ev_parse(const u8 *data, DWORD size)
         if (!p || !name) continue;
         if (!GROW(E.raw, E.raw_cap, E.raw_count + 1, 512)) return;
         RawFile *r = &E.raw[E.raw_count++];
-        r->name = wdup(&E.scratch, name, -1);
-        r->path = wdup(&E.scratch, path ? path : L"", -1);
+        r->name = wdup(&E.scratch, name, name_len);
+        r->path = wdup(&E.scratch, path ? path : L"", path_len);
         r->mtime = (mtime < 0) ? 0 : mtime;
         r->flags = it[0];
     }
@@ -465,7 +471,7 @@ static void ev_build(FileResults *res, size_t reserve)
         if (wends_with_i(full, fl, L".lnk") && StrStrIW(full, L"\\Start Menu\\Programs\\")) continue;
         FileItem *fi = &res->items[res->count++];
         fi->full = wdup(&res->arena, full, fl);
-        fi->name = fi->full + (r->path[0] ? wlen(r->path) + 1 : 0);
+        fi->name = fi->full + MIN(r->path[0] ? wlen(r->path) + 1 : 0, fl);  // fl: a path cut to fit ends before its name
         fi->dir = r->path[0] ? wdup(&res->arena, r->path, -1) : wdup(&res->arena, L"", 0);
         fi->mtime = r->mtime;
         fi->flags = (r->flags & (EV_ITEM_FOLDER | EV_ITEM_DRIVE)) ? FI_FOLDER : 0;
@@ -552,11 +558,11 @@ static void ev_run_more(u32 id)
 {
     if (id != E.cur_id || E.cur_fetched >= E.cur_total) return;
     HWND ev = ev_find_window();
-    if (!ev) return;
     arena_reset(&E.scratch);
     E.raw_count = 0;
     E.raw_total = 0;
-    int ok = ev_send_query(ev, E.cur_search, E.cur_fetched, EV_PAGE, EV_SORT_DATE_MODIFIED_DESC);
+    // Everything gone meanwhile: an error page too, or the list would wait for this one forever
+    int ok = ev ? ev_send_query(ev, E.cur_search, E.cur_fetched, EV_PAGE, EV_SORT_DATE_MODIFIED_DESC) : 0;
     if (ok < 0) return;
     FileResults *res = (FileResults *)calloc(1, sizeof(FileResults));
     if (!res) return;

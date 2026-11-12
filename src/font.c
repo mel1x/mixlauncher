@@ -37,6 +37,7 @@ typedef struct GlyphMap {
 
 #define GMAP_SIZE 16384
 static GlyphMap g_gmap[GMAP_SIZE];
+static int g_gmap_count;
 
 typedef struct GlyphRaster {
     u64 key;
@@ -138,6 +139,8 @@ static GlyphMap *glyph_map(int font, u32 cp)
         GlyphMap *e = &g_gmap[(h + probe) & (GMAP_SIZE - 1)];
         if (e->used && e->key == key) return e;
         if (!e->used) {
+            if (g_gmap_count >= GMAP_SIZE * 3 / 4) break;  // filling up: lookups would crawl, start over
+            g_gmap_count++;
             e->used = 1;
             e->key = key;
             int face_id = font;
@@ -164,6 +167,7 @@ static GlyphMap *glyph_map(int font, u32 cp)
         }
     }
     memset(g_gmap, 0, sizeof g_gmap);
+    g_gmap_count = 0;
     return glyph_map(font, cp);
 }
 

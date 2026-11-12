@@ -54,6 +54,9 @@ typedef struct TbButton {
     u32 *img;  // the custom icon, img_n square
     int img_n;
     u32 img_gen;
+    f64 drawn;  // when the button was last drawn
+    u32 *shot;  // the real logo as the screen shows it (tb_grab_logo), shot_n square at (shot_x, shot_y) of the button
+    int shot_n, shot_x, shot_y;
 } TbButton;
 
 static struct {
@@ -295,6 +298,46 @@ static int tb_color_dist(COLORREF a, COLORREF b)
     return MAX(abs(GetRValue(a) - GetRValue(b)), MAX(abs(GetGValue(a) - GetGValue(b)), abs(GetBValue(a) - GetBValue(b))));
 }
 
+static f32 tb_bounce(TbButton *b);
+
+// Where the icon sits in the button: the monitor's scale, the icon's side and its center.
+static void tb_geometry(const TbButton *b, f32 *s, f32 *logo, f32 *cx, f32 *cy)
+{
+    *s = (f32)monitor_dpi(MonitorFromWindow(b->taskbar, MONITOR_DEFAULTTONEAREST)) / 96.f;
+    *logo = floorf(24.f * *s + 0.5f);
+    f32 w = (f32)b->w, h = (f32)b->h, odd = (int)*logo & 1 ? 0.5f : 0.f;
+    *cx = floorf(w > h * 1.05f ? w - h * 0.475f : w * 0.5f) + odd;
+    *cy = floorf(h * 0.5f) + odd;
+}
+
+// Without our icon the real logo shows through the button, and nothing of ours can squeeze it when the button is
+// pressed. Its picture is taken from the screen while the button is at rest (nothing of ours over it), and that is
+// what tb_render scales.
+static void tb_grab_logo(TbButton *b, HDC screen)
+{
+    if (g_cfg.taskbar_replace_icon || b->hover || b->press || b->hover_t > 0.f || b->press_t > 0.f || b->open_t > 0.f || tb_bounce(b) != 0.f) return;
+    if (time_now() - b->drawn < 0.2) return;  // the screen may still show our last frame
+    f32 s, logo, cx, cy;
+    tb_geometry(b, &s, &logo, &cx, &cy);
+    int n = (int)(logo + 2.f * floorf(1.f * s + 0.5f));
+    int x0 = (int)floorf(cx - (f32)n * 0.5f + 0.5f), y0 = (int)floorf(cy - (f32)n * 0.5f + 0.5f);
+    if (n <= 0 || x0 < 0 || y0 < 0 || x0 + n > b->w || y0 + n > b->h) return;
+    Layer l = { 0 };
+    u32 *px = layer_fit(&l, n, n) ? (u32 *)realloc(b->shot, (size_t)n * n * 4) : NULL;
+    if (px) {
+        b->shot = px;
+        b->shot_n = 0;
+        if (BitBlt(l.dc, 0, 0, n, n, screen, b->screen.left + x0, b->screen.top + y0, SRCCOPY)) {
+            GdiFlush();
+            for (int i = 0; i < n * n; i++) px[i] = l.bits[i] | 0xFF000000u;
+            b->shot_n = n;
+            b->shot_x = x0;
+            b->shot_y = y0;
+        }
+    }
+    layer_free(&l);
+}
+
 // Samples the bar color around the button: every point must show the bar itself and agree, and a new color
 // needs a second sample to confirm it. Returns true when the plate color changed.
 static bool tb_sample(TbButton *b)
@@ -321,6 +364,7 @@ static bool tb_sample(TbButton *b)
             COLORREF c = GetPixel(sdc, p.x, p.y);
             if (c != CLR_INVALID) cs[n++] = c;
         }
+    tb_grab_logo(b, sdc);
     ReleaseDC(NULL, sdc);
     if (!n) return false;
     int r = 0, g = 0, bl = 0;
@@ -468,11 +512,9 @@ static void tb_render(TbButton *b)
     int w = b->w, h = b->h;
     if (w <= 0 || h <= 0 || !b->wnd || !layer_fit(&b->layer, w, h)) return;
 
-    f32 s = (f32)monitor_dpi(MonitorFromWindow(b->taskbar, MONITOR_DEFAULTTONEAREST)) / 96.f;
-    f32 logo = floorf(24.f * s + 0.5f), plate = logo + 2.f * floorf(1.f * s + 0.5f);
-    f32 cx = (f32)w > (f32)h * 1.05f ? (f32)w - (f32)h * 0.475f : (f32)w * 0.5f, cy = (f32)h * 0.5f;
-    cx = floorf(cx) + ((int)logo & 1 ? 0.5f : 0.f);
-    cy = floorf(cy) + ((int)logo & 1 ? 0.5f : 0.f);
+    f32 s, logo, cx, cy;
+    tb_geometry(b, &s, &logo, &cx, &cy);
+    f32 plate = logo + 2.f * floorf(1.f * s + 0.5f);
     f32 box = MIN(floorf(40.f * s + 0.5f), (f32)h - 2.f * s), brad = 4.f * s;
     bool light = TB.light;
     f32 fg[3], plate_c[3], hov_c[3];
@@ -500,15 +542,39 @@ static void tb_render(TbButton *b)
         }
         if (!b->img) style = TBI_DIAMOND;
     }
+    // With our icon the highlight is not a veil over the bar and the plate (whatever the bar shows under it, the
+    // plate would stand out as a square): it is the plate's own color, lit, spread over the whole highlight box,
+    // and the box turns solid as the highlight comes. cover: how far it has come; box_c at that opacity gives the
+    // bar lit by hov_a.
+    hov_a = MAX(hov_a, 0.f);
+    f32 cover = MAX(b->hover_t, MAX(b->open_t, b->press_t)), lit[3], box_c[3];
+    for (int k = 0; k < 3; k++) {
+        lit[k] = plate_c[k] + (hov_c[k] - plate_c[k]) * hov_a;
+        box_c[k] = plate_c[k] + (hov_c[k] - plate_c[k]) * (cover > 0.f ? MIN(hov_a / cover, 1.f) : 0.f);
+    }
+    // Without it: the real logo's picture, squeezed, while the button is pressed or bounces.
+    int sn = b->shot_n;
+    bool squeeze = !replace && b->shot && sn > 0 && zoom != 1.f;
+    f32 scx = (f32)b->shot_x + (f32)sn * 0.5f, scy = (f32)b->shot_y + (f32)sn * 0.5f;
 
     u32 *px = b->layer.bits;
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
             f32 fx = (f32)x + 0.5f - cx, fy = (f32)y + 0.5f - cy;
             f32 c[3] = { 0, 0, 0 }, a = 0;
-            // without our icon only the hover highlight is drawn over the real button
-            if (replace) px_over(c, &a, plate_c, CLAMP(0.5f - sd_box(fx, fy, plate * 0.5f, plate * 0.5f, 2.f * s), 0.f, 1.f));
-            if (hov_a > 0.f) px_over(c, &a, hov_c, hov_a * CLAMP(0.5f - sd_box(fx, fy, box * 0.5f, box * 0.5f, brad), 0.f, 1.f));
+            f32 box_m = hov_a > 0.f || cover > 0.f ? CLAMP(0.5f - sd_box(fx, fy, box * 0.5f, box * 0.5f, brad), 0.f, 1.f) : 0.f;
+            if (replace) {
+                if (cover > 0.f && box_m > 0.f) px_over(c, &a, box_c, cover * box_m);
+                px_over(c, &a, lit, CLAMP(0.5f - sd_box(fx, fy, plate * 0.5f, plate * 0.5f, 2.f * s), 0.f, 1.f));
+            } else {
+                if (squeeze && x >= b->shot_x && x < b->shot_x + sn && y >= b->shot_y && y < b->shot_y + sn) {
+                    f32 ic[3], ia = tb_sample_img(b->shot, sn, ((f32)x + 0.5f - scx) / zoom + (f32)sn * 0.5f,
+                                                  ((f32)y + 0.5f - scy) / zoom + (f32)sn * 0.5f, ic);
+                    for (int q = 0; q < 3; q++) c[q] = ic[q] + plate_c[q] * (1.f - ia);  // the bar where the picture ends
+                    a = 1.f;
+                }
+                if (hov_a > 0.f) px_over(c, &a, hov_c, hov_a * box_m);  // the highlight alone, over the real button
+            }
             if (replace && style == TBI_CUSTOM) {
                 f32 ic[3], ia = tb_sample_img(b->img, b->img_n, fx / zoom + logo * 0.5f, fy / zoom + logo * 0.5f, ic);
                 if (ia > 0.f) {
@@ -523,6 +589,7 @@ static void tb_render(TbButton *b)
         }
     }
     layer_show(&b->layer, b->wnd);
+    b->drawn = time_now();
 }
 
 static TbButton *tb_from_hwnd(HWND h)
@@ -626,6 +693,8 @@ static void tb_destroy(TbButton *b)
     b->wnd = NULL;
     free(b->img);
     b->img = NULL;
+    free(b->shot);
+    b->shot = NULL;
     layer_free(&b->layer);
 }
 
@@ -664,6 +733,7 @@ static void tb_sync(void)
                 *b = TB.b[k];  // moves its window, icon and pixels over
                 TB.b[k].wnd = NULL;
                 TB.b[k].img = NULL;
+                TB.b[k].shot = NULL;
                 memset(&TB.b[k].layer, 0, sizeof TB.b[k].layer);
             }
         b->taskbar = f[i].taskbar;
@@ -722,7 +792,10 @@ static void tb_set_open(HMONITOR mon)
 static void tb_icon_changed(void)
 {
     TB.icon_gen++;
-    for (int i = 0; i < TB.n; i++) tb_render(&TB.b[i]);
+    for (int i = 0; i < TB.n; i++) {
+        TB.b[i].shot_n = 0;  // taken again once the real logo shows
+        tb_render(&TB.b[i]);
+    }
 }
 
 static void tb_theme_changed(void)
@@ -733,6 +806,7 @@ static void tb_theme_changed(void)
     for (int i = 0; i < TB.n; i++) {
         TB.b[i].plate_ok = false;
         TB.b[i].pending_ok = false;
+        TB.b[i].shot_n = 0;
         tb_render(&TB.b[i]);
     }
 }
