@@ -1,5 +1,6 @@
 ﻿; MixLauncher installer (Inno Setup 7). release.bat builds it:
-;   build\mixlauncher.exe + third_party\everything  ->  build\MixLauncher-Setup.exe
+;   the three builds (generic, v2, v3) + third_party\everything  ->  build\MixLauncher-Setup.exe
+; Without SourceExeV2/V3 it packs SourceExe alone (build\mixlauncher.exe by default).
 ; The version comes from the exe (res\version.h, ProductVersion).
 
 #ifndef SourceExe
@@ -54,7 +55,14 @@ en.LaunchNow=Launch MixLauncher
 Name: "autostart"; Description: "{cm:AutostartTask}"
 
 [Files]
+#ifdef SourceExeV3
+; The highest x86-64 level the processor runs: v3 (AVX2), v2 (SSE4.2), the generic build elsewhere
+Source: "{#SourceExeV3}"; DestDir: "{app}"; DestName: "mixlauncher.exe"; Flags: ignoreversion; Check: CpuLevel(3)
+Source: "{#SourceExeV2}"; DestDir: "{app}"; DestName: "mixlauncher.exe"; Flags: ignoreversion; Check: CpuLevel(2)
+Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "mixlauncher.exe"; Flags: ignoreversion; Check: CpuLevel(1)
+#else
 Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "mixlauncher.exe"; Flags: ignoreversion
+#endif
 Source: "..\third_party\everything\Everything.exe"; DestDir: "{app}\Everything"; Flags: ignoreversion
 Source: "..\third_party\everything\License.txt"; DestDir: "{app}\Everything"; Flags: ignoreversion
 
@@ -82,6 +90,24 @@ Type: filesandordirs; Name: "{localappdata}\MixLauncher\Everything"
 function IsUpdate: Boolean;
 begin
   Result := ExpandConstant('{param:update|0}') = '1';
+end;
+
+function IsProcessorFeaturePresent(Feature: DWORD): BOOL;
+  external 'IsProcessorFeaturePresent@kernel32.dll stdcall';
+
+// The x86-64 level by the flags Windows knows: AVX2 (PF 40) for v3, SSE4.2 (PF 38) for v2. Every processor with
+// one has the rest of its level (FMA, BMI1/2, MOVBE; POPCNT, CMPXCHG16B). A Windows that does not know a flag
+// answers no, and a lower build goes in.
+function CpuLevel(Level: Integer): Boolean;
+var
+  Have: Integer;
+begin
+  Have := 1;
+  if IsProcessorFeaturePresent(40) then
+    Have := 3
+  else if IsProcessorFeaturePresent(38) then
+    Have := 2;
+  Result := Have = Level;
 end;
 
 // An update: close the running launcher and its Everything so their files can be replaced.

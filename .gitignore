@@ -8,3 +8,6 @@ build/
 
 # Downloaded by tools/fetch-everything.ps1
 third_party/everything/Everything.exe
+
+# Rust build output
+target/

@@ -1,89 +1,41 @@
 @echo off
-rem MixLauncher build: one translation unit, one compiler call.
+rem MixLauncher build (Rust, cargo; needs the stable toolchain for x86_64-pc-windows-msvc).
 rem   build.bat           release build -> build\mixlauncher.exe (runs as administrator)
 rem   build.bat debug     debug build with symbols (runs as administrator)
 rem   build.bat dev       release code without the elevation prompt -> build\mixlauncher-dev.exe
-rem Uses MSVC (cl) when available (run from a "x64 Native Tools" prompt or it is found via
-rem vswhere), otherwise MinGW-w64 gcc/clang (MSYS2 ucrt64/clang64 are picked up automatically).
+rem The published builds are profile-guided and made per processor level: release.bat (pgo.bat).
 setlocal
 cd /d "%~dp0"
 if not exist build mkdir build
 
 set MODE=release
 set OUT=mixlauncher
-set RCDEF=
-if /i "%1"=="debug" set MODE=debug
+set CARGO=cargo build --release
+set SRC=target\x86_64-pc-windows-msvc\release\mixlauncher.exe
+if /i "%1"=="debug" (
+    set MODE=debug
+    set CARGO=cargo build
+    set SRC=target\x86_64-pc-windows-msvc\debug\mixlauncher.exe
+)
 if /i "%1"=="dev" (
     set OUT=mixlauncher-dev
-    set RCDEF=ML_DEV_BUILD
+    set CARGO=cargo build --release --features dev --target-dir target\dev
+    set SRC=target\dev\x86_64-pc-windows-msvc\release\mixlauncher.exe
 )
+
+where cargo >nul 2>nul || (
+    echo cargo not found. Install Rust from https://rustup.rs
+    exit /b 1
+)
+echo [cargo %MODE% %OUT%]
+%CARGO% || exit /b 1
 
 rem Ask a running instance of this exe to exit so it can be overwritten. This does not start the
 rem exe (that would ask for elevation): it posts a message to its window.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\stop-running.ps1" -name %OUT% >nul 2>nul
-
-where cl >nul 2>nul && goto :msvc
-
-set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
-rem vcvars64.bat runs vswhere by name and prints an error when its folder is not on PATH
-set "PATH=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer;%PATH%"
-if exist "%VSWHERE%" (
-    for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
-        if exist "%%i\VC\Auxiliary\Build\vcvars64.bat" (
-            call "%%i\VC\Auxiliary\Build\vcvars64.bat" >nul
-            goto :msvc
-        )
-    )
-)
-
-where gcc >nul 2>nul && goto :gcc
-where clang >nul 2>nul && goto :clang
-if exist C:\msys64\ucrt64\bin\gcc.exe (
-    set "PATH=C:\msys64\ucrt64\bin;%PATH%"
-    goto :gcc
-)
-if exist C:\msys64\clang64\bin\clang.exe (
-    set "PATH=C:\msys64\clang64\bin;%PATH%"
-    goto :clang
-)
-echo No C compiler found. Install Visual Studio Build Tools or MSYS2 (pacman -S mingw-w64-ucrt-x86_64-gcc).
-exit /b 1
-
-:msvc
-echo [msvc %MODE% %OUT%]
-set RCFLAGS=/nologo
-if defined RCDEF set RCFLAGS=/nologo /d %RCDEF%
-rc %RCFLAGS% /fo build\%OUT%.res res\mixlauncher.rc || exit /b 1
-rem /O1: a third smaller than /O2, and the hot paths (search, CPU drawing) stay far under a millisecond.
-rem The C runtime: vcruntime linked in, the UCRT from Windows (ucrtbase.dll, part of Windows 10) - 180 KB less.
-set CFLAGS=/nologo /utf-8 /W3 /WX /std:c11 /O1 /GS- /Gw /Gy /MT /DNDEBUG
-set LFLAGS=/OPT:REF /OPT:ICF /NODEFAULTLIB:libucrt.lib ucrt.lib
-if "%MODE%"=="debug" (
-    set CFLAGS=/nologo /utf-8 /W3 /WX /std:c11 /Zi /Od /MTd
-    set LFLAGS=/DEBUG
-)
-cl %CFLAGS% src\main.c build\%OUT%.res /Fe:build\%OUT%.exe /Fo:build\ /Fd:build\ /link /SUBSYSTEM:WINDOWS /INCREMENTAL:NO %LFLAGS% || exit /b 1
-goto :done
-
-:gcc
-set CC=gcc
-goto :gnu
-:clang
-set CC=clang
-:gnu
-echo [%CC% %MODE% %OUT%]
-set RCFLAGS=
-if defined RCDEF set RCFLAGS=-D%RCDEF%
-windres %RCFLAGS% -I res res\mixlauncher.rc -O coff -o build\%OUT%.res.o || exit /b 1
-rem -Os and unused functions dropped; no -fdata-sections: MinGW's PE linker would move .bss into .data and bloat the exe
-set CFLAGS=-std=c11 -Os -s -DNDEBUG -ffunction-sections -Wl,--gc-sections
-if "%MODE%"=="debug" set CFLAGS=-std=c11 -O0 -g
-%CC% %CFLAGS% -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wno-missing-field-initializers -Wno-cast-function-type -mwindows ^
-    src\main.c build\%OUT%.res.o -o build\%OUT%.exe -static ^
-    -ld3d11 -ldxgi -ldwmapi -lole32 -loleaut32 -luuid -lshell32 -lshlwapi -luser32 -lgdi32 -ladvapi32 -lwinhttp || exit /b 1
-
-:done
+copy /y "%SRC%" build\%OUT%.exe >nul || exit /b 1
 for %%f in (build\%OUT%.exe) do echo build\%OUT%.exe  %%~zf bytes
+
 rem Built-in Everything next to the exe, as the installer lays it out (tools\fetch-everything.ps1).
 if exist third_party\everything\Everything.exe (
     if not exist build\Everything mkdir build\Everything
